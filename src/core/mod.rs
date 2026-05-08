@@ -8,3 +8,4 @@ pub mod stats;
 
 pub use types::*;
 pub use flow::*;
+pub use stats::*;
