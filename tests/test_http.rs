@@ -1,4 +1,6 @@
-use rdpi::protocols::http::{parse_host_header, parse_request_line, parse_response_line, is_http_prefix};
+use rdpi::protocols::http::{parse_host_header, parse_request_line, parse_response_line, is_http_prefix, HttpDetector};
+use rdpi::protocols::ProtocolDetector;
+use rdpi::core::types::{Protocol, Metadata};
 
 #[test]
 fn test_parse_request_line() {
@@ -126,4 +128,140 @@ fn test_parse_host_header_case_insensitive() {
     let host = parse_host_header(data);
     assert!(host.is_some());
     assert_eq!(host.unwrap(), "Example.COM");
+}
+
+// ============================================================================
+// HTTP Detector Tests
+// ============================================================================
+
+#[test]
+fn test_http_detector_request() {
+    let detector = HttpDetector::new();
+    let data = b"GET /index.html HTTP/1.1\r\nHost: example.com\r\n\r\n";
+
+    let result = detector.detect(data);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Http);
+    assert_eq!(detection.confidence, 1.0);
+
+    if let Metadata::Http(meta) = detection.metadata {
+        assert_eq!(meta.method, Some("GET".to_string()));
+        assert_eq!(meta.path, Some("/index.html".to_string()));
+        assert_eq!(meta.host, Some("example.com".to_string()));
+    } else {
+        panic!("Expected Http metadata");
+    }
+}
+
+#[test]
+fn test_http_detector_response() {
+    let detector = HttpDetector::new();
+    let data = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+
+    let result = detector.detect(data);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Http);
+    assert_eq!(detection.confidence, 1.0);
+
+    if let Metadata::Http(meta) = detection.metadata {
+        // Responses don't have method/path/host
+        assert!(meta.method.is_none());
+        assert!(meta.path.is_none());
+        assert!(meta.host.is_none());
+    } else {
+        panic!("Expected Http metadata");
+    }
+}
+
+#[test]
+fn test_http_detector_with_host() {
+    let detector = HttpDetector::new();
+    let data = b"POST /api/users HTTP/1.1\r\nHost: api.example.com:8080\r\nContent-Length: 42\r\n\r\n";
+
+    let result = detector.detect(data);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Http);
+
+    if let Metadata::Http(meta) = detection.metadata {
+        assert_eq!(meta.method, Some("POST".to_string()));
+        assert_eq!(meta.path, Some("/api/users".to_string()));
+        assert_eq!(meta.host, Some("api.example.com:8080".to_string()));
+    } else {
+        panic!("Expected Http metadata");
+    }
+}
+
+#[test]
+fn test_http_detector_non_http() {
+    let detector = HttpDetector::new();
+
+    // Non-HTTP data
+    let test_cases = vec![
+        b"Hello World".as_slice(),
+        b"\x00\x01\x02\x03".as_slice(),
+        b"random binary data".as_slice(),
+        b"SSH-2.0-OpenSSH_8.4".as_slice(),  // SSH starts with 'S', not a HTTP prefix
+        b"220 smtp.example.com ESMTP".as_slice(),  // SMTP starts with '2'
+    ];
+
+    for data in test_cases {
+        let result = detector.detect(data);
+        assert!(result.is_none(), "Should not detect HTTP in: {:?}", std::str::from_utf8(data));
+    }
+}
+
+#[test]
+fn test_http_detector_empty_payload() {
+    let detector = HttpDetector::new();
+    let result = detector.detect(b"");
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_http_detector_various_methods() {
+    let detector = HttpDetector::new();
+
+    let methods = ["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "TRACE", "CONNECT"];
+    for method in methods {
+        let data = format!("{} / HTTP/1.1\r\n\r\n", method);
+        let result = detector.detect(data.as_bytes());
+        assert!(result.is_some(), "Should detect {} request", method);
+
+        let detection = result.unwrap();
+        if let Metadata::Http(meta) = detection.metadata {
+            assert_eq!(meta.method, Some(method.to_string()));
+        } else {
+            panic!("Expected Http metadata for {}", method);
+        }
+    }
+}
+
+#[test]
+fn test_http_detector_various_status_codes() {
+    let detector = HttpDetector::new();
+
+    let status_codes = [
+        (200, "OK"),
+        (201, "Created"),
+        (301, "Moved Permanently"),
+        (400, "Bad Request"),
+        (404, "Not Found"),
+        (500, "Internal Server Error"),
+        (503, "Service Unavailable"),
+    ];
+
+    for (code, reason) in status_codes {
+        let data = format!("HTTP/1.1 {} {}\r\n\r\n", code, reason);
+        let result = detector.detect(data.as_bytes());
+        assert!(result.is_some(), "Should detect {} response", code);
+
+        let detection = result.unwrap();
+        assert_eq!(detection.protocol, Protocol::Http);
+    }
 }
