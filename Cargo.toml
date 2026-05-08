@@ -10,9 +10,12 @@ keywords = ["dpi", "packet", "network", "protocol", "detection"]
 [dependencies]
 etherparse = "0.15"
 thiserror = "1.0"
+rustls = "0.23"
 
 [features]
-default = ["dns"]
+default = ["dns", "http", "tls"]
 dns = []
+http = []
+tls = []
 
 [dev-dependencies]

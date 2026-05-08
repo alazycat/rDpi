@@ -6,6 +6,10 @@ use crate::core::types::*;
 
 #[cfg(feature = "dns")]
 pub mod dns;
+#[cfg(feature = "http")]
+pub mod http;
+#[cfg(feature = "tls")]
+pub mod tls;
 
 /// 协议检测器 Trait
 pub trait ProtocolDetector: Send + Sync {
@@ -50,7 +54,12 @@ impl Default for Registry {
 }
 
 /// 注册所有启用的内置协议
+/// 注册顺序：TLS → HTTP → DNS（TLS 魔数最明确，优先匹配）
 pub fn register_defaults(registry: &mut Registry) {
+    #[cfg(feature = "tls")]
+    tls::register(registry);
+    #[cfg(feature = "http")]
+    http::register(registry);
     #[cfg(feature = "dns")]
     dns::register(registry);
 }
