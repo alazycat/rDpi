@@ -30,24 +30,20 @@ pub fn parse_request_line(data: &[u8]) -> Option<HttpRequestLine> {
         return None;
     }
 
-    let method = parts[0].to_string();
-    let path = parts[1].to_string();
-    let version = parts[2].to_string();
-
-    // 验证方法
-    if !is_valid_method(&method) {
+    // 验证方法（在分配内存前）
+    if !is_valid_method(parts[0]) {
         return None;
     }
 
-    // 验证版本
-    if !version.starts_with("HTTP/1.") {
+    // 验证版本（在分配内存前）
+    if !parts[2].starts_with("HTTP/1.") {
         return None;
     }
 
     Some(HttpRequestLine {
-        method,
-        path,
-        version,
+        method: parts[0].to_string(),
+        path: parts[1].to_string(),
+        version: parts[2].to_string(),
     })
 }
 
@@ -67,21 +63,26 @@ pub fn parse_response_line(data: &[u8]) -> Option<HttpResponseLine> {
         return None;
     }
 
-    let version = parts[0].to_string();
+    // 验证版本（在分配内存前）
+    if !parts[0].starts_with("HTTP/1.") {
+        return None;
+    }
+
     let status_code: u16 = parts[1].parse().ok()?;
-    let reason = if parts.len() > 2 {
-        parts[2].to_string()
-    } else {
-        String::new()
-    };
 
     // 验证状态码范围
     if status_code < 100 || status_code > 599 {
         return None;
     }
 
+    let reason = if parts.len() > 2 {
+        parts[2].to_string()
+    } else {
+        String::new()
+    };
+
     Some(HttpResponseLine {
-        version,
+        version: parts[0].to_string(),
         status_code,
         reason,
     })
@@ -93,7 +94,8 @@ pub fn parse_host_header(data: &[u8]) -> Option<String> {
     let data_str = std::str::from_utf8(data).ok()?;
 
     for line in data_str.lines() {
-        if line.to_lowercase().starts_with("host:") {
+        // 使用大小写不敏感比较，避免分配新字符串
+        if line.len() >= 5 && line[..5].eq_ignore_ascii_case("host:") {
             let host = line[5..].trim();
             if !host.is_empty() {
                 return Some(host.to_string());
