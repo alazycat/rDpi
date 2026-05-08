@@ -4,6 +4,12 @@ use super::parser;
 
 pub struct DnsDetector;
 
+impl Default for DnsDetector {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl DnsDetector {
     pub fn new() -> Self {
         Self

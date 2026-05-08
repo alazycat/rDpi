@@ -36,7 +36,7 @@ impl Detector {
     pub fn detect(&mut self, packet: &[u8]) -> crate::error::Result<Option<core::types::DetectionResult>> {
         let parsed = parser::parse_packet(packet)?;
 
-        let key = core::types::FlowKey {
+        let _key = core::types::FlowKey {
             src_ip: parsed.src_ip,
             dst_ip: parsed.dst_ip,
             src_port: parsed.src_port,

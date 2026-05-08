@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 description = "Rust Deep Packet Inspection library"
 license = "MIT"
+repository = "https://github.com/yourname/rdpi"
+keywords = ["dpi", "packet", "network", "protocol", "detection"]
 
 [dependencies]
 etherparse = "0.15"
