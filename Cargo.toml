@@ -1,0 +1,16 @@
+[package]
+name = "rdpi"
+version = "0.1.0"
+edition = "2021"
+description = "Rust Deep Packet Inspection library"
+license = "MIT"
+
+[dependencies]
+etherparse = "0.15"
+thiserror = "1.0"
+
+[features]
+default = ["dns"]
+dns = []
+
+[dev-dependencies]
