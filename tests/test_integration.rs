@@ -618,3 +618,149 @@ fn test_detector_names() {
     assert_eq!(http_detector.name(), "http");
     assert_eq!(dns_detector.name(), "dns");
 }
+
+// ============================================================================
+// SSH Tests
+// ============================================================================
+
+#[test]
+fn test_registry_detects_ssh() {
+    let registry = Registry::default();
+    let payload = b"SSH-2.0-OpenSSH_8.9p1\r\n";
+
+    let result = registry.detect(payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Ssh);
+    assert_eq!(detection.confidence, 1.0);
+}
+
+#[test]
+fn test_ssh_metadata_through_pipeline() {
+    let registry = Registry::default();
+    let payload = b"SSH-2.0-dropbear_2022.83\r\n";
+
+    let result = registry.detect(payload);
+    assert!(result.is_some());
+
+    if let Metadata::Ssh(meta) = result.unwrap().metadata {
+        assert_eq!(meta.version, Some("2.0".to_string()));
+        assert_eq!(meta.software, Some("dropbear_2022.83".to_string()));
+    } else {
+        panic!("Expected Ssh metadata");
+    }
+}
+
+// ============================================================================
+// SMTP Tests
+// ============================================================================
+
+#[test]
+fn test_registry_detects_smtp_banner() {
+    let registry = Registry::default();
+    let payload = b"220 mail.example.com ESMTP Postfix\r\n";
+
+    let result = registry.detect(payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Smtp);
+}
+
+#[test]
+fn test_registry_detects_smtp_command() {
+    let registry = Registry::default();
+    let payload = b"EHLO client.example.com\r\n";
+
+    let result = registry.detect(payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Smtp);
+
+    if let Metadata::Smtp(meta) = detection.metadata {
+        assert!(meta.is_client);
+        assert_eq!(meta.hostname, Some("client.example.com".to_string()));
+    } else {
+        panic!("Expected Smtp metadata");
+    }
+}
+
+#[test]
+fn test_smtp_metadata_through_pipeline() {
+    let registry = Registry::default();
+    let payload = b"220 smtp.gmail.com ESMTP\r\n";
+
+    let result = registry.detect(payload);
+    assert!(result.is_some());
+
+    if let Metadata::Smtp(meta) = result.unwrap().metadata {
+        assert_eq!(meta.hostname, Some("smtp.gmail.com".to_string()));
+        assert!(!meta.is_client);
+    } else {
+        panic!("Expected Smtp metadata");
+    }
+}
+
+// ============================================================================
+// Detection Priority Tests
+// ============================================================================
+
+#[test]
+fn test_detection_priority_ssh_over_http() {
+    // SSH starts with 'S', HTTP doesn't start with 'S'
+    // Verify SSH is detected correctly
+    let registry = Registry::default();
+
+    let ssh_payload = b"SSH-2.0-OpenSSH_8.9\r\n";
+    let result = registry.detect(ssh_payload);
+    assert!(result.is_some());
+    assert_eq!(result.unwrap().protocol, Protocol::Ssh);
+}
+
+#[test]
+fn test_detection_priority_smtp_vs_http() {
+    // SMTP responses start with 2-5, HTTP doesn't
+    // SMTP EHLO starts with E, HTTP doesn't
+    let registry = Registry::default();
+
+    let smtp_banner = b"220 mail.example.com ESMTP\r\n";
+    let result = registry.detect(smtp_banner);
+    assert!(result.is_some());
+    assert_eq!(result.unwrap().protocol, Protocol::Smtp);
+}
+
+#[test]
+fn test_all_protocols_detected() {
+    let registry = Registry::default();
+
+    // TLS
+    let tls = make_client_hello_with_sni("example.com");
+    assert_eq!(registry.detect(&tls).unwrap().protocol, Protocol::Tls);
+
+    // SSH
+    let ssh = b"SSH-2.0-OpenSSH_8.9\r\n";
+    assert_eq!(registry.detect(ssh).unwrap().protocol, Protocol::Ssh);
+
+    // SMTP
+    let smtp = b"220 mail.example.com ESMTP\r\n";
+    assert_eq!(registry.detect(smtp).unwrap().protocol, Protocol::Smtp);
+
+    // HTTP
+    let http = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
+    assert_eq!(registry.detect(http).unwrap().protocol, Protocol::Http);
+
+    // DNS
+    let dns = make_dns_query("example.com");
+    assert_eq!(registry.detect(&dns).unwrap().protocol, Protocol::Dns);
+}
+
+#[test]
+fn test_detector_names_ssh_smtp() {
+    let ssh_detector = rdpi::protocols::ssh::SshDetector::new();
+    let smtp_detector = rdpi::protocols::smtp::SmtpDetector::new();
+
+    assert_eq!(ssh_detector.name(), "ssh");
+    assert_eq!(smtp_detector.name(), "smtp");
+}
