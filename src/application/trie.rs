@@ -50,16 +50,24 @@ impl TrieNode {
 
     fn search(&self, reversed: &str) -> Option<Application> {
         let mut node = self;
-        for ch in reversed.chars() {
+        let mut result: Option<Application> = None;
+        let mut chars = reversed.chars().peekable();
+
+        while let Some(ch) = chars.next() {
             if let Some(next) = node.children.get(&ch) {
                 node = next;
                 if node.application.is_some() {
-                    return node.application;
+                    // Valid match only at label boundary:
+                    // - Next char is '.' (subdomain), or
+                    // - No more chars (exact match)
+                    if chars.peek().map_or(true, |&c| c == '.') {
+                        result = node.application;
+                    }
                 }
             } else {
                 break;
             }
         }
-        None
+        result
     }
 }
