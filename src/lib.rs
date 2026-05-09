@@ -35,6 +35,7 @@
 
 mod error;
 
+pub mod application;
 pub mod core;
 pub mod parser;
 pub mod protocols;

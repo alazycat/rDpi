@@ -1,0 +1,81 @@
+//! Domain suffix to Application mappings
+
+use crate::core::types::Application;
+
+/// 域名后缀 → Application 映射表
+pub const DOMAIN_MAPPINGS: &[(&str, Application)] = &[
+    // YouTube
+    ("youtube.com", Application::YouTube),
+    ("googlevideo.com", Application::YouTube),
+    ("ytimg.com", Application::YouTube),
+    // Netflix
+    ("netflix.com", Application::Netflix),
+    ("nflxvideo.net", Application::Netflix),
+    ("nflxext.com", Application::Netflix),
+    ("nflxso.net", Application::Netflix),
+    // Bilibili
+    ("bilibili.com", Application::Bilibili),
+    ("bilivideo.com", Application::Bilibili),
+    ("biligame.com", Application::Bilibili),
+    // Douyin
+    ("douyin.com", Application::Douyin),
+    ("tiktokv.com", Application::Douyin),
+    ("douyinvod.com", Application::Douyin),
+    // Iqiyi
+    ("iqiyi.com", Application::Iqiyi),
+    ("iq.com", Application::Iqiyi),
+    ("iqiyipic.com", Application::Iqiyi),
+    // TencentVideo
+    ("v.qq.com", Application::TencentVideo),
+    ("video.qq.com", Application::TencentVideo),
+    ("vv.video.qq.com", Application::TencentVideo),
+    // Youku
+    ("youku.com", Application::Youku),
+    ("ykimg.com", Application::Youku),
+    ("youkutv.com", Application::Youku),
+    // Hulu
+    ("hulu.com", Application::Hulu),
+    ("hulustream.com", Application::Hulu),
+    // DisneyPlus
+    ("disneyplus.com", Application::DisneyPlus),
+    ("bamgrid.com", Application::DisneyPlus),
+    ("disney.dss.edge.bamgrid.com", Application::DisneyPlus),
+    // AmazonPrime
+    ("primevideo.com", Application::AmazonPrime),
+    ("amazon.com", Application::AmazonPrime),
+    ("aiv-cdn.net", Application::AmazonPrime),
+    // WeChat
+    ("weixin.qq.com", Application::WeChat),
+    ("wechat.com", Application::WeChat),
+    ("weixin.com", Application::WeChat),
+    ("wx.qq.com", Application::WeChat),
+    // Telegram
+    ("telegram.org", Application::Telegram),
+    ("t.me", Application::Telegram),
+    ("telegram.me", Application::Telegram),
+    // WhatsApp
+    ("whatsapp.com", Application::WhatsApp),
+    ("whatsapp.net", Application::WhatsApp),
+    ("wa.me", Application::WhatsApp),
+    // Discord
+    ("discord.com", Application::Discord),
+    ("discord.gg", Application::Discord),
+    ("discordapp.com", Application::Discord),
+    ("discordapp.net", Application::Discord),
+    ("discord.media", Application::Discord),
+    // QQ
+    ("im.qq.com", Application::QQ),
+    ("qq.com", Application::QQ),
+    ("tencent.com", Application::QQ),
+    // Slack
+    ("slack.com", Application::Slack),
+    ("slack-edge.com", Application::Slack),
+    ("slack-imgs.com", Application::Slack),
+    // Line
+    ("line.me", Application::Line),
+    ("line-apps.com", Application::Line),
+    ("line-cdn.net", Application::Line),
+    // Signal
+    ("signal.org", Application::Signal),
+    ("whispersystems.org", Application::Signal),
+];
