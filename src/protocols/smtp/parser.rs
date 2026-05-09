@@ -56,7 +56,7 @@ pub fn parse_smtp_response(data: &[u8]) -> Option<SmtpResponse> {
     let code: u16 = code_str.parse().ok()?;
 
     // Validate code range
-    if code < 200 || code > 599 {
+    if !(200..=599).contains(&code) {
         return None;
     }
 
