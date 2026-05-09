@@ -1,8 +1,8 @@
-mod parser;
 mod detector;
+mod parser;
 
 pub use detector::HttpDetector;
-pub use parser::{parse_host_header, parse_request_line, parse_response_line, is_http_prefix};
+pub use parser::{is_http_prefix, parse_host_header, parse_request_line, parse_response_line};
 
 use crate::protocols::Registry;
 

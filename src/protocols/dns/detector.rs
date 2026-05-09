@@ -1,6 +1,6 @@
+use super::parser;
 use crate::core::types::*;
 use crate::protocols::ProtocolDetector;
-use super::parser;
 
 pub struct DnsDetector;
 
@@ -41,11 +41,9 @@ impl ProtocolDetector for DnsDetector {
         // If there are questions, try to parse domain name
         let metadata = if header.qdcount > 0 && payload.len() > 12 {
             match parser::parse_name(payload, 12) {
-                Ok((domain, _)) => {
-                    Some(DnsMetadata {
-                        query_domain: Some(domain),
-                    })
-                }
+                Ok((domain, _)) => Some(DnsMetadata {
+                    query_domain: Some(domain),
+                }),
                 Err(_) => None,
             }
         } else {

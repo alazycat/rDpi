@@ -1,8 +1,10 @@
+#![cfg(feature = "ssh")]
+
 use rdpi::protocols::ssh::{is_ssh_prefix, parse_ssh_version};
 
 #[test]
 fn test_is_ssh_prefix() {
-    assert!(is_ssh_prefix(b'S'));  // SSH-
+    assert!(is_ssh_prefix(b'S')); // SSH-
     assert!(!is_ssh_prefix(b'H'));
     assert!(!is_ssh_prefix(b'G'));
 }
@@ -15,7 +17,10 @@ fn test_parse_ssh_version_openssh() {
 
     let info = result.unwrap();
     assert_eq!(info.protocol_version, "2.0");
-    assert_eq!(info.software_version, Some("OpenSSH_8.9p1 Ubuntu-3".to_string()));
+    assert_eq!(
+        info.software_version,
+        Some("OpenSSH_8.9p1 Ubuntu-3".to_string())
+    );
 }
 
 #[test]
@@ -95,9 +100,9 @@ fn test_parse_ssh_version_empty() {
 // SSH Detector Tests
 // ============================================================
 
-use rdpi::protocols::ssh::SshDetector;
+use rdpi::core::types::{Metadata, Protocol};
 use rdpi::protocols::ProtocolDetector;
-use rdpi::core::types::{Protocol, Metadata};
+use rdpi::protocols::ssh::SshDetector;
 
 #[test]
 fn test_ssh_detector_openssh() {
@@ -178,7 +183,11 @@ fn test_ssh_detector_non_ssh() {
 
     for data in test_cases {
         let result = detector.detect(data);
-        assert!(result.is_none(), "Should not detect SSH in: {:?}", std::str::from_utf8(data));
+        assert!(
+            result.is_none(),
+            "Should not detect SSH in: {:?}",
+            std::str::from_utf8(data)
+        );
     }
 }
 

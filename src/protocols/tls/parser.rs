@@ -10,6 +10,8 @@ const HANDSHAKE_TYPE_CLIENT_HELLO: u8 = 0x01;
 
 /// TLS Extension Type values
 const EXTENSION_TYPE_SNI: u16 = 0x0000;
+#[allow(dead_code)]
+const EXTENSION_TYPE_ALPN: u16 = 0x0010;
 
 /// TLS SNI Name Type
 const SNI_NAME_TYPE_HOSTNAME: u8 = 0x00;
@@ -159,7 +161,8 @@ fn parse_client_hello_extensions(data: &[u8]) -> Option<(Option<String>, Option<
             }
             0x002b => {
                 // supported_versions extension (0x002b)
-                supported_version = parse_supported_versions_extension(&data[offset..offset + ext_len]);
+                supported_version =
+                    parse_supported_versions_extension(&data[offset..offset + ext_len]);
             }
             _ => {}
         }
@@ -202,6 +205,29 @@ fn parse_sni_extension(data: &[u8]) -> Option<String> {
     // Server Name
     let name_bytes = &data[offset..offset + name_len];
     String::from_utf8(name_bytes.to_vec()).ok()
+}
+
+/// 解析 ALPN 扩展
+///
+/// ALPN 扩展格式:
+/// - Protocol List Length (2B)
+/// - Protocol Entry:
+///   - Protocol Name Length (1B)
+///   - Protocol Name (variable)
+#[allow(dead_code)]
+fn parse_alpn_extension(data: &[u8]) -> Option<String> {
+    if data.len() < 3 {
+        return None;
+    }
+    // ALPN Protocol List Length (2 bytes) - skip
+    let mut offset = 2;
+    // Protocol Name Length (1 byte)
+    let name_len = data[offset] as usize;
+    offset += 1;
+    if offset + name_len > data.len() {
+        return None;
+    }
+    String::from_utf8(data[offset..offset + name_len].to_vec()).ok()
 }
 
 /// 解析 supported_versions 扩展
@@ -252,6 +278,64 @@ pub fn extract_sni(data: &[u8]) -> Option<String> {
     parse_client_hello(data).and_then(|info| info.sni)
 }
 
+/// 解析 ClientHello 扩展，提取 ALPN
+#[allow(dead_code)]
+fn parse_client_hello_extensions_for_alpn(data: &[u8]) -> Option<Option<String>> {
+    let mut offset = 5; // Skip TLS record header
+    offset += 4; // Skip handshake header
+    offset += 2; // Skip client version
+    offset += 32; // Skip random
+    // Skip session ID
+    if offset >= data.len() {
+        return None;
+    }
+    let session_id_len = data[offset] as usize;
+    offset += 1 + session_id_len;
+    // Skip cipher suites
+    if offset + 2 > data.len() {
+        return None;
+    }
+    let cipher_suites_len = u16_from_be(&data[offset..offset + 2]) as usize;
+    offset += 2 + cipher_suites_len;
+    // Skip compression methods
+    if offset >= data.len() {
+        return None;
+    }
+    let compression_len = data[offset] as usize;
+    offset += 1 + compression_len;
+    // Parse extensions
+    if offset + 2 > data.len() {
+        return None;
+    }
+    let extensions_len = u16_from_be(&data[offset..offset + 2]) as usize;
+    offset += 2;
+    let extensions_end = offset + extensions_len;
+    if extensions_end > data.len() {
+        return None;
+    }
+    let mut alpn: Option<String> = None;
+    while offset + 4 <= extensions_end {
+        let ext_type = u16_from_be(&data[offset..offset + 2]);
+        offset += 2;
+        let ext_len = u16_from_be(&data[offset..offset + 2]) as usize;
+        offset += 2;
+        if offset + ext_len > extensions_end {
+            break;
+        }
+        if ext_type == EXTENSION_TYPE_ALPN {
+            alpn = parse_alpn_extension(&data[offset..offset + ext_len]);
+        }
+        offset += ext_len;
+    }
+    Some(alpn)
+}
+
+/// 从 ClientHello 提取 ALPN
+#[allow(dead_code)]
+pub fn extract_alpn(data: &[u8]) -> Option<String> {
+    parse_client_hello_extensions_for_alpn(data).flatten()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,7 +380,7 @@ mod tests {
     fn make_minimal_client_hello() -> Vec<u8> {
         // TLS record header
         let mut data = vec![
-            0x16,       // ContentType: Handshake
+            0x16, // ContentType: Handshake
             0x03, 0x03, // Version: TLS 1.2
             0x00, 0x00, // Length: placeholder
         ];
@@ -390,7 +474,7 @@ mod tests {
 
         // TLS record header
         let mut data = vec![
-            0x16,       // ContentType: Handshake
+            0x16, // ContentType: Handshake
             0x03, 0x01, // Version: TLS 1.0 (record layer)
             0x00, 0x00, // Length: placeholder
         ];

@@ -1,10 +1,10 @@
 #![cfg(feature = "quic")]
 
 use rdpi::core::types::{Metadata, Protocol};
-use rdpi::protocols::quic::{
-    is_quic_initial, parse_quic_initial, QuicDetector, QUIC_VERSION_1, QUIC_VERSION_DRAFT29,
-};
 use rdpi::protocols::ProtocolDetector;
+use rdpi::protocols::quic::{
+    QUIC_VERSION_1, QUIC_VERSION_DRAFT29, QuicDetector, is_quic_initial, parse_quic_initial,
+};
 
 // ============================================================================
 // Helper Functions
@@ -262,10 +262,7 @@ fn make_quic_v2_initial(dcid: &[u8]) -> Vec<u8> {
 
 /// Helper for Draft-29 packet
 fn make_quic_draft29(dcid: &[u8]) -> Vec<u8> {
-    let mut data = vec![
-        0xC0,
-        0xff, 0x00, 0x00, 0x1d,
-    ];
+    let mut data = vec![0xC0, 0xff, 0x00, 0x00, 0x1d];
     data.push(dcid.len() as u8);
     data.extend_from_slice(dcid);
     data.push(0x00);

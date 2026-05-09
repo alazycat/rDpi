@@ -1,7 +1,7 @@
 [package]
 name = "rdpi"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Rust Deep Packet Inspection library"
 license = "MIT"
 repository = "https://github.com/yourname/rdpi"
@@ -19,5 +19,6 @@ http = []
 tls = []
 ssh = []
 smtp = []
+quic = []
 
 [dev-dependencies]

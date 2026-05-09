@@ -98,8 +98,8 @@ pub fn parse_smtp_command(data: &[u8]) -> Option<SmtpCommand> {
 
     // Validate command
     let valid_commands = [
-        "EHLO", "HELO", "MAIL", "RCPT", "DATA", "QUIT",
-        "RSET", "VRFY", "NOOP", "STARTTLS", "AUTH", "HELP", "EXPN"
+        "EHLO", "HELO", "MAIL", "RCPT", "DATA", "QUIT", "RSET", "VRFY", "NOOP", "STARTTLS", "AUTH",
+        "HELP", "EXPN",
     ];
 
     if !valid_commands.contains(&command.as_str()) {

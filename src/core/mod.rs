@@ -2,9 +2,9 @@
 //!
 //! This module contains shared types, flow management, and common utilities.
 
-pub mod types;
 pub mod flow;
 pub mod stats;
+pub mod types;
 
-pub use types::*;
 pub use flow::*;
+pub use types::*;

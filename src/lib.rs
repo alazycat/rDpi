@@ -9,6 +9,7 @@
 //! - `tls` - TLS protocol detection with SNI extraction (enabled by default)
 //! - `ssh` - SSH protocol detection with version extraction
 //! - `smtp` - SMTP protocol detection with banner/command detection
+//! - `quic` - QUIC protocol detection with version and DCID extraction
 //!
 //! # Example
 //!
@@ -30,6 +31,7 @@
 //! | TLS | `tls` | SNI, TLS version |
 //! | SSH | `ssh` | Protocol version, Software version |
 //! | SMTP | `smtp` | Hostname, is_client flag |
+//! | QUIC | `quic` | SNI, version, DCID |
 
 mod error;
 
@@ -37,8 +39,8 @@ pub mod core;
 pub mod parser;
 pub mod protocols;
 
-pub use error::Error;
 pub use core::types::*;
+pub use error::Error;
 
 use core::flow::FlowTable;
 use protocols::Registry;
@@ -62,7 +64,10 @@ impl Detector {
         }
     }
 
-    pub fn detect(&mut self, packet: &[u8]) -> crate::error::Result<Option<core::types::DetectionResult>> {
+    pub fn detect(
+        &mut self,
+        packet: &[u8],
+    ) -> crate::error::Result<Option<core::types::DetectionResult>> {
         let parsed = parser::parse_packet(packet)?;
 
         let _key = core::types::FlowKey {

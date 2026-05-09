@@ -4,7 +4,7 @@
 
 mod parser;
 
-pub use parser::{is_ssh_prefix, parse_ssh_version, SshVersionInfo};
+pub use parser::{SshVersionInfo, is_ssh_prefix, parse_ssh_version};
 
 use crate::protocols::Registry;
 

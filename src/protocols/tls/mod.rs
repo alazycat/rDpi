@@ -6,12 +6,8 @@
 mod parser;
 
 pub use parser::{
-    is_tls_record,
-    is_client_hello,
+    ClientHelloInfo, extract_sni, extract_tls_version, is_client_hello, is_tls_record,
     parse_client_hello,
-    extract_sni,
-    extract_tls_version,
-    ClientHelloInfo,
 };
 
 use crate::protocols::Registry;

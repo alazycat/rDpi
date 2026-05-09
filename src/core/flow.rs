@@ -59,7 +59,7 @@ impl Flow {
 /// 流表
 pub struct FlowTable {
     flows: HashMap<FlowKey, Flow>,
-    #[allow(dead_code)]  // Reserved for future LRU eviction
+    #[allow(dead_code)] // Reserved for future LRU eviction
     max_entries: usize,
     timeout: Duration,
 }
@@ -82,7 +82,9 @@ impl FlowTable {
     }
 
     pub fn get_or_create(&mut self, key: FlowKey) -> &mut Flow {
-        self.flows.entry(key.clone()).or_insert_with(|| Flow::new(key))
+        self.flows
+            .entry(key.clone())
+            .or_insert_with(|| Flow::new(key))
     }
 
     pub fn get(&self, key: &FlowKey) -> Option<&Flow> {

@@ -1,0 +1,14 @@
+# Claude Code related
+.claude/
+docs/superpowers/
+
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

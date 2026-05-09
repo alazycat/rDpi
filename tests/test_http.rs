@@ -1,6 +1,8 @@
-use rdpi::protocols::http::{parse_host_header, parse_request_line, parse_response_line, is_http_prefix, HttpDetector};
+use rdpi::core::types::{Metadata, Protocol};
 use rdpi::protocols::ProtocolDetector;
-use rdpi::core::types::{Protocol, Metadata};
+use rdpi::protocols::http::{
+    HttpDetector, is_http_prefix, parse_host_header, parse_request_line, parse_response_line,
+};
 
 #[test]
 fn test_parse_request_line() {
@@ -36,9 +38,9 @@ fn test_parse_host_header() {
 
 #[test]
 fn test_is_http_prefix() {
-    assert!(is_http_prefix(b'G'));  // GET
-    assert!(is_http_prefix(b'P'));  // POST, PUT
-    assert!(is_http_prefix(b'H'));  // HEAD, HTTP
+    assert!(is_http_prefix(b'G')); // GET
+    assert!(is_http_prefix(b'P')); // POST, PUT
+    assert!(is_http_prefix(b'H')); // HEAD, HTTP
     assert!(!is_http_prefix(b'A'));
 }
 
@@ -180,7 +182,8 @@ fn test_http_detector_response() {
 #[test]
 fn test_http_detector_with_host() {
     let detector = HttpDetector::new();
-    let data = b"POST /api/users HTTP/1.1\r\nHost: api.example.com:8080\r\nContent-Length: 42\r\n\r\n";
+    let data =
+        b"POST /api/users HTTP/1.1\r\nHost: api.example.com:8080\r\nContent-Length: 42\r\n\r\n";
 
     let result = detector.detect(data);
     assert!(result.is_some());
@@ -206,13 +209,17 @@ fn test_http_detector_non_http() {
         b"Hello World".as_slice(),
         b"\x00\x01\x02\x03".as_slice(),
         b"random binary data".as_slice(),
-        b"SSH-2.0-OpenSSH_8.4".as_slice(),  // SSH starts with 'S', not a HTTP prefix
-        b"220 smtp.example.com ESMTP".as_slice(),  // SMTP starts with '2'
+        b"SSH-2.0-OpenSSH_8.4".as_slice(), // SSH starts with 'S', not a HTTP prefix
+        b"220 smtp.example.com ESMTP".as_slice(), // SMTP starts with '2'
     ];
 
     for data in test_cases {
         let result = detector.detect(data);
-        assert!(result.is_none(), "Should not detect HTTP in: {:?}", std::str::from_utf8(data));
+        assert!(
+            result.is_none(),
+            "Should not detect HTTP in: {:?}",
+            std::str::from_utf8(data)
+        );
     }
 }
 
@@ -227,7 +234,9 @@ fn test_http_detector_empty_payload() {
 fn test_http_detector_various_methods() {
     let detector = HttpDetector::new();
 
-    let methods = ["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "TRACE", "CONNECT"];
+    let methods = [
+        "GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "TRACE", "CONNECT",
+    ];
     for method in methods {
         let data = format!("{} / HTTP/1.1\r\n\r\n", method);
         let result = detector.detect(data.as_bytes());

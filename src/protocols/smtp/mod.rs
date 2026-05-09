@@ -34,8 +34,8 @@ mod parser;
 
 pub use detector::SmtpDetector;
 pub use parser::{
-    is_smtp_command_prefix, is_smtp_response_prefix, parse_smtp_command, parse_smtp_response,
-    SmtpCommand, SmtpResponse,
+    SmtpCommand, SmtpResponse, is_smtp_command_prefix, is_smtp_response_prefix, parse_smtp_command,
+    parse_smtp_response,
 };
 
 use crate::protocols::Registry;

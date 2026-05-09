@@ -1,9 +1,9 @@
-use rdpi::protocols::tls::{
-    is_tls_record, is_client_hello, parse_client_hello, extract_sni, extract_tls_version,
-    TlsDetector,
-};
+use rdpi::core::types::{Metadata, Protocol};
 use rdpi::protocols::ProtocolDetector;
-use rdpi::core::types::{Protocol, Metadata};
+use rdpi::protocols::tls::{
+    TlsDetector, extract_sni, extract_tls_version, is_client_hello, is_tls_record,
+    parse_client_hello,
+};
 
 // ============================================================================
 // Basic TLS Record Detection Tests
@@ -78,7 +78,7 @@ fn test_parse_non_tls() {
 fn make_minimal_client_hello() -> Vec<u8> {
     // TLS record header
     let mut data = vec![
-        0x16,       // ContentType: Handshake
+        0x16, // ContentType: Handshake
         0x03, 0x03, // Version: TLS 1.2
         0x00, 0x00, // Length: placeholder
     ];
@@ -164,7 +164,7 @@ fn make_client_hello_with_sni(hostname: &str) -> Vec<u8> {
     extensions.extend(versions_ext);
 
     let mut data = vec![
-        0x16,       // ContentType: Handshake
+        0x16, // ContentType: Handshake
         0x03, 0x01, // Version: TLS 1.0 (record layer)
         0x00, 0x00, // Length: placeholder
     ];
@@ -227,7 +227,7 @@ fn make_client_hello_tls12_only(hostname: &str) -> Vec<u8> {
     extensions.extend(sni_ext);
 
     let mut data = vec![
-        0x16,       // ContentType: Handshake
+        0x16, // ContentType: Handshake
         0x03, 0x03, // Version: TLS 1.2 (record layer)
         0x00, 0x00, // Length: placeholder
     ];
@@ -295,7 +295,12 @@ fn test_extract_sni() {
     for hostname in test_cases {
         let data = make_client_hello_with_sni(hostname);
         let sni = extract_sni(&data);
-        assert_eq!(sni, Some(hostname.to_string()), "Failed for hostname: {}", hostname);
+        assert_eq!(
+            sni,
+            Some(hostname.to_string()),
+            "Failed for hostname: {}",
+            hostname
+        );
     }
 }
 

@@ -210,9 +210,9 @@ mod tests {
 
     #[test]
     fn test_is_http_prefix() {
-        assert!(is_http_prefix(b'G'));  // GET
-        assert!(is_http_prefix(b'P'));  // POST, PUT
-        assert!(is_http_prefix(b'H'));  // HEAD, HTTP
+        assert!(is_http_prefix(b'G')); // GET
+        assert!(is_http_prefix(b'P')); // POST, PUT
+        assert!(is_http_prefix(b'H')); // HEAD, HTTP
         assert!(!is_http_prefix(b'A'));
     }
 }

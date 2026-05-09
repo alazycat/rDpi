@@ -1,5 +1,5 @@
-mod parser;
 mod detector;
+mod parser;
 
 pub use detector::DnsDetector;
 

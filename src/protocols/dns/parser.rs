@@ -1,20 +1,20 @@
 use crate::error::{Error, Result};
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]  // Fields reserved for future use
+#[allow(dead_code)] // Fields reserved for future use
 pub struct DnsHeader {
     pub id: u16,
-    pub qr: bool,           // 0=query, 1=response
-    pub opcode: u8,         // 0=standard, 1=inverse, 2=status
-    pub aa: bool,           // authoritative answer
-    pub tc: bool,           // truncated
-    pub rd: bool,           // recursion desired
-    pub ra: bool,           // recursion available
-    pub rcode: u8,          // response code
-    pub qdcount: u16,       // question count
-    pub ancount: u16,       // answer count
-    pub nscount: u16,       // authority count
-    pub arcount: u16,       // additional count
+    pub qr: bool,     // 0=query, 1=response
+    pub opcode: u8,   // 0=standard, 1=inverse, 2=status
+    pub aa: bool,     // authoritative answer
+    pub tc: bool,     // truncated
+    pub rd: bool,     // recursion desired
+    pub ra: bool,     // recursion available
+    pub rcode: u8,    // response code
+    pub qdcount: u16, // question count
+    pub ancount: u16, // answer count
+    pub nscount: u16, // authority count
+    pub arcount: u16, // additional count
 }
 
 pub fn parse_header(data: &[u8]) -> Result<DnsHeader> {

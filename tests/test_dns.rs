@@ -1,6 +1,6 @@
-use rdpi::protocols::{Registry, ProtocolDetector};
-use rdpi::core::types::*;
 use rdpi::Detector;
+use rdpi::core::types::*;
+use rdpi::protocols::{ProtocolDetector, Registry};
 
 #[test]
 fn test_registry_new() {
@@ -18,19 +18,17 @@ fn test_registry_register() {
 // DNS query for "example.com"
 fn make_dns_query() -> Vec<u8> {
     vec![
-        0x12, 0x34,                          // Transaction ID
-        0x01, 0x00,                          // Flags: standard query
-        0x00, 0x01,                          // Questions: 1
-        0x00, 0x00,                          // Answers: 0
-        0x00, 0x00,                          // Authority: 0
-        0x00, 0x00,                          // Additional: 0
-        0x07,                                // Label length: 7
-        b'e', b'x', b'a', b'm', b'p', b'l', b'e',
-        0x03,                                // Label length: 3
-        b'c', b'o', b'm',
-        0x00,                                // End of name
-        0x00, 0x01,                          // Type: A
-        0x00, 0x01,                          // Class: IN
+        0x12, 0x34, // Transaction ID
+        0x01, 0x00, // Flags: standard query
+        0x00, 0x01, // Questions: 1
+        0x00, 0x00, // Answers: 0
+        0x00, 0x00, // Authority: 0
+        0x00, 0x00, // Additional: 0
+        0x07, // Label length: 7
+        b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x03, // Label length: 3
+        b'c', b'o', b'm', 0x00, // End of name
+        0x00, 0x01, // Type: A
+        0x00, 0x01, // Class: IN
     ]
 }
 
@@ -69,20 +67,15 @@ fn test_detector_with_dns() {
     let dns_payload = make_dns_query();
     let mut packet = vec![
         // Ethernet header
-        0x00, 0x11, 0x22, 0x33, 0x44, 0x55,
-        0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
-        0x08, 0x00,
+        0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0x08, 0x00,
         // IPv4 header
         0x45, 0x00,
     ];
     let total_len = (20 + 8 + dns_payload.len()) as u16;
     packet.extend_from_slice(&total_len.to_be_bytes());
     packet.extend_from_slice(&[
-        0x00, 0x01, 0x00, 0x00,
-        0x40, 0x11, 0x00, 0x00,
-        0xc0, 0xa8, 0x01, 0x01,
-        0x0a, 0x00, 0x00, 0x01,
-        // UDP header
+        0x00, 0x01, 0x00, 0x00, 0x40, 0x11, 0x00, 0x00, 0xc0, 0xa8, 0x01, 0x01, 0x0a, 0x00, 0x00,
+        0x01, // UDP header
         0x30, 0x39, 0x00, 0x35,
     ]);
     let udp_len = (8 + dns_payload.len()) as u16;

@@ -1,6 +1,7 @@
+#![cfg(feature = "smtp")]
+
 use rdpi::protocols::smtp::{
-    is_smtp_response_prefix, is_smtp_command_prefix,
-    parse_smtp_response, parse_smtp_command,
+    is_smtp_command_prefix, is_smtp_response_prefix, parse_smtp_command, parse_smtp_response,
 };
 
 #[test]
@@ -169,9 +170,9 @@ fn test_parse_smtp_command_empty() {
 // SMTP Detector Tests
 // ============================================================================
 
-use rdpi::protocols::smtp::SmtpDetector;
+use rdpi::core::types::{Metadata, Protocol};
 use rdpi::protocols::ProtocolDetector;
-use rdpi::core::types::{Protocol, Metadata};
+use rdpi::protocols::smtp::SmtpDetector;
 
 #[test]
 fn test_smtp_detector_postfix_banner() {
@@ -307,7 +308,11 @@ fn test_smtp_detector_non_smtp() {
 
     for data in test_cases {
         let result = detector.detect(data);
-        assert!(result.is_none(), "Should not detect SMTP in: {:?}", std::str::from_utf8(data));
+        assert!(
+            result.is_none(),
+            "Should not detect SMTP in: {:?}",
+            std::str::from_utf8(data)
+        );
     }
 }
 
@@ -346,6 +351,10 @@ fn test_smtp_detector_various_response_codes() {
 
     for (expected_code, data) in test_cases {
         let result = detector.detect(data);
-        assert!(result.is_some(), "Should detect SMTP for code {}", expected_code);
+        assert!(
+            result.is_some(),
+            "Should detect SMTP for code {}",
+            expected_code
+        );
     }
 }

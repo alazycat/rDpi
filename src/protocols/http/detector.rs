@@ -1,6 +1,6 @@
+use super::parser::{is_http_prefix, parse_host_header, parse_request_line, parse_response_line};
 use crate::core::types::*;
 use crate::protocols::ProtocolDetector;
-use super::parser::{is_http_prefix, parse_request_line, parse_response_line, parse_host_header};
 
 pub struct HttpDetector;
 
@@ -40,7 +40,7 @@ impl ProtocolDetector for HttpDetector {
             return Some(
                 DetectionResult::new(Protocol::Http)
                     .with_metadata(metadata)
-                    .with_confidence(1.0)
+                    .with_confidence(1.0),
             );
         }
 
@@ -56,7 +56,7 @@ impl ProtocolDetector for HttpDetector {
             return Some(
                 DetectionResult::new(Protocol::Http)
                     .with_metadata(metadata)
-                    .with_confidence(1.0)
+                    .with_confidence(1.0),
             );
         }
 

@@ -11,7 +11,10 @@ pub fn parse(data: &[u8]) -> Result<(&[u8], IpInfo)> {
     match version {
         4 => parse_ipv4(data),
         6 => parse_ipv6(data),
-        _ => Err(Error::InvalidPacket(format!("Unknown IP version: {}", version))),
+        _ => Err(Error::InvalidPacket(format!(
+            "Unknown IP version: {}",
+            version
+        ))),
     }
 }
 

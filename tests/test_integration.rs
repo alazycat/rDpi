@@ -6,11 +6,11 @@
 //! - Metadata extraction through full pipeline
 //! - Edge cases and priority handling
 
-use rdpi::protocols::{Registry, ProtocolDetector};
-use rdpi::core::types::{Protocol, Metadata};
+use rdpi::core::types::{Metadata, Protocol};
+use rdpi::protocols::dns::DnsDetector;
 use rdpi::protocols::http::HttpDetector;
 use rdpi::protocols::tls::TlsDetector;
-use rdpi::protocols::dns::DnsDetector;
+use rdpi::protocols::{ProtocolDetector, Registry};
 
 // ============================================================================
 // Helper Functions for TLS Test Data
@@ -57,7 +57,7 @@ fn make_client_hello_with_sni(hostname: &str) -> Vec<u8> {
     extensions.extend(versions_ext);
 
     let mut data = vec![
-        0x16,       // ContentType: Handshake
+        0x16, // ContentType: Handshake
         0x03, 0x01, // Version: TLS 1.0 (record layer)
         0x00, 0x00, // Length: placeholder
     ];
@@ -89,7 +89,7 @@ fn make_client_hello_with_sni(hostname: &str) -> Vec<u8> {
 /// Helper to construct a minimal ClientHello without SNI
 fn make_minimal_client_hello() -> Vec<u8> {
     let mut data = vec![
-        0x16,       // ContentType: Handshake
+        0x16, // ContentType: Handshake
         0x03, 0x03, // Version: TLS 1.2
         0x00, 0x00, // Length: placeholder
     ];
@@ -171,6 +171,10 @@ fn test_registry_default_detector_count() {
             count += 1;
         }
         #[cfg(feature = "smtp")]
+        {
+            count += 1;
+        }
+        #[cfg(feature = "quic")]
         {
             count += 1;
         }
@@ -362,7 +366,8 @@ fn test_each_detector_is_specific() {
 #[test]
 fn test_http_metadata_extraction_through_pipeline() {
     let registry = Registry::default();
-    let payload = b"POST /api/users HTTP/1.1\r\nHost: api.example.com:8080\r\nContent-Length: 42\r\n\r\n";
+    let payload =
+        b"POST /api/users HTTP/1.1\r\nHost: api.example.com:8080\r\nContent-Length: 42\r\n\r\n";
 
     let result = registry.detect(payload);
     assert!(result.is_some());
@@ -540,7 +545,9 @@ fn test_multiple_protocol_markers_confusion() {
 fn test_various_http_methods() {
     let registry = Registry::default();
 
-    let methods = ["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "TRACE", "CONNECT"];
+    let methods = [
+        "GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "TRACE", "CONNECT",
+    ];
 
     for method in methods {
         let payload = format!("{} / HTTP/1.1\r\nHost: test.com\r\n\r\n", method);
@@ -624,6 +631,7 @@ fn test_detector_names() {
 // ============================================================================
 
 #[test]
+#[cfg(feature = "ssh")]
 fn test_registry_detects_ssh() {
     let registry = Registry::default();
     let payload = b"SSH-2.0-OpenSSH_8.9p1\r\n";
@@ -637,6 +645,7 @@ fn test_registry_detects_ssh() {
 }
 
 #[test]
+#[cfg(feature = "ssh")]
 fn test_ssh_metadata_through_pipeline() {
     let registry = Registry::default();
     let payload = b"SSH-2.0-dropbear_2022.83\r\n";
@@ -657,6 +666,7 @@ fn test_ssh_metadata_through_pipeline() {
 // ============================================================================
 
 #[test]
+#[cfg(feature = "smtp")]
 fn test_registry_detects_smtp_banner() {
     let registry = Registry::default();
     let payload = b"220 mail.example.com ESMTP Postfix\r\n";
@@ -669,6 +679,7 @@ fn test_registry_detects_smtp_banner() {
 }
 
 #[test]
+#[cfg(feature = "smtp")]
 fn test_registry_detects_smtp_command() {
     let registry = Registry::default();
     let payload = b"EHLO client.example.com\r\n";
@@ -688,6 +699,7 @@ fn test_registry_detects_smtp_command() {
 }
 
 #[test]
+#[cfg(feature = "smtp")]
 fn test_smtp_metadata_through_pipeline() {
     let registry = Registry::default();
     let payload = b"220 smtp.gmail.com ESMTP\r\n";
@@ -708,6 +720,7 @@ fn test_smtp_metadata_through_pipeline() {
 // ============================================================================
 
 #[test]
+#[cfg(feature = "ssh")]
 fn test_detection_priority_ssh_over_http() {
     // SSH starts with 'S', HTTP doesn't start with 'S'
     // Verify SSH is detected correctly
@@ -720,6 +733,7 @@ fn test_detection_priority_ssh_over_http() {
 }
 
 #[test]
+#[cfg(feature = "smtp")]
 fn test_detection_priority_smtp_vs_http() {
     // SMTP responses start with 2-5, HTTP doesn't
     // SMTP EHLO starts with E, HTTP doesn't
@@ -732,6 +746,13 @@ fn test_detection_priority_smtp_vs_http() {
 }
 
 #[test]
+#[cfg(all(
+    feature = "tls",
+    feature = "ssh",
+    feature = "smtp",
+    feature = "http",
+    feature = "dns"
+))]
 fn test_all_protocols_detected() {
     let registry = Registry::default();
 
@@ -757,10 +778,15 @@ fn test_all_protocols_detected() {
 }
 
 #[test]
-fn test_detector_names_ssh_smtp() {
+#[cfg(feature = "ssh")]
+fn test_detector_names_ssh() {
     let ssh_detector = rdpi::protocols::ssh::SshDetector::new();
-    let smtp_detector = rdpi::protocols::smtp::SmtpDetector::new();
-
     assert_eq!(ssh_detector.name(), "ssh");
+}
+
+#[test]
+#[cfg(feature = "smtp")]
+fn test_detector_names_smtp() {
+    let smtp_detector = rdpi::protocols::smtp::SmtpDetector::new();
     assert_eq!(smtp_detector.name(), "smtp");
 }
