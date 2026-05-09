@@ -31,3 +31,35 @@ fn test_flow_key() {
     assert_eq!(key.src_port, 12345);
     assert_eq!(key.transport, TransportProto::Udp);
 }
+
+// ============================================================================
+// DetectContext Tests
+// ============================================================================
+
+#[test]
+fn test_detect_context_creation() {
+    use rdpi::core::types::DetectContext;
+
+    let ctx = DetectContext {
+        src_port: 12345,
+        dst_port: 443,
+        is_http3_port: true,
+    };
+
+    assert_eq!(ctx.src_port, 12345);
+    assert_eq!(ctx.dst_port, 443);
+    assert!(ctx.is_http3_port);
+}
+
+#[test]
+fn test_detect_context_non_http3_port() {
+    use rdpi::core::types::DetectContext;
+
+    let ctx = DetectContext {
+        src_port: 8080,
+        dst_port: 8443,
+        is_http3_port: false,
+    };
+
+    assert!(!ctx.is_http3_port);
+}

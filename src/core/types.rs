@@ -23,6 +23,8 @@ pub enum Protocol {
     Ssh,
     Smtp,
     // 扩展协议
+    Quic,
+    Http3,
     Other(u16),
 }
 
@@ -46,6 +48,7 @@ pub enum Metadata {
     Http(HttpMetadata),
     Ssh(SshMetadata),
     Smtp(SmtpMetadata),
+    Quic(QuicMetadata),
 }
 
 #[derive(Debug, Clone)]
@@ -68,14 +71,22 @@ pub struct HttpMetadata {
 
 #[derive(Debug, Clone)]
 pub struct SshMetadata {
-    pub version: Option<String>,   // "2.0" or "1.99"
-    pub software: Option<String>,  // "OpenSSH_8.9p1", "dropbear_2022.83"
+    pub version: Option<String>,  // "2.0" or "1.99"
+    pub software: Option<String>, // "OpenSSH_8.9p1", "dropbear_2022.83"
 }
 
 #[derive(Debug, Clone)]
 pub struct SmtpMetadata {
-    pub hostname: Option<String>,  // from banner or EHLO
-    pub is_client: bool,           // true = client command, false = server response
+    pub hostname: Option<String>, // from banner or EHLO
+    pub is_client: bool,          // true = client command, false = server response
+}
+
+/// QUIC metadata - SNI extraction requires Initial key derivation (not implemented)
+#[derive(Debug, Clone)]
+pub struct QuicMetadata {
+    pub sni: Option<String>,
+    pub version: Option<String>,
+    pub destination_connection_id: Option<Vec<u8>>,
 }
 
 /// 识别结果
@@ -104,4 +115,12 @@ impl DetectionResult {
         self.confidence = confidence.clamp(0.0, 1.0);
         self
     }
+}
+
+/// 检测上下文，包含端口信息
+#[derive(Debug, Clone, Copy)]
+pub struct DetectContext {
+    pub src_port: u16,
+    pub dst_port: u16,
+    pub is_http3_port: bool,
 }
