@@ -60,6 +60,7 @@ pub struct DnsMetadata {
 pub struct TlsMetadata {
     pub sni: Option<String>,
     pub version: Option<String>,
+    pub application: Option<Application>,
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +88,7 @@ pub struct QuicMetadata {
     pub sni: Option<String>,
     pub version: Option<String>,
     pub destination_connection_id: Option<Vec<u8>>,
+    pub application: Option<Application>,
 }
 
 /// 识别结果

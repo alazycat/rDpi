@@ -51,6 +51,7 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
             sni: None, // Would need decryption for SNI
             version: Some(format!("{:08x}", info.version)),
             destination_connection_id: Some(info.dcid),
+            application: None,
         };
 
         // Report QUIC with high confidence since we successfully parsed an Initial packet
@@ -75,6 +76,7 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
             sni: None,
             version: Some(format!("{:08x}", info.version)),
             destination_connection_id: Some(info.dcid),
+            application: None,
         };
 
         // HTTP/3 判断：UDP 443 + 标准版本

@@ -112,3 +112,35 @@ fn test_application_name() {
     assert_eq!(Application::Netflix.name(), "Netflix");
     assert_eq!(Application::WeChat.name(), "WeChat");
 }
+
+// ============================================================================
+// TlsMetadata / QuicMetadata Application Field Tests
+// ============================================================================
+
+#[test]
+fn test_tls_metadata_with_application() {
+    use rdpi::core::types::{Application, TlsMetadata};
+
+    let metadata = TlsMetadata {
+        sni: Some("www.youtube.com".to_string()),
+        version: Some("TLSv1.3".to_string()),
+        application: Some(Application::YouTube),
+    };
+
+    assert_eq!(metadata.sni, Some("www.youtube.com".to_string()));
+    assert_eq!(metadata.application, Some(Application::YouTube));
+}
+
+#[test]
+fn test_quic_metadata_with_application() {
+    use rdpi::core::types::QuicMetadata;
+
+    let metadata = QuicMetadata {
+        sni: None,
+        version: Some("00000001".to_string()),
+        destination_connection_id: Some(vec![0x01, 0x02]),
+        application: None, // 预留，目前为 None
+    };
+
+    assert!(metadata.application.is_none());
+}

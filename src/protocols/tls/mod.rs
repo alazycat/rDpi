@@ -52,6 +52,7 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
         let metadata = TlsMetadata {
             sni: info.sni,
             version: info.version,
+            application: None,
         };
 
         Some(
