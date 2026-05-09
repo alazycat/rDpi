@@ -8,17 +8,25 @@ use crate::core::types::*;
 pub mod dns;
 #[cfg(feature = "http")]
 pub mod http;
-#[cfg(feature = "tls")]
-pub mod tls;
-#[cfg(feature = "ssh")]
-pub mod ssh;
+#[cfg(feature = "quic")]
+pub mod quic;
 #[cfg(feature = "smtp")]
 pub mod smtp;
+#[cfg(feature = "ssh")]
+pub mod ssh;
+#[cfg(feature = "tls")]
+pub mod tls;
 
 /// 协议检测器 Trait
 pub trait ProtocolDetector: Send + Sync {
     fn name(&self) -> &'static str;
     fn detect(&self, payload: &[u8]) -> Option<DetectionResult>;
+
+    /// 带端口上下文的检测，默认转发到 detect()
+    fn detect_with_context(&self, payload: &[u8], ctx: &DetectContext) -> Option<DetectionResult> {
+        let _ = ctx;
+        self.detect(payload)
+    }
 }
 
 /// 协议注册表
@@ -28,7 +36,9 @@ pub struct Registry {
 
 impl Registry {
     pub fn new() -> Self {
-        Self { detectors: Vec::new() }
+        Self {
+            detectors: Vec::new(),
+        }
     }
 
     pub fn register(&mut self, detector: Box<dyn ProtocolDetector>) {
@@ -58,8 +68,10 @@ impl Default for Registry {
 }
 
 /// 注册所有启用的内置协议
-/// 注册顺序：TLS → SSH → SMTP → HTTP → DNS（按特异性递减）
+/// 注册顺序：QUIC → TLS → SSH → SMTP → HTTP → DNS（按特异性递减）
 pub fn register_defaults(_registry: &mut Registry) {
+    #[cfg(feature = "quic")]
+    quic::register(_registry);
     #[cfg(feature = "tls")]
     tls::register(_registry);
     #[cfg(feature = "ssh")]
