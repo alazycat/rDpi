@@ -7,6 +7,8 @@
 //! - `dns` - DNS protocol detection (enabled by default)
 //! - `http` - HTTP protocol detection with Host header extraction (enabled by default)
 //! - `tls` - TLS protocol detection with SNI extraction (enabled by default)
+//! - `ssh` - SSH protocol detection with version extraction
+//! - `smtp` - SMTP protocol detection with banner/command detection
 //!
 //! # Example
 //!
@@ -26,6 +28,8 @@
 //! | DNS | `dns` | Domain name |
 //! | HTTP | `http` | Method, Path, Host header |
 //! | TLS | `tls` | SNI, TLS version |
+//! | SSH | `ssh` | Protocol version, Software version |
+//! | SMTP | `smtp` | Hostname, is_client flag |
 
 mod error;
 
