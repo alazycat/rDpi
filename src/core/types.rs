@@ -44,6 +44,8 @@ pub enum Metadata {
     Dns(DnsMetadata),
     Tls(TlsMetadata),
     Http(HttpMetadata),
+    Ssh(SshMetadata),
+    Smtp(SmtpMetadata),
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +64,18 @@ pub struct HttpMetadata {
     pub host: Option<String>,
     pub method: Option<String>,
     pub path: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SshMetadata {
+    pub version: Option<String>,   // "2.0" or "1.99"
+    pub software: Option<String>,  // "OpenSSH_8.9p1", "dropbear_2022.83"
+}
+
+#[derive(Debug, Clone)]
+pub struct SmtpMetadata {
+    pub hostname: Option<String>,  // from banner or EHLO
+    pub is_client: bool,           // true = client command, false = server response
 }
 
 /// 识别结果
