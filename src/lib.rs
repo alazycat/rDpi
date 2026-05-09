@@ -1,6 +1,31 @@
 //! rDpi - Rust Deep Packet Inspection Library
 //!
 //! 轻量级、高性能的深度包检测库，专注协议识别与流量分析。
+//!
+//! # Features
+//!
+//! - `dns` - DNS protocol detection (enabled by default)
+//! - `http` - HTTP protocol detection with Host header extraction (enabled by default)
+//! - `tls` - TLS protocol detection with SNI extraction (enabled by default)
+//!
+//! # Example
+//!
+//! ```rust
+//! use rdpi::Detector;
+//!
+//! let mut detector = Detector::new();
+//! // Pass raw packet bytes to detect protocol
+//! let packet_data: &[u8] = &[0x00; 14];
+//! let result = detector.detect(packet_data);
+//! ```
+//!
+//! # Supported Protocols
+//!
+//! | Protocol | Feature | Metadata |
+//! |----------|---------|----------|
+//! | DNS | `dns` | Domain name |
+//! | HTTP | `http` | Method, Path, Host header |
+//! | TLS | `tls` | SNI, TLS version |
 
 mod error;
 

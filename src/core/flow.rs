@@ -59,6 +59,7 @@ impl Flow {
 /// 流表
 pub struct FlowTable {
     flows: HashMap<FlowKey, Flow>,
+    #[allow(dead_code)]  // Reserved for future LRU eviction
     max_entries: usize,
     timeout: Duration,
 }

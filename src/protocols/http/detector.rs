@@ -4,6 +4,12 @@ use super::parser::{is_http_prefix, parse_request_line, parse_response_line, par
 
 pub struct HttpDetector;
 
+impl Default for HttpDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HttpDetector {
     pub fn new() -> Self {
         Self

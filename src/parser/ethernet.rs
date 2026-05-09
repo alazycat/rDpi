@@ -12,6 +12,7 @@ pub fn parse(data: &[u8]) -> Result<(&[u8], EthernetHeader)> {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]  // Field reserved for future use
 pub struct EthernetHeader {
     pub ether_type: u16,
 }

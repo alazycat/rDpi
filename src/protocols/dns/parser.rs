@@ -1,6 +1,7 @@
 use crate::error::{Error, Result};
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]  // Fields reserved for future use
 pub struct DnsHeader {
     pub id: u16,
     pub qr: bool,           // 0=query, 1=response
@@ -70,9 +71,6 @@ pub fn parse_name(data: &[u8], offset: usize) -> Result<(String, usize)> {
                 return Err(Error::TruncatedHeader);
             }
             let ptr = (((data[pos] & 0x3f) as usize) << 8) | (data[pos + 1] as usize);
-            if !jumped {
-                pos += 2;
-            }
             jumped = true;
             pos = ptr;
             jumps += 1;

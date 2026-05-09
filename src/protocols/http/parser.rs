@@ -71,7 +71,7 @@ pub fn parse_response_line(data: &[u8]) -> Option<HttpResponseLine> {
     let status_code: u16 = parts[1].parse().ok()?;
 
     // 验证状态码范围
-    if status_code < 100 || status_code > 599 {
+    if !(100..=599).contains(&status_code) {
         return None;
     }
 

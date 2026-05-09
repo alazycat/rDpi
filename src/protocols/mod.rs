@@ -55,11 +55,11 @@ impl Default for Registry {
 
 /// 注册所有启用的内置协议
 /// 注册顺序：TLS → HTTP → DNS（TLS 魔数最明确，优先匹配）
-pub fn register_defaults(registry: &mut Registry) {
+pub fn register_defaults(_registry: &mut Registry) {
     #[cfg(feature = "tls")]
-    tls::register(registry);
+    tls::register(_registry);
     #[cfg(feature = "http")]
-    http::register(registry);
+    http::register(_registry);
     #[cfg(feature = "dns")]
-    dns::register(registry);
+    dns::register(_registry);
 }
