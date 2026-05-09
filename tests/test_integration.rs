@@ -150,7 +150,7 @@ fn make_dns_query(domain: &str) -> Vec<u8> {
 #[test]
 fn test_registry_default_detector_count() {
     let registry = Registry::default();
-    // All three detectors should be registered by default
+    // All detectors should be registered by default
     // (assuming all features are enabled)
     let expected_count = {
         let mut count = 0;
@@ -163,6 +163,14 @@ fn test_registry_default_detector_count() {
             count += 1;
         }
         #[cfg(feature = "dns")]
+        {
+            count += 1;
+        }
+        #[cfg(feature = "ssh")]
+        {
+            count += 1;
+        }
+        #[cfg(feature = "smtp")]
         {
             count += 1;
         }
