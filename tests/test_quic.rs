@@ -224,3 +224,20 @@ fn test_quic_detector_detect_with_context_default() {
     // 当前默认实现应该返回 QUIC（尚未实现 HTTP/3 逻辑）
     assert_eq!(detection.protocol, Protocol::Quic);
 }
+
+#[test]
+fn test_registry_detect_with_ports() {
+    use rdpi::protocols::Registry;
+
+    let mut registry = Registry::new();
+    registry.register(Box::new(QuicDetector::new()));
+
+    let data = make_quic_v1_initial(&[0x01, 0x02, 0x03, 0x04]);
+
+    // 测试 detect_with_ports
+    let result = registry.detect_with_ports(&data, 12345, 443);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Quic);
+}

@@ -57,6 +57,19 @@ impl Registry {
         }
         None
     }
+
+    /// 带端口信息的检测
+    pub fn detect_with_ports(&self, payload: &[u8], src_port: u16, dst_port: u16) -> Option<DetectionResult> {
+        let is_http3_port = src_port == 443 || dst_port == 443;
+        let ctx = DetectContext { src_port, dst_port, is_http3_port };
+
+        for detector in &self.detectors {
+            if let Some(result) = detector.detect_with_context(payload, &ctx) {
+                return Some(result);
+            }
+        }
+        None
+    }
 }
 
 impl Default for Registry {
