@@ -10,6 +10,10 @@ pub mod dns;
 pub mod http;
 #[cfg(feature = "tls")]
 pub mod tls;
+#[cfg(feature = "ssh")]
+pub mod ssh;
+#[cfg(feature = "smtp")]
+pub mod smtp;
 
 /// 协议检测器 Trait
 pub trait ProtocolDetector: Send + Sync {
@@ -54,10 +58,14 @@ impl Default for Registry {
 }
 
 /// 注册所有启用的内置协议
-/// 注册顺序：TLS → HTTP → DNS（TLS 魔数最明确，优先匹配）
+/// 注册顺序：TLS → SSH → SMTP → HTTP → DNS（按特异性递减）
 pub fn register_defaults(_registry: &mut Registry) {
     #[cfg(feature = "tls")]
     tls::register(_registry);
+    #[cfg(feature = "ssh")]
+    ssh::register(_registry);
+    #[cfg(feature = "smtp")]
+    smtp::register(_registry);
     #[cfg(feature = "http")]
     http::register(_registry);
     #[cfg(feature = "dns")]

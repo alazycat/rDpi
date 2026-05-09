@@ -17,5 +17,7 @@ default = ["dns", "http", "tls"]
 dns = []
 http = []
 tls = []
+ssh = []
+smtp = []
 
 [dev-dependencies]
