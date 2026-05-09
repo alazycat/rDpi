@@ -63,3 +63,52 @@ fn test_detect_context_non_http3_port() {
 
     assert!(!ctx.is_http3_port);
 }
+
+// ============================================================================
+// Application Tests
+// ============================================================================
+
+#[test]
+fn test_application_variants() {
+    use rdpi::core::types::Application;
+
+    // 流媒体
+    let _ = Application::YouTube;
+    let _ = Application::Netflix;
+    let _ = Application::Bilibili;
+    let _ = Application::Douyin;
+    let _ = Application::Iqiyi;
+    let _ = Application::TencentVideo;
+    let _ = Application::Youku;
+    let _ = Application::Hulu;
+    let _ = Application::DisneyPlus;
+    let _ = Application::AmazonPrime;
+    // IM
+    let _ = Application::WeChat;
+    let _ = Application::Telegram;
+    let _ = Application::WhatsApp;
+    let _ = Application::Discord;
+    let _ = Application::QQ;
+    let _ = Application::Slack;
+    let _ = Application::Line;
+    let _ = Application::Signal;
+}
+
+#[test]
+fn test_application_category() {
+    use rdpi::core::types::{Application, ApplicationCategory};
+
+    assert_eq!(Application::YouTube.category(), ApplicationCategory::Streaming);
+    assert_eq!(Application::Netflix.category(), ApplicationCategory::Streaming);
+    assert_eq!(Application::WeChat.category(), ApplicationCategory::Im);
+    assert_eq!(Application::Telegram.category(), ApplicationCategory::Im);
+}
+
+#[test]
+fn test_application_name() {
+    use rdpi::core::types::Application;
+
+    assert_eq!(Application::YouTube.name(), "YouTube");
+    assert_eq!(Application::Netflix.name(), "Netflix");
+    assert_eq!(Application::WeChat.name(), "WeChat");
+}

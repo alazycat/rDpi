@@ -124,3 +124,85 @@ pub struct DetectContext {
     pub dst_port: u16,
     pub is_http3_port: bool,
 }
+
+/// 应用分类
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ApplicationCategory {
+    Streaming,
+    Im,
+    Other,
+}
+
+/// 应用层协议识别
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Application {
+    // 流媒体
+    YouTube,
+    Netflix,
+    Bilibili,
+    Douyin,
+    Iqiyi,
+    TencentVideo,
+    Youku,
+    Hulu,
+    DisneyPlus,
+    AmazonPrime,
+    // IM
+    WeChat,
+    Telegram,
+    WhatsApp,
+    Discord,
+    QQ,
+    Slack,
+    Line,
+    Signal,
+}
+
+impl Application {
+    pub fn category(&self) -> ApplicationCategory {
+        match self {
+            Application::YouTube
+            | Application::Netflix
+            | Application::Bilibili
+            | Application::Douyin
+            | Application::Iqiyi
+            | Application::TencentVideo
+            | Application::Youku
+            | Application::Hulu
+            | Application::DisneyPlus
+            | Application::AmazonPrime => ApplicationCategory::Streaming,
+
+            Application::WeChat
+            | Application::Telegram
+            | Application::WhatsApp
+            | Application::Discord
+            | Application::QQ
+            | Application::Slack
+            | Application::Line
+            | Application::Signal => ApplicationCategory::Im,
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Application::YouTube => "YouTube",
+            Application::Netflix => "Netflix",
+            Application::Bilibili => "Bilibili",
+            Application::Douyin => "Douyin",
+            Application::Iqiyi => "Iqiyi",
+            Application::TencentVideo => "TencentVideo",
+            Application::Youku => "Youku",
+            Application::Hulu => "Hulu",
+            Application::DisneyPlus => "DisneyPlus",
+            Application::AmazonPrime => "AmazonPrime",
+            Application::WeChat => "WeChat",
+            Application::Telegram => "Telegram",
+            Application::WhatsApp => "WhatsApp",
+            Application::Discord => "Discord",
+            Application::QQ => "QQ",
+            Application::Slack => "Slack",
+            Application::Line => "Line",
+            Application::Signal => "Signal",
+        }
+    }
+}
