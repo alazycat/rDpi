@@ -442,3 +442,89 @@ fn test_tls_detector_name() {
     let detector = TlsDetector::new();
     assert_eq!(detector.name(), "tls");
 }
+
+// ============================================================================
+// Application Identification Tests
+// ============================================================================
+
+#[test]
+fn test_tls_youtube_application() {
+    use rdpi::core::types::Application;
+    use rdpi::protocols::ProtocolDetector;
+
+    let detector = TlsDetector::new();
+
+    // ClientHello with SNI: www.youtube.com
+    let sni = "www.youtube.com";
+    let packet = make_client_hello_with_sni(sni);
+
+    let result = detector.detect(&packet);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    if let rdpi::core::types::Metadata::Tls(meta) = detection.metadata {
+        assert_eq!(meta.sni, Some(sni.to_string()));
+        assert_eq!(meta.application, Some(Application::YouTube));
+    } else {
+        panic!("Expected TLS metadata");
+    }
+}
+
+#[test]
+fn test_tls_netflix_application() {
+    use rdpi::core::types::Application;
+    use rdpi::protocols::ProtocolDetector;
+
+    let detector = TlsDetector::new();
+    let sni = "www.nflxvideo.net";
+    let packet = make_client_hello_with_sni(sni);
+
+    let result = detector.detect(&packet);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    if let rdpi::core::types::Metadata::Tls(meta) = detection.metadata {
+        assert_eq!(meta.application, Some(Application::Netflix));
+    } else {
+        panic!("Expected TLS metadata");
+    }
+}
+
+#[test]
+fn test_tls_wechat_application() {
+    use rdpi::core::types::Application;
+    use rdpi::protocols::ProtocolDetector;
+
+    let detector = TlsDetector::new();
+    let sni = "weixin.qq.com";
+    let packet = make_client_hello_with_sni(sni);
+
+    let result = detector.detect(&packet);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    if let rdpi::core::types::Metadata::Tls(meta) = detection.metadata {
+        assert_eq!(meta.application, Some(Application::WeChat));
+    } else {
+        panic!("Expected TLS metadata");
+    }
+}
+
+#[test]
+fn test_tls_unknown_domain_no_application() {
+    use rdpi::protocols::ProtocolDetector;
+
+    let detector = TlsDetector::new();
+    let sni = "www.unknown-site.example";
+    let packet = make_client_hello_with_sni(sni);
+
+    let result = detector.detect(&packet);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    if let rdpi::core::types::Metadata::Tls(meta) = detection.metadata {
+        assert!(meta.application.is_none());
+    } else {
+        panic!("Expected TLS metadata");
+    }
+}
