@@ -14,6 +14,7 @@
 //! - `infra` - NTP/DHCP protocol detection with metadata extraction
 //! - `snmp` - SNMP v1/v2c protocol detection with full PDU parsing
 //! - `modbus` - Modbus TCP protocol detection with function code parsing
+//! - `database` - MySQL/PostgreSQL/Redis protocol detection with metadata extraction
 //!
 //! # Example
 //!
@@ -42,6 +43,9 @@
 //! | DHCP | `infra` | Opcode, Client MAC |
 //! | SNMP | `snmp` | Version, Community, PDU type, VarBinds, Trap info |
 //! | Modbus | `modbus` | Transaction ID, Function code, Data |
+//! | MySQL | `database` | Server version, Auth plugin |
+//! | PostgreSQL | `database` | User, Database, Application name |
+//! | Redis | `database` | Command type (GET/SET/SELECT, etc.) |
 
 mod error;
 

@@ -194,6 +194,10 @@ fn test_registry_default_detector_count() {
         {
             count += 1; // Modbus
         }
+        #[cfg(feature = "database")]
+        {
+            count += 3; // MySQL + PostgreSQL + Redis
+        }
         count
     };
     assert_eq!(registry.detector_count(), expected_count);
@@ -805,4 +809,721 @@ fn test_detector_names_ssh() {
 fn test_detector_names_smtp() {
     let smtp_detector = rdpi::protocols::smtp::SmtpDetector::new();
     assert_eq!(smtp_detector.name(), "smtp");
+}
+
+// ============================================================================
+// Phase 5.1: POP3 Tests
+// ============================================================================
+
+#[test]
+#[cfg(feature = "mail")]
+fn test_registry_detects_pop3_response() {
+    let registry = Registry::default();
+    let payload = b"+OK POP3 server ready\r\n";
+
+    let result = registry.detect(payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Pop3);
+    assert_eq!(detection.confidence, 1.0);
+}
+
+#[test]
+#[cfg(feature = "mail")]
+fn test_registry_detects_pop3_err_response() {
+    let registry = Registry::default();
+    let payload = b"-ERR Authentication failed\r\n";
+
+    let result = registry.detect(payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Pop3);
+}
+
+#[test]
+#[cfg(feature = "mail")]
+fn test_registry_detects_pop3_user_command() {
+    let registry = Registry::default();
+    let payload = b"USER test@example.com\r\n";
+
+    let result = registry.detect(payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Pop3);
+}
+
+#[test]
+#[cfg(feature = "mail")]
+fn test_pop3_detector_name() {
+    let pop3_detector = rdpi::protocols::pop3::Pop3Detector::new();
+    assert_eq!(pop3_detector.name(), "pop3");
+}
+
+// ============================================================================
+// Phase 5.1: IMAP Tests
+// ============================================================================
+
+#[test]
+#[cfg(feature = "mail")]
+fn test_registry_detects_imap_untagged_response() {
+    let registry = Registry::default();
+    let payload = b"* OK IMAP4rev1 Service Ready\r\n";
+
+    let result = registry.detect(payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Imap);
+    assert_eq!(detection.confidence, 1.0);
+}
+
+#[test]
+#[cfg(feature = "mail")]
+fn test_registry_detects_imap_tagged_response() {
+    let registry = Registry::default();
+    let payload = b"A001 OK LOGIN completed\r\n";
+
+    let result = registry.detect(payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Imap);
+}
+
+#[test]
+#[cfg(feature = "mail")]
+fn test_registry_detects_imap_login_command() {
+    let registry = Registry::default();
+    let payload = b"A001 LOGIN user password\r\n";
+
+    let result = registry.detect(payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Imap);
+}
+
+#[test]
+#[cfg(feature = "mail")]
+fn test_registry_detects_imap_select_command() {
+    let registry = Registry::default();
+    let payload = b"A002 SELECT INBOX\r\n";
+
+    let result = registry.detect(payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Imap);
+}
+
+#[test]
+#[cfg(feature = "mail")]
+fn test_imap_detector_name() {
+    let imap_detector = rdpi::protocols::imap::ImapDetector::new();
+    assert_eq!(imap_detector.name(), "imap");
+}
+
+// ============================================================================
+// Phase 5.1: NTP Tests
+// ============================================================================
+
+/// Helper to construct an NTP packet
+#[cfg(feature = "infra")]
+fn make_ntp_packet(version: u8, mode: u8, stratum: u8) -> Vec<u8> {
+    let first_byte = (version << 3) | (mode & 0x07);
+    let mut packet = vec![0u8; 48];
+    packet[0] = first_byte;
+    packet[1] = stratum;
+    packet
+}
+
+#[test]
+#[cfg(feature = "infra")]
+fn test_registry_detects_ntp_v4_client() {
+    let registry = Registry::default();
+    let payload = make_ntp_packet(4, 3, 2); // v4, mode 3 (client), stratum 2
+
+    let result = registry.detect(&payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Ntp);
+    assert_eq!(detection.confidence, 1.0);
+
+    if let Metadata::Ntp(meta) = detection.metadata {
+        assert_eq!(meta.version, 4);
+        assert_eq!(meta.mode, 3);
+        assert_eq!(meta.stratum, 2);
+    } else {
+        panic!("Expected Ntp metadata");
+    }
+}
+
+#[test]
+#[cfg(feature = "infra")]
+fn test_registry_detects_ntp_v4_server() {
+    let registry = Registry::default();
+    let payload = make_ntp_packet(4, 4, 1); // v4, mode 4 (server), stratum 1
+
+    let result = registry.detect(&payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Ntp);
+
+    if let Metadata::Ntp(meta) = detection.metadata {
+        assert_eq!(meta.version, 4);
+        assert_eq!(meta.mode, 4);
+        assert_eq!(meta.stratum, 1);
+    } else {
+        panic!("Expected Ntp metadata");
+    }
+}
+
+#[test]
+#[cfg(feature = "infra")]
+fn test_registry_detects_ntp_v3() {
+    let registry = Registry::default();
+    let payload = make_ntp_packet(3, 3, 1);
+
+    let result = registry.detect(&payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Ntp);
+
+    if let Metadata::Ntp(meta) = detection.metadata {
+        assert_eq!(meta.version, 3);
+    } else {
+        panic!("Expected Ntp metadata");
+    }
+}
+
+// Note: These tests verify the detector's strictness, not Registry behavior.
+// Registry may match invalid data with other detectors (e.g., DNS may match short binary data).
+#[test]
+#[cfg(feature = "infra")]
+fn test_ntp_detector_invalid_too_short() {
+    let ntp_detector = rdpi::protocols::ntp::NtpDetector::new();
+    let payload = vec![0u8; 47];
+    assert!(ntp_detector.detect(&payload).is_none());
+}
+
+#[test]
+#[cfg(feature = "infra")]
+fn test_ntp_detector_invalid_version() {
+    let ntp_detector = rdpi::protocols::ntp::NtpDetector::new();
+    let payload = make_ntp_packet(5, 3, 1); // v5 (invalid)
+    assert!(ntp_detector.detect(&payload).is_none());
+}
+
+#[test]
+#[cfg(feature = "infra")]
+fn test_ntp_detector_invalid_mode() {
+    let ntp_detector = rdpi::protocols::ntp::NtpDetector::new();
+    let payload = make_ntp_packet(4, 0, 1); // mode 0 (reserved)
+    assert!(ntp_detector.detect(&payload).is_none());
+}
+
+// ============================================================================
+// Phase 5.1: DHCP Tests
+// ============================================================================
+
+/// DHCP Magic Cookie (RFC 1497)
+#[cfg(feature = "infra")]
+const DHCP_MAGIC_COOKIE: [u8; 4] = [0x63, 0x82, 0x53, 0x63];
+
+/// Helper to construct a DHCP packet
+#[cfg(feature = "infra")]
+fn make_dhcp_packet(opcode: u8, mac: [u8; 6]) -> Vec<u8> {
+    let mut packet = vec![0u8; 244];
+    packet[0] = opcode; // opcode: 1=request, 2=reply
+    packet[1] = 1; // htype: Ethernet
+    packet[2] = 6; // hlen: MAC address length
+    packet[28..34].copy_from_slice(&mac); // chaddr: client MAC
+    packet[236..240].copy_from_slice(&DHCP_MAGIC_COOKIE);
+    packet
+}
+
+#[test]
+#[cfg(feature = "infra")]
+fn test_registry_detects_dhcp_request() {
+    let registry = Registry::default();
+    let mac = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55];
+    let payload = make_dhcp_packet(1, mac);
+
+    let result = registry.detect(&payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Dhcp);
+    assert_eq!(detection.confidence, 1.0);
+
+    if let Metadata::Dhcp(meta) = detection.metadata {
+        assert_eq!(meta.opcode, 1);
+        assert_eq!(meta.client_mac, mac);
+    } else {
+        panic!("Expected Dhcp metadata");
+    }
+}
+
+#[test]
+#[cfg(feature = "infra")]
+fn test_registry_detects_dhcp_reply() {
+    let registry = Registry::default();
+    let mac = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+    let payload = make_dhcp_packet(2, mac);
+
+    let result = registry.detect(&payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Dhcp);
+
+    if let Metadata::Dhcp(meta) = detection.metadata {
+        assert_eq!(meta.opcode, 2);
+        assert_eq!(meta.client_mac, mac);
+    } else {
+        panic!("Expected Dhcp metadata");
+    }
+}
+
+// Note: These tests verify the detector's strictness, not Registry behavior.
+#[test]
+#[cfg(feature = "infra")]
+fn test_dhcp_detector_invalid_too_short() {
+    let dhcp_detector = rdpi::protocols::dhcp::DhcpDetector::new();
+    let payload = vec![0u8; 243];
+    assert!(dhcp_detector.detect(&payload).is_none());
+}
+
+#[test]
+#[cfg(feature = "infra")]
+fn test_dhcp_detector_invalid_opcode() {
+    let dhcp_detector = rdpi::protocols::dhcp::DhcpDetector::new();
+    let payload = make_dhcp_packet(3, [0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+    assert!(dhcp_detector.detect(&payload).is_none());
+}
+
+#[test]
+#[cfg(feature = "infra")]
+fn test_dhcp_detector_invalid_magic_cookie() {
+    let dhcp_detector = rdpi::protocols::dhcp::DhcpDetector::new();
+    let mut payload = make_dhcp_packet(1, [0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+    payload[236] = 0x00; // Corrupt magic cookie
+    assert!(dhcp_detector.detect(&payload).is_none());
+}
+
+// ============================================================================
+// Phase 5.1: SNMP Tests
+// ============================================================================
+
+/// Helper to construct SNMP v1 GetRequest
+#[cfg(feature = "snmp")]
+fn make_snmp_v1_get_request() -> Vec<u8> {
+    vec![
+        0x30, 0x26, // SEQUENCE, length 38
+        0x02, 0x01, 0x00, // INTEGER: version 0 (v1)
+        0x04, 0x06, 0x70, 0x75, 0x62, 0x6C, 0x69, 0x63, // OCTET STRING: "public"
+        0xA0, 0x19, // GetRequest (context-specific 0, constructed)
+        0x02, 0x01, 0x01, // request-id: 1
+        0x02, 0x01, 0x00, // error-status: 0
+        0x02, 0x01, 0x00, // error-index: 0
+        0x30, 0x0E, // varbind-list SEQUENCE
+        0x30, 0x0C, // varbind SEQUENCE
+        0x06, 0x08, 0x2B, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x00, // OID: 1.3.6.1.2.1.1.1.0
+        0x05, 0x00, // NULL
+    ]
+}
+
+#[test]
+#[cfg(feature = "snmp")]
+fn test_registry_detects_snmp_v1() {
+    let registry = Registry::default();
+    let payload = make_snmp_v1_get_request();
+
+    let result = registry.detect(&payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Snmp);
+    assert_eq!(detection.confidence, 1.0);
+
+    if let Metadata::Snmp(meta) = detection.metadata {
+        assert_eq!(meta.version, rdpi::core::types::SnmpVersion::V1);
+        assert_eq!(meta.community, "public");
+        assert_eq!(meta.pdu_type, rdpi::core::types::SnmpPduType::GetRequest);
+        assert_eq!(meta.request_id, 1);
+    } else {
+        panic!("Expected Snmp metadata");
+    }
+}
+
+#[test]
+#[cfg(feature = "snmp")]
+fn test_registry_detects_snmp_v2c() {
+    let registry = Registry::default();
+    let mut payload = make_snmp_v1_get_request();
+    payload[4] = 0x01; // version 1 = v2c
+
+    let result = registry.detect(&payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Snmp);
+
+    if let Metadata::Snmp(meta) = detection.metadata {
+        assert_eq!(meta.version, rdpi::core::types::SnmpVersion::V2c);
+    } else {
+        panic!("Expected Snmp metadata");
+    }
+}
+
+#[test]
+#[cfg(feature = "snmp")]
+fn test_snmp_too_short() {
+    let registry = Registry::default();
+    let payload = [0x30, 0x02, 0x02, 0x01];
+    assert!(registry.detect(&payload).is_none());
+}
+
+// ============================================================================
+// Phase 5.1: Modbus Tests
+// ============================================================================
+
+/// Helper to construct a Modbus TCP Read Coils request
+#[cfg(feature = "modbus")]
+fn make_modbus_read_coils_request() -> Vec<u8> {
+    vec![
+        0x00, 0x01, // Transaction ID: 1
+        0x00, 0x00, // Protocol ID: 0
+        0x00, 0x06, // Length: 6 bytes following
+        0x01, // Unit ID: 1
+        0x01, // Function Code: Read Coils
+        0x00, 0x01, // Address: 1
+        0x00, 0x08, // Quantity: 8 coils
+    ]
+}
+
+#[test]
+#[cfg(feature = "modbus")]
+fn test_registry_detects_modbus_request() {
+    let registry = Registry::default();
+    let payload = make_modbus_read_coils_request();
+
+    let result = registry.detect(&payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Modbus);
+    assert_eq!(detection.confidence, 1.0);
+
+    if let Metadata::Modbus(meta) = detection.metadata {
+        assert_eq!(meta.transaction_id, 1);
+        assert_eq!(meta.unit_id, 1);
+        assert_eq!(meta.function_code, 1);
+        assert!(!meta.is_response);
+    } else {
+        panic!("Expected Modbus metadata");
+    }
+}
+
+/// Helper to construct a Modbus TCP Read Coils response
+#[cfg(feature = "modbus")]
+fn make_modbus_read_coils_response() -> Vec<u8> {
+    vec![
+        0x00, 0x01, // Transaction ID: 1
+        0x00, 0x00, // Protocol ID: 0
+        0x00, 0x04, // Length: 4 bytes
+        0x01, // Unit ID: 1
+        0x01, // Function Code: Read Coils
+        0x01, // Byte Count: 1
+        0x55, // Data: 0x55 (bits: 01010101)
+    ]
+}
+
+#[test]
+#[cfg(feature = "modbus")]
+fn test_registry_detects_modbus_response() {
+    let registry = Registry::default();
+    let payload = make_modbus_read_coils_response();
+
+    let result = registry.detect(&payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Modbus);
+
+    if let Metadata::Modbus(meta) = detection.metadata {
+        assert!(meta.is_response);
+    } else {
+        panic!("Expected Modbus metadata");
+    }
+}
+
+// Note: This test verifies the detector's strictness, not Registry behavior.
+#[test]
+#[cfg(feature = "modbus")]
+fn test_modbus_detector_invalid_protocol_id() {
+    let modbus_detector = rdpi::protocols::modbus::ModbusDetector::new();
+    let mut payload = make_modbus_read_coils_request();
+    payload[3] = 0x01; // Protocol ID: 1 (invalid)
+    assert!(modbus_detector.detect(&payload).is_none());
+}
+
+#[test]
+#[cfg(feature = "modbus")]
+fn test_modbus_too_short() {
+    let registry = Registry::default();
+    let payload = [0x00, 0x01, 0x00, 0x00, 0x00, 0x01];
+    assert!(registry.detect(&payload).is_none());
+}
+
+// ============================================================================
+// Phase 5.1: All Protocols Integration Test
+// ============================================================================
+
+#[test]
+#[cfg(all(feature = "mail", feature = "infra", feature = "snmp", feature = "modbus"))]
+fn test_phase51_all_protocols_detected() {
+    let registry = Registry::default();
+
+    // POP3
+    let pop3 = b"+OK POP3 ready\r\n";
+    assert_eq!(registry.detect(pop3).unwrap().protocol, Protocol::Pop3);
+
+    // IMAP
+    let imap = b"* OK IMAP4rev1 ready\r\n";
+    assert_eq!(registry.detect(imap).unwrap().protocol, Protocol::Imap);
+
+    // NTP
+    let ntp = make_ntp_packet(4, 3, 2);
+    assert_eq!(registry.detect(&ntp).unwrap().protocol, Protocol::Ntp);
+
+    // DHCP
+    let dhcp = make_dhcp_packet(1, [0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
+    assert_eq!(registry.detect(&dhcp).unwrap().protocol, Protocol::Dhcp);
+
+    // SNMP
+    let snmp = make_snmp_v1_get_request();
+    assert_eq!(registry.detect(&snmp).unwrap().protocol, Protocol::Snmp);
+
+    // Modbus
+    let modbus = make_modbus_read_coils_request();
+    assert_eq!(registry.detect(&modbus).unwrap().protocol, Protocol::Modbus);
+}
+
+// ============================================================================
+// Phase 5.2: Database Protocol Tests
+// ============================================================================
+
+/// Helper to construct a MySQL handshake packet (payload only, without MySQL packet header)
+#[cfg(feature = "database")]
+fn make_mysql_handshake_packet(version: &str) -> Vec<u8> {
+    let mut packet = vec![
+        // Protocol version (must be 0x0a)
+        0x0a,
+    ];
+    // Server version (null-terminated)
+    packet.extend_from_slice(version.as_bytes());
+    packet.push(0x00);
+    // Connection ID (4 bytes)
+    packet.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]);
+    // Auth plugin data part 1 (8 bytes)
+    packet.extend_from_slice(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
+    // Filler
+    packet.push(0x00);
+    // Capability flags lower 2 bytes
+    packet.extend_from_slice(&[0xff, 0xf7]);
+    // Character set
+    packet.push(0x21);
+    // Status flags
+    packet.extend_from_slice(&[0x02, 0x00]);
+    // Capability flags upper 2 bytes (includes CLIENT_PLUGIN_AUTH = 0x0008)
+    packet.extend_from_slice(&[0xff, 0x8f]);
+    // Auth plugin data length
+    packet.push(0x15);
+    // Reserved (10 bytes)
+    packet.extend_from_slice(&[0x00; 10]);
+    // Auth plugin data part 2 (21 - 8 = 13 bytes)
+    packet.extend_from_slice(&[0x01; 13]);
+    // Auth plugin name (null-terminated)
+    packet.extend_from_slice(b"mysql_native_password");
+    packet.push(0x00);
+    packet
+}
+
+#[test]
+#[cfg(feature = "database")]
+fn test_registry_detects_mysql_handshake() {
+    let registry = Registry::default();
+    let payload = make_mysql_handshake_packet("8.0.33");
+
+    let result = registry.detect(&payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Mysql);
+    assert_eq!(detection.confidence, 1.0);
+
+    if let Metadata::Mysql(meta) = detection.metadata {
+        assert_eq!(meta.version, Some("8.0.33".to_string()));
+    } else {
+        panic!("Expected Mysql metadata");
+    }
+}
+
+#[test]
+#[cfg(feature = "database")]
+fn test_mysql_detector_name() {
+    let mysql_detector = rdpi::protocols::mysql::MysqlDetector::new();
+    assert_eq!(mysql_detector.name(), "mysql");
+}
+
+/// Helper to construct a PostgreSQL startup message
+#[cfg(feature = "database")]
+fn make_pg_startup_message(user: &str, database: &str) -> Vec<u8> {
+    let mut packet = vec![
+        // Message length (4 bytes, big-endian) - will be updated
+        0x00, 0x00, 0x00, 0x00,
+        // Protocol version 3.0
+        0x00, 0x03, 0x00, 0x00,
+    ];
+
+    // Add user parameter
+    packet.extend_from_slice(b"user");
+    packet.push(0x00);
+    packet.extend_from_slice(user.as_bytes());
+    packet.push(0x00);
+
+    // Add database parameter
+    packet.extend_from_slice(b"database");
+    packet.push(0x00);
+    packet.extend_from_slice(database.as_bytes());
+    packet.push(0x00);
+
+    // Terminator
+    packet.push(0x00);
+
+    // Update message length
+    let len = packet.len() as u32;
+    packet[0] = ((len >> 24) & 0xff) as u8;
+    packet[1] = ((len >> 16) & 0xff) as u8;
+    packet[2] = ((len >> 8) & 0xff) as u8;
+    packet[3] = (len & 0xff) as u8;
+
+    packet
+}
+
+#[test]
+#[cfg(feature = "database")]
+fn test_registry_detects_postgresql_startup() {
+    let registry = Registry::default();
+    let payload = make_pg_startup_message("postgres", "testdb");
+
+    let result = registry.detect(&payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Postgresql);
+    assert_eq!(detection.confidence, 1.0);
+
+    if let Metadata::Postgresql(meta) = detection.metadata {
+        assert_eq!(meta.user, Some("postgres".to_string()));
+        assert_eq!(meta.database, Some("testdb".to_string()));
+    } else {
+        panic!("Expected Postgresql metadata");
+    }
+}
+
+#[test]
+#[cfg(feature = "database")]
+fn test_postgresql_detector_name() {
+    let pg_detector = rdpi::protocols::postgresql::PostgresqlDetector::new();
+    assert_eq!(pg_detector.name(), "postgresql");
+}
+
+/// Helper to construct a Redis GET command
+#[cfg(feature = "database")]
+fn make_redis_get_command(key: &str) -> Vec<u8> {
+    let key_bytes = key.as_bytes();
+    let mut packet = vec![
+        b'*', b'2', b'\r', b'\n',
+        b'$', b'3', b'\r', b'\n',
+        b'G', b'E', b'T', b'\r', b'\n',
+    ];
+    // Key length
+    let key_len = format!("${}\r\n", key_bytes.len());
+    packet.extend_from_slice(key_len.as_bytes());
+    // Key value
+    packet.extend_from_slice(key_bytes);
+    packet.extend_from_slice(b"\r\n");
+    packet
+}
+
+#[test]
+#[cfg(feature = "database")]
+fn test_registry_detects_redis_get_command() {
+    let registry = Registry::default();
+    let payload = make_redis_get_command("mykey");
+
+    let result = registry.detect(&payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Redis);
+    assert_eq!(detection.confidence, 1.0);
+
+    if let Metadata::Redis(meta) = detection.metadata {
+        assert_eq!(meta.command, Some("GET".to_string()));
+    } else {
+        panic!("Expected Redis metadata");
+    }
+}
+
+#[test]
+#[cfg(feature = "database")]
+fn test_registry_detects_redis_ping() {
+    let registry = Registry::default();
+    let payload = b"*1\r\n$4\r\nPING\r\n";
+
+    let result = registry.detect(payload);
+    assert!(result.is_some());
+
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Redis);
+
+    if let Metadata::Redis(meta) = detection.metadata {
+        assert_eq!(meta.command, Some("PING".to_string()));
+    } else {
+        panic!("Expected Redis metadata");
+    }
+}
+
+#[test]
+#[cfg(feature = "database")]
+fn test_redis_detector_name() {
+    let redis_detector = rdpi::protocols::redis::RedisDetector::new();
+    assert_eq!(redis_detector.name(), "redis");
+}
+
+#[test]
+#[cfg(feature = "database")]
+fn test_phase52_all_protocols_detected() {
+    let registry = Registry::default();
+
+    // MySQL
+    let mysql = make_mysql_handshake_packet("5.7.42");
+    assert_eq!(registry.detect(&mysql).unwrap().protocol, Protocol::Mysql);
+
+    // PostgreSQL
+    let pg = make_pg_startup_message("admin", "mydb");
+    assert_eq!(registry.detect(&pg).unwrap().protocol, Protocol::Postgresql);
+
+    // Redis
+    let redis = make_redis_get_command("test");
+    assert_eq!(registry.detect(&redis).unwrap().protocol, Protocol::Redis);
 }

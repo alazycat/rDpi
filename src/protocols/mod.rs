@@ -28,6 +28,12 @@ pub mod dhcp;
 pub mod snmp;
 #[cfg(feature = "modbus")]
 pub mod modbus;
+#[cfg(feature = "database")]
+pub mod mysql;
+#[cfg(feature = "database")]
+pub mod postgresql;
+#[cfg(feature = "database")]
+pub mod redis;
 
 /// 协议检测器 Trait
 pub trait ProtocolDetector: Send + Sync {
@@ -114,6 +120,12 @@ pub fn register_defaults(_registry: &mut Registry) {
     snmp::register(_registry);
     #[cfg(feature = "modbus")]
     modbus::register(_registry);
+    #[cfg(feature = "database")]
+    mysql::register(_registry);
+    #[cfg(feature = "database")]
+    postgresql::register(_registry);
+    #[cfg(feature = "database")]
+    redis::register(_registry);
     #[cfg(feature = "smtp")]
     smtp::register(_registry);
     #[cfg(feature = "mail")]

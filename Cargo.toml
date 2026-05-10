@@ -25,6 +25,7 @@ mail = []
 infra = []
 snmp = []
 modbus = []
+database = []
 pcap = ["dep:pcap-file"]
 
 [dev-dependencies]

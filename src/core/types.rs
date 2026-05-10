@@ -56,6 +56,10 @@ pub enum Protocol {
     Snmp,
     // 工业协议 (feature: modbus)
     Modbus,
+    // 数据库协议 (feature: database)
+    Mysql,
+    Postgresql,
+    Redis,
     /// 其他协议，包含协议号
     Other(u16),
 }
@@ -110,6 +114,12 @@ pub enum Metadata {
     Snmp(SnmpMetadata),
     /// Modbus 元数据
     Modbus(ModbusMetadata),
+    /// MySQL 元数据
+    Mysql(MysqlMetadata),
+    /// PostgreSQL 元数据
+    Postgresql(PostgresqlMetadata),
+    /// Redis 元数据
+    Redis(RedisMetadata),
 }
 
 /// DNS 元数据
@@ -487,4 +497,31 @@ impl Application {
             Application::Signal => "Signal",
         }
     }
+}
+
+/// MySQL 元数据
+#[derive(Debug, Clone)]
+pub struct MysqlMetadata {
+    /// 服务器版本 (如 "8.0.33")
+    pub version: Option<String>,
+    /// 认证插件名 (如 "mysql_native_password")
+    pub auth_plugin: Option<String>,
+}
+
+/// PostgreSQL 元数据
+#[derive(Debug, Clone)]
+pub struct PostgresqlMetadata {
+    /// 用户名
+    pub user: Option<String>,
+    /// 数据库名
+    pub database: Option<String>,
+    /// 应用名
+    pub application_name: Option<String>,
+}
+
+/// Redis 元数据
+#[derive(Debug, Clone)]
+pub struct RedisMetadata {
+    /// 命令类型 (如 GET, SET, SELECT)
+    pub command: Option<String>,
 }
