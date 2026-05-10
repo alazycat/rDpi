@@ -8,6 +8,10 @@ use crate::core::types::*;
 pub mod dns;
 #[cfg(feature = "http")]
 pub mod http;
+#[cfg(feature = "mail")]
+pub mod pop3;
+#[cfg(feature = "mail")]
+pub mod imap;
 #[cfg(feature = "quic")]
 pub mod quic;
 #[cfg(feature = "smtp")]
@@ -16,6 +20,14 @@ pub mod smtp;
 pub mod ssh;
 #[cfg(feature = "tls")]
 pub mod tls;
+#[cfg(feature = "infra")]
+pub mod ntp;
+#[cfg(feature = "infra")]
+pub mod dhcp;
+#[cfg(feature = "snmp")]
+pub mod snmp;
+#[cfg(feature = "modbus")]
+pub mod modbus;
 
 /// 协议检测器 Trait
 pub trait ProtocolDetector: Send + Sync {
@@ -90,7 +102,7 @@ impl Default for Registry {
 }
 
 /// 注册所有启用的内置协议
-/// 注册顺序：QUIC → TLS → SSH → SMTP → HTTP → DNS（按特异性递减）
+/// 注册顺序：QUIC → TLS → SSH → SNMP → Modbus → SMTP → POP3 → IMAP → NTP → DHCP → HTTP → DNS（按特异性递减）
 pub fn register_defaults(_registry: &mut Registry) {
     #[cfg(feature = "quic")]
     quic::register(_registry);
@@ -98,8 +110,22 @@ pub fn register_defaults(_registry: &mut Registry) {
     tls::register(_registry);
     #[cfg(feature = "ssh")]
     ssh::register(_registry);
+    #[cfg(feature = "snmp")]
+    snmp::register(_registry);
+    #[cfg(feature = "modbus")]
+    modbus::register(_registry);
     #[cfg(feature = "smtp")]
     smtp::register(_registry);
+    #[cfg(feature = "mail")]
+    {
+        pop3::register(_registry);
+        imap::register(_registry);
+    }
+    #[cfg(feature = "infra")]
+    {
+        ntp::register(_registry);
+        dhcp::register(_registry);
+    }
     #[cfg(feature = "http")]
     http::register(_registry);
     #[cfg(feature = "dns")]
