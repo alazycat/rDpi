@@ -178,6 +178,22 @@ fn test_registry_default_detector_count() {
         {
             count += 1;
         }
+        #[cfg(feature = "mail")]
+        {
+            count += 2; // POP3 + IMAP
+        }
+        #[cfg(feature = "infra")]
+        {
+            count += 2; // NTP + DHCP
+        }
+        #[cfg(feature = "snmp")]
+        {
+            count += 1; // SNMP
+        }
+        #[cfg(feature = "modbus")]
+        {
+            count += 1; // Modbus
+        }
         count
     };
     assert_eq!(registry.detector_count(), expected_count);

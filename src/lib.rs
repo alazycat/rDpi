@@ -10,6 +10,10 @@
 //! - `ssh` - SSH protocol detection with version extraction
 //! - `smtp` - SMTP protocol detection with banner/command detection
 //! - `quic` - QUIC protocol detection with version and DCID extraction
+//! - `mail` - POP3/POP3S/IMAP/IMAPS protocol detection
+//! - `infra` - NTP/DHCP protocol detection with metadata extraction
+//! - `snmp` - SNMP v1/v2c protocol detection with full PDU parsing
+//! - `modbus` - Modbus TCP protocol detection with function code parsing
 //!
 //! # Example
 //!
@@ -28,36 +32,78 @@
 //! |----------|---------|----------|
 //! | DNS | `dns` | Domain name |
 //! | HTTP | `http` | Method, Path, Host header |
-//! | TLS | `tls` | SNI, TLS version |
+//! | TLS | `tls` | SNI, TLS version, Application |
 //! | SSH | `ssh` | Protocol version, Software version |
 //! | SMTP | `smtp` | Hostname, is_client flag |
 //! | QUIC | `quic` | SNI, version, DCID |
+//! | POP3/POP3S | `mail` | None (L1 detection) |
+//! | IMAP/IMAPS | `mail` | None (L1 detection) |
+//! | NTP | `infra` | Version, Mode, Stratum |
+//! | DHCP | `infra` | Opcode, Client MAC |
+//! | SNMP | `snmp` | Version, Community, PDU type, VarBinds, Trap info |
+//! | Modbus | `modbus` | Transaction ID, Function code, Data |
 
 mod error;
 
 pub mod application;
+pub mod asn1;
 pub mod core;
 pub mod parser;
 pub mod protocols;
+#[cfg(feature = "pcap")]
+pub mod pcap;
 
 pub use core::types::*;
-pub use error::Error;
+pub use error::{Error, Result};
 
-use core::flow::FlowTable;
+use core::flow::{Flow, FlowTable};
 use protocols::Registry;
 use std::time::Duration;
 
 /// 主入口：包检测器
+///
+/// 自动追踪流，统计每条流的协议、包数、字节数。
+///
+/// # Example
+///
+/// ```rust
+/// use rdpi::Detector;
+///
+/// let mut detector = Detector::new();
+///
+/// // 获取流统计
+/// let flows: Vec<_> = detector.flows().collect();
+/// println!("Active flows: {}", flows.len());
+/// ```
 pub struct Detector {
     registry: Registry,
     flow_table: FlowTable,
 }
 
 impl Detector {
+    /// 创建默认检测器
+    ///
+    /// 默认配置：
+    /// - 最大流数：10000
+    /// - 流超时：120 秒
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// 使用自定义配置创建检测器
+    ///
+    /// # Arguments
+    ///
+    /// * `max_flows` - 最大流数
+    /// * `timeout_secs` - 流超时时间（秒）
+    pub fn with_config(max_flows: usize, timeout_secs: u64) -> Self {
+        Self {
+            registry: Registry::default(),
+            flow_table: FlowTable::new(max_flows, Duration::from_secs(timeout_secs)),
+        }
+    }
+
+    /// 使用自定义 Registry 创建检测器
     pub fn with_registry(registry: Registry) -> Self {
         Self {
             registry,
@@ -65,13 +111,25 @@ impl Detector {
         }
     }
 
-    pub fn detect(
-        &mut self,
-        packet: &[u8],
-    ) -> crate::error::Result<Option<core::types::DetectionResult>> {
+    /// 检测单个包
+    ///
+    /// 自动更新流表：
+    /// 1. 解析包，获取五元组
+    /// 2. 在流表中查找或创建流
+    /// 3. 检测协议（首次成功后保持不变）
+    /// 4. 更新流统计
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(Some(result))` - 成功检测到协议
+    /// - `Ok(None)` - 无法识别协议
+    /// - `Err(e)` - 解析错误
+    pub fn detect(&mut self, packet: &[u8]) -> crate::error::Result<Option<DetectionResult>> {
+        // 解析包
         let parsed = parser::parse_packet(packet)?;
 
-        let _key = core::types::FlowKey {
+        // 构建流键
+        let key = FlowKey {
             src_ip: parsed.src_ip,
             dst_ip: parsed.dst_ip,
             src_port: parsed.src_port,
@@ -79,12 +137,69 @@ impl Detector {
             transport: parsed.transport,
         };
 
-        let result = self.registry.detect(&parsed.payload);
+        // 获取或创建流
+        let flow = self.flow_table.get_or_create(key.clone());
+
+        // 检测协议（如果流还没有协议）
+        let result = if flow.protocol.is_none() {
+            // 尝试带端口的检测
+            let detected = self.registry.detect_with_ports(
+                &parsed.payload,
+                parsed.src_port,
+                parsed.dst_port,
+            );
+
+            // 更新流的协议
+            if let Some(ref r) = detected {
+                flow.protocol = Some(r.protocol);
+            }
+
+            detected
+        } else {
+            // 流已有协议，不重复检测，但需要返回当前协议信息
+            flow.protocol.map(|p| DetectionResult::new(p))
+        };
+
+        // 更新流统计
+        flow.stats.packets += 1;
+        flow.stats.bytes += packet.len() as u64;
+        flow.stats.last_time = std::time::Instant::now();
+
+        // 如果有检测结果，保存元数据
+        if let Some(ref r) = result {
+            flow.metadata = Some(r.metadata.clone());
+        }
+
         Ok(result)
     }
 
-    pub fn expire(&mut self) -> Vec<core::types::FlowKey> {
+    /// 获取流表（只读）
+    pub fn flows(&self) -> impl Iterator<Item = (&FlowKey, &Flow)> {
+        self.flow_table.iter()
+    }
+
+    /// 获取活跃流数
+    pub fn flow_count(&self) -> usize {
+        self.flow_table.len()
+    }
+
+    /// 获取指定流
+    pub fn get_flow(&self, key: &FlowKey) -> Option<&Flow> {
+        self.flow_table.get(key)
+    }
+
+    /// 清理超时流
+    ///
+    /// # Returns
+    ///
+    /// 过期的流键列表
+    pub fn expire_flows(&mut self) -> Vec<FlowKey> {
         self.flow_table.expire_timeout()
+    }
+
+    /// 清空流表
+    pub fn clear_flows(&mut self) {
+        self.flow_table.clear();
     }
 }
 
