@@ -98,8 +98,14 @@ fn test_application_variants() {
 fn test_application_category() {
     use rdpi::core::types::{Application, ApplicationCategory};
 
-    assert_eq!(Application::YouTube.category(), ApplicationCategory::Streaming);
-    assert_eq!(Application::Netflix.category(), ApplicationCategory::Streaming);
+    assert_eq!(
+        Application::YouTube.category(),
+        ApplicationCategory::Streaming
+    );
+    assert_eq!(
+        Application::Netflix.category(),
+        ApplicationCategory::Streaming
+    );
     assert_eq!(Application::WeChat.category(), ApplicationCategory::Im);
     assert_eq!(Application::Telegram.category(), ApplicationCategory::Im);
 }

@@ -50,9 +50,10 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
         use crate::core::types::{DetectionResult, Metadata, Protocol, TlsMetadata};
 
         // 根据 SNI 识别应用
-        let application = info.sni.as_ref().and_then(|sni| {
-            crate::application::identify(sni)
-        });
+        let application = info
+            .sni
+            .as_ref()
+            .and_then(|sni| crate::application::identify(sni));
 
         let metadata = TlsMetadata {
             sni: info.sni,
