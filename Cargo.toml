@@ -15,6 +15,7 @@ rustls = "0.23"
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
 pcap-file = { version = "2.0", optional = true }
+clap = { version = "4.5", features = ["derive"] }
 sha2 = "0.10"
 hex = "0.4"
 
@@ -38,6 +39,10 @@ proto3 = []    # FTP, SIP, RTP/RTCP
 [dev-dependencies]
 pcap-file = "2.0"
 criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bin]]
+name = "rdpi"
+required-features = ["pcap"]
 
 [[bench]]
 name = "bench_detect"
