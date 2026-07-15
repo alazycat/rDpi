@@ -109,6 +109,25 @@ pub enum Protocol {
     Ptpv2,
     #[cfg(feature = "infra")]
     Nfs,
+    // Phase 12A — 企业协议
+    Telnet,
+    Vnc,
+    #[cfg(feature = "infra")]
+    Dhcpv6,
+    #[cfg(feature = "infra")]
+    Vxlan,
+    #[cfg(feature = "vpn")]
+    L2tp,
+    #[cfg(feature = "vpn")]
+    Pptp,
+    #[cfg(feature = "auth")]
+    Radius,
+    #[cfg(feature = "voip")]
+    Turn,
+    #[cfg(feature = "voip")]
+    Mgcp,
+    #[cfg(feature = "voip")]
+    H323,
     /// 其他协议，包含协议号
     Other(u16),
 }
@@ -634,6 +653,16 @@ impl Protocol {
             #[cfg(feature = "infra")]
             Protocol::Bgp => ProtocolCategory::Routing,
 
+            // Phase 12A — 企业协议
+            Protocol::Telnet | Protocol::Vnc => ProtocolCategory::RemoteAccess,
+            #[cfg(feature = "infra")]
+            Protocol::Dhcpv6 | Protocol::Vxlan => ProtocolCategory::Infrastructure,
+            #[cfg(feature = "vpn")]
+            Protocol::L2tp | Protocol::Pptp => ProtocolCategory::Tunnel,
+            #[cfg(feature = "auth")]
+            Protocol::Radius => ProtocolCategory::Authentication,
+            #[cfg(feature = "voip")]
+            Protocol::Turn | Protocol::Mgcp | Protocol::H323 => ProtocolCategory::Voip,
             // Phase 11A — 简单协议
             Protocol::Tftp | Protocol::Rsync | Protocol::Whois => ProtocolCategory::FileTransfer,
             Protocol::Syslog => ProtocolCategory::NetworkManagement,
@@ -684,6 +713,18 @@ impl Protocol {
             #[cfg(feature = "proto3")]
             Protocol::Sip | Protocol::Rtp | Protocol::Rtcp
                 | Protocol::Http2 | Protocol::WebSocket => ProtocolBreed::Safe,
+            // Phase 12A
+            Protocol::Telnet => ProtocolBreed::Fun,
+            Protocol::Vnc => ProtocolBreed::Acceptable,
+            #[cfg(feature = "infra")]
+            Protocol::Dhcpv6 | Protocol::Vxlan => ProtocolBreed::Safe,
+            #[cfg(feature = "vpn")]
+            Protocol::L2tp | Protocol::Pptp => ProtocolBreed::Safe,
+            #[cfg(feature = "auth")]
+            Protocol::Radius => ProtocolBreed::Safe,
+            #[cfg(feature = "voip")]
+            Protocol::Turn | Protocol::Mgcp | Protocol::H323 => ProtocolBreed::Safe,
+            // Phase 11A
             Protocol::Tftp | Protocol::Rsync | Protocol::Whois => ProtocolBreed::Safe,
             Protocol::Syslog => ProtocolBreed::Safe,
             #[cfg(feature = "proto3")]
