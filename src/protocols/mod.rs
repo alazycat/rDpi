@@ -79,6 +79,25 @@ pub mod ike;
 pub mod ptpv2;
 #[cfg(feature = "storage")]
 pub mod nfs;
+// Phase 12A — 企业协议
+pub mod telnet;
+pub mod vnc;
+#[cfg(feature = "infra")]
+pub mod dhcpv6;
+#[cfg(feature = "infra")]
+pub mod vxlan;
+#[cfg(feature = "vpn")]
+pub mod l2tp;
+#[cfg(feature = "vpn")]
+pub mod pptp;
+#[cfg(feature = "auth")]
+pub mod radius;
+#[cfg(feature = "voip")]
+pub mod turn;
+#[cfg(feature = "voip")]
+pub mod mgcp;
+#[cfg(feature = "voip")]
+pub mod h323;
 
 /// 协议检测器 Trait
 pub trait ProtocolDetector: Send + Sync {
@@ -215,6 +234,27 @@ pub fn register_defaults(_registry: &mut Registry) {
     http::register(_registry);
     #[cfg(feature = "dns")]
     dns::register(_registry);
+    // Phase 12A — 企业协议（低特异性）
+    telnet::register(_registry);
+    vnc::register(_registry);
+    #[cfg(feature = "infra")]
+    {
+        dhcpv6::register(_registry);
+        vxlan::register(_registry);
+    }
+    #[cfg(feature = "vpn")]
+    {
+        l2tp::register(_registry);
+        pptp::register(_registry);
+    }
+    #[cfg(feature = "auth")]
+    radius::register(_registry);
+    #[cfg(feature = "voip")]
+    {
+        turn::register(_registry);
+        mgcp::register(_registry);
+        h323::register(_registry);
+    }
     // Phase 11A — 简单协议（最低特异性，DNS/HTTP 之后检测）
     syslog::register(_registry);
     tftp::register(_registry);
