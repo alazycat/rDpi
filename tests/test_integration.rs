@@ -153,7 +153,7 @@ fn test_registry_default_detector_count() {
     // All detectors should be registered by default
     // (assuming all features are enabled)
     let expected_count = {
-        let mut count = 4; // TFTP + RSYNC + Whois + Syslog (always registered)
+        let mut count = 6; // TFTP + RSYNC + Whois + Syslog + Telnet + VNC (always registered)
         #[cfg(feature = "tls")]
         {
             count += 1;

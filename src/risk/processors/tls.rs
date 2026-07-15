@@ -127,6 +127,10 @@ mod tests {
             ja4: None,
             cipher_suites,
             alpn: None,
+            cert_subject: None,
+            cert_issuer: None,
+            cert_valid_from: None,
+            cert_valid_to: None,
         }));
         flow
     }
