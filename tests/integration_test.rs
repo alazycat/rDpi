@@ -345,3 +345,47 @@ fn test_end_to_end_mqtt_detection() {
     let result = result.unwrap();
     assert_eq!(result.protocol, Protocol::Mqtt);
 }
+
+#[test]
+#[cfg(feature = "database")]
+fn test_end_to_end_mongodb_detection() {
+    let mut detector = Detector::new();
+
+    // Build MongoDB isMaster response (OP_MSG)
+    let mut bson = Vec::new();
+    // isMaster: boolean true
+    bson.push(0x08);
+    bson.extend_from_slice(b"isMaster");
+    bson.push(0x00);
+    bson.push(0x01);
+    // ok: double 1.0
+    bson.push(0x01);
+    bson.extend_from_slice(b"ok");
+    bson.push(0x00);
+    bson.extend_from_slice(&1.0f64.to_le_bytes());
+
+    let doc_len = (4 + bson.len() + 1) as i32;
+    let mut doc = Vec::new();
+    doc.extend_from_slice(&doc_len.to_le_bytes());
+    doc.extend_from_slice(&bson);
+    doc.push(0x00);
+
+    let msg_len = (16 + 2 + doc.len()) as i32;
+    // Build MongoDB OP_MSG payload
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&msg_len.to_le_bytes());
+    payload.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // requestID
+    payload.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]); // responseTo
+    payload.extend_from_slice(&[0xDC, 0x07, 0x00, 0x00]); // opCode = 2012
+    payload.push(0x00); // flags
+    payload.push(0x00); // section kind = Body
+    payload.extend_from_slice(&doc);
+
+    // Rebuild packet with MongoDB payload
+    let mongodb_packet = build_udp_packet(&payload, 12345, 27017);
+    let result = detector.detect(&mongodb_packet).unwrap();
+
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert_eq!(result.protocol, Protocol::Mongodb);
+}

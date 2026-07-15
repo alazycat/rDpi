@@ -34,6 +34,8 @@ pub mod mysql;
 pub mod postgresql;
 #[cfg(feature = "database")]
 pub mod redis;
+#[cfg(feature = "database")]
+pub mod mongodb;
 #[cfg(feature = "proto3")]
 pub mod ftp;
 #[cfg(feature = "proto3")]
@@ -135,6 +137,8 @@ pub fn register_defaults(_registry: &mut Registry) {
         sip::register(_registry);
         rtp::register(_registry);
     }
+    #[cfg(feature = "database")]
+    mongodb::register(_registry);
     #[cfg(feature = "database")]
     mysql::register(_registry);
     #[cfg(feature = "database")]

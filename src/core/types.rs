@@ -63,6 +63,7 @@ pub enum Protocol {
     Mysql,
     Postgresql,
     Redis,
+    Mongodb,
     #[cfg(feature = "proto3")]
     Sip,
     #[cfg(feature = "proto3")]
@@ -138,6 +139,8 @@ pub enum Metadata {
     Sip(SipMetadata),
     #[cfg(feature = "proto3")]
     Rtp(RtpMetadata),
+    /// MongoDB 元数据 (feature: database)
+    Mongodb(MongodbMetadata),
     /// MQTT 元数据 (feature: iot)
     #[cfg(feature = "iot")]
     Mqtt(MqttMetadata),
@@ -493,7 +496,8 @@ impl Protocol {
             Protocol::Smtp | Protocol::Pop3 | Protocol::Pop3s
                 | Protocol::Imap | Protocol::Imaps => ProtocolCategory::Mail,
             Protocol::Dns => ProtocolCategory::Dns,
-            Protocol::Mysql | Protocol::Postgresql | Protocol::Redis => ProtocolCategory::Database,
+            Protocol::Mysql | Protocol::Postgresql | Protocol::Redis
+                | Protocol::Mongodb => ProtocolCategory::Database,
             Protocol::Ssh => ProtocolCategory::RemoteAccess,
             #[cfg(feature = "proto3")]
             Protocol::Ftp => ProtocolCategory::FileTransfer,
@@ -519,6 +523,7 @@ impl Protocol {
                 | Protocol::Tls | Protocol::Quic | Protocol::Http3
                 | Protocol::Ssh => ProtocolBreed::Safe,
             Protocol::Mysql | Protocol::Postgresql | Protocol::Redis
+                | Protocol::Mongodb
                 | Protocol::Snmp | Protocol::Modbus => ProtocolBreed::Acceptable,
             #[cfg(feature = "proto3")]
             Protocol::Ftp => ProtocolBreed::Fun,
@@ -875,6 +880,17 @@ pub struct MqttMetadata {
     pub client_id: Option<String>,
     /// Will 主题 (如果设置了 Will Flag)
     pub will_topic: Option<String>,
+}
+
+/// MongoDB 握手响应元数据 (feature: database)
+#[derive(Debug, Clone)]
+pub struct MongodbMetadata {
+    /// 服务器版本号 (来自 isMaster 响应)
+    pub server_version: Option<String>,
+    /// 最大 Wire 协议版本
+    pub max_wire_version: Option<i32>,
+    /// 最大消息大小 (字节)
+    pub max_msg_size: Option<i32>,
 }
 
 #[cfg(feature = "proto3")]
