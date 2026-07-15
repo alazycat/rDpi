@@ -16,4 +16,4 @@ CLAUDE.md
 .codegraph/
 build_pcaps/
 .loop-state.json
-docs/issue#*.html
+docs/
