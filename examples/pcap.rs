@@ -38,7 +38,7 @@ fn main() -> Result<()> {
                 packet_count += 1;
                 detected_count += 1;
                 println!(
-                    "[{}] {:?} (confidence: {:.2})",
+                    "[{}] {:?} (confidence: {})",
                     format_timestamp(ts),
                     detection.protocol,
                     detection.confidence

@@ -1,4 +1,4 @@
-use rdpi::core::types::{Metadata, Protocol};
+use rdpi::core::types::{Application, Confidence, Metadata, Protocol};
 use rdpi::protocols::ProtocolDetector;
 use rdpi::protocols::http::{
     HttpDetector, is_http_prefix, parse_host_header, parse_request_line, parse_response_line,
@@ -146,7 +146,7 @@ fn test_http_detector_request() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Http);
-    assert_eq!(detection.confidence, 1.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 
     if let Metadata::Http(meta) = detection.metadata {
         assert_eq!(meta.method, Some("GET".to_string()));
@@ -167,7 +167,7 @@ fn test_http_detector_response() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Http);
-    assert_eq!(detection.confidence, 1.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 
     if let Metadata::Http(meta) = detection.metadata {
         // Responses don't have method/path/host
@@ -272,5 +272,18 @@ fn test_http_detector_various_status_codes() {
 
         let detection = result.unwrap();
         assert_eq!(detection.protocol, Protocol::Http);
+    }
+}
+
+#[test]
+fn test_http_host_to_application() {
+    let detector = HttpDetector::new();
+    // 构造带 Netflix 域名 Host 头的 HTTP 请求
+    let data = b"GET / HTTP/1.1\r\nHost: www.netflix.com\r\n\r\n";
+    let result = detector.detect(data).unwrap();
+    if let Metadata::Http(meta) = result.metadata {
+        assert_eq!(meta.application, Some(Application::Netflix));
+    } else {
+        panic!("Expected Http metadata");
     }
 }

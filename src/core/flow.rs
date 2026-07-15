@@ -59,6 +59,10 @@ pub struct Flow {
     pub state: FlowState,
     /// 协议元数据
     pub metadata: Option<Metadata>,
+    /// 已观察包计数（用于 Giveup 机制）
+    pub packets_seen: u32,
+    /// 仅 DPI 模式（不做猜测）
+    pub dpi_only: bool,
 }
 
 impl Flow {
@@ -70,6 +74,8 @@ impl Flow {
             stats: FlowStats::default(),
             state: FlowState::New,
             metadata: None,
+            packets_seen: 0,
+            dpi_only: false,
         }
     }
 }

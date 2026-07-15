@@ -6,7 +6,7 @@
 //! - Metadata extraction through full pipeline
 //! - Edge cases and priority handling
 
-use rdpi::core::types::{Metadata, Protocol};
+use rdpi::core::types::{Confidence, Metadata, Protocol};
 use rdpi::protocols::dns::DnsDetector;
 use rdpi::protocols::http::HttpDetector;
 use rdpi::protocols::tls::TlsDetector;
@@ -198,6 +198,18 @@ fn test_registry_default_detector_count() {
         {
             count += 3; // MySQL + PostgreSQL + Redis
         }
+        #[cfg(feature = "proto3")]
+        {
+            count += 3; // FTP + SIP + RTP
+        }
+        #[cfg(feature = "iot")]
+        {
+            count += 1; // MQTT
+        }
+        #[cfg(feature = "vpn")]
+        {
+            count += 1; // WireGuard
+        }
         count
     };
     assert_eq!(registry.detector_count(), expected_count);
@@ -251,7 +263,7 @@ fn test_registry_detects_http_request() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Http);
-    assert_eq!(detection.confidence, 1.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 }
 
 #[test]
@@ -276,7 +288,7 @@ fn test_registry_detects_tls_with_sni() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Tls);
-    assert_eq!(detection.confidence, 1.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 }
 
 #[test]
@@ -620,15 +632,15 @@ fn test_confidence_scores() {
     // All detectors should return confidence of 1.0 for valid matches
     let http_payload = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
     let result = registry.detect(http_payload).unwrap();
-    assert_eq!(result.confidence, 1.0);
+    assert_eq!(result.confidence, Confidence::Dpi);
 
     let tls_payload = make_client_hello_with_sni("example.com");
     let result = registry.detect(&tls_payload).unwrap();
-    assert_eq!(result.confidence, 1.0);
+    assert_eq!(result.confidence, Confidence::Dpi);
 
     let dns_payload = make_dns_query("example.com");
     let result = registry.detect(&dns_payload).unwrap();
-    assert_eq!(result.confidence, 1.0);
+    assert_eq!(result.confidence, Confidence::Dpi);
 }
 
 // ============================================================================
@@ -661,7 +673,7 @@ fn test_registry_detects_ssh() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Ssh);
-    assert_eq!(detection.confidence, 1.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 }
 
 #[test]
@@ -826,7 +838,7 @@ fn test_registry_detects_pop3_response() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Pop3);
-    assert_eq!(detection.confidence, 1.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 }
 
 #[test]
@@ -877,7 +889,7 @@ fn test_registry_detects_imap_untagged_response() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Imap);
-    assert_eq!(detection.confidence, 1.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 }
 
 #[test]
@@ -951,7 +963,7 @@ fn test_registry_detects_ntp_v4_client() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Ntp);
-    assert_eq!(detection.confidence, 1.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 
     if let Metadata::Ntp(meta) = detection.metadata {
         assert_eq!(meta.version, 4);
@@ -1060,7 +1072,7 @@ fn test_registry_detects_dhcp_request() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Dhcp);
-    assert_eq!(detection.confidence, 1.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 
     if let Metadata::Dhcp(meta) = detection.metadata {
         assert_eq!(meta.opcode, 1);
@@ -1150,7 +1162,7 @@ fn test_registry_detects_snmp_v1() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Snmp);
-    assert_eq!(detection.confidence, 1.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 
     if let Metadata::Snmp(meta) = detection.metadata {
         assert_eq!(meta.version, rdpi::core::types::SnmpVersion::V1);
@@ -1219,7 +1231,7 @@ fn test_registry_detects_modbus_request() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Modbus);
-    assert_eq!(detection.confidence, 1.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 
     if let Metadata::Modbus(meta) = detection.metadata {
         assert_eq!(meta.transaction_id, 1);
@@ -1367,7 +1379,7 @@ fn test_registry_detects_mysql_handshake() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Mysql);
-    assert_eq!(detection.confidence, 1.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 
     if let Metadata::Mysql(meta) = detection.metadata {
         assert_eq!(meta.version, Some("8.0.33".to_string()));
@@ -1429,7 +1441,7 @@ fn test_registry_detects_postgresql_startup() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Postgresql);
-    assert_eq!(detection.confidence, 1.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 
     if let Metadata::Postgresql(meta) = detection.metadata {
         assert_eq!(meta.user, Some("postgres".to_string()));
@@ -1475,7 +1487,7 @@ fn test_registry_detects_redis_get_command() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Redis);
-    assert_eq!(detection.confidence, 1.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 
     if let Metadata::Redis(meta) = detection.metadata {
         assert_eq!(meta.command, Some("GET".to_string()));

@@ -34,6 +34,14 @@ pub mod mysql;
 pub mod postgresql;
 #[cfg(feature = "database")]
 pub mod redis;
+#[cfg(feature = "proto3")]
+pub mod ftp;
+#[cfg(feature = "proto3")]
+pub mod sip;
+#[cfg(feature = "proto3")]
+pub mod rtp;
+#[cfg(feature = "iot")]
+pub mod mqtt;
 
 /// 协议检测器 Trait
 pub trait ProtocolDetector: Send + Sync {
@@ -116,10 +124,17 @@ pub fn register_defaults(_registry: &mut Registry) {
     tls::register(_registry);
     #[cfg(feature = "ssh")]
     ssh::register(_registry);
+    #[cfg(feature = "proto3")]
+    ftp::register(_registry);
     #[cfg(feature = "snmp")]
     snmp::register(_registry);
     #[cfg(feature = "modbus")]
     modbus::register(_registry);
+    #[cfg(feature = "proto3")]
+    {
+        sip::register(_registry);
+        rtp::register(_registry);
+    }
     #[cfg(feature = "database")]
     mysql::register(_registry);
     #[cfg(feature = "database")]
@@ -138,6 +153,8 @@ pub fn register_defaults(_registry: &mut Registry) {
         ntp::register(_registry);
         dhcp::register(_registry);
     }
+    #[cfg(feature = "iot")]
+    mqtt::register(_registry);
     #[cfg(feature = "http")]
     http::register(_registry);
     #[cfg(feature = "dns")]

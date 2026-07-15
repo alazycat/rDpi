@@ -2,9 +2,11 @@
 //!
 //! Identifies specific applications (YouTube, WeChat, etc.) based on SNI domain matching.
 
+mod ja4;
 mod mappings;
 mod trie;
 
+pub use ja4::compute_ja4;
 pub use mappings::DOMAIN_MAPPINGS;
 pub use trie::ReverseTrie;
 

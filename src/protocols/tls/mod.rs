@@ -44,10 +44,10 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
             return None;
         }
 
-        // Parse ClientHello to extract SNI and version
+        // Parse ClientHello to extract SNI, version, and JA4-relevant fields
         let info = parse_client_hello(payload)?;
 
-        use crate::core::types::{DetectionResult, Metadata, Protocol, TlsMetadata};
+        use crate::core::types::{Confidence, DetectionResult, Metadata, Protocol, TlsMetadata};
 
         // 根据 SNI 识别应用
         let application = info
@@ -55,16 +55,27 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
             .as_ref()
             .and_then(|sni| crate::application::identify(sni));
 
+        // 计算 JA4 TLS 指纹
+        let ja4 = info.version.as_ref().map(|ver| {
+            crate::application::compute_ja4(
+                ver,
+                &info.cipher_suites,
+                &info.extensions,
+                &info.supported_groups,
+            )
+        });
+
         let metadata = TlsMetadata {
             sni: info.sni,
             version: info.version,
             application,
+            ja4,
         };
 
         Some(
             DetectionResult::new(Protocol::Tls)
                 .with_metadata(Metadata::Tls(metadata))
-                .with_confidence(1.0),
+                .with_confidence(Confidence::Dpi),
         )
     }
 }

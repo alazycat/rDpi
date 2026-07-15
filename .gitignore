@@ -13,3 +13,6 @@ docs/superpowers/
 *.swp
 *.swo
 CLAUDE.md
+.codegraph/
+build_pcaps/
+.loop-state.json

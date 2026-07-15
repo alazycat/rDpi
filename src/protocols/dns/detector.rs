@@ -42,7 +42,8 @@ impl ProtocolDetector for DnsDetector {
         let metadata = if header.qdcount > 0 && payload.len() > 12 {
             match parser::parse_name(payload, 12) {
                 Ok((domain, _)) => Some(DnsMetadata {
-                    query_domain: Some(domain),
+                    query_domain: Some(domain.clone()),
+                    application: crate::application::identify(&domain),
                 }),
                 Err(_) => None,
             }

@@ -170,7 +170,7 @@ fn test_parse_smtp_command_empty() {
 // SMTP Detector Tests
 // ============================================================================
 
-use rdpi::core::types::{Metadata, Protocol};
+use rdpi::core::types::{Confidence, Metadata, Protocol};
 use rdpi::protocols::ProtocolDetector;
 use rdpi::protocols::smtp::SmtpDetector;
 
@@ -184,7 +184,7 @@ fn test_smtp_detector_postfix_banner() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Smtp);
-    assert_eq!(detection.confidence, 1.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 
     if let Metadata::Smtp(meta) = detection.metadata {
         assert_eq!(meta.hostname, Some("mail.example.com".to_string()));

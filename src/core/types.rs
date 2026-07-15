@@ -41,6 +41,9 @@ pub enum Protocol {
     Tls,
     Ssh,
     Smtp,
+    // 文件传输
+    #[cfg(feature = "proto3")]
+    Ftp,
     // 扩展协议
     Quic,
     Http3,
@@ -60,6 +63,15 @@ pub enum Protocol {
     Mysql,
     Postgresql,
     Redis,
+    #[cfg(feature = "proto3")]
+    Sip,
+    #[cfg(feature = "proto3")]
+    Rtp,
+    #[cfg(feature = "proto3")]
+    Rtcp,
+    /// IoT 协议 (feature: iot)
+    #[cfg(feature = "iot")]
+    Mqtt,
     /// 其他协议，包含协议号
     Other(u16),
 }
@@ -120,6 +132,15 @@ pub enum Metadata {
     Postgresql(PostgresqlMetadata),
     /// Redis 元数据
     Redis(RedisMetadata),
+    #[cfg(feature = "proto3")]
+    Ftp(FtpMetadata),
+    #[cfg(feature = "proto3")]
+    Sip(SipMetadata),
+    #[cfg(feature = "proto3")]
+    Rtp(RtpMetadata),
+    /// MQTT 元数据 (feature: iot)
+    #[cfg(feature = "iot")]
+    Mqtt(MqttMetadata),
 }
 
 /// DNS 元数据
@@ -127,6 +148,8 @@ pub enum Metadata {
 pub struct DnsMetadata {
     /// 查询域名
     pub query_domain: Option<String>,
+    /// 基于查询域名识别的应用
+    pub application: Option<Application>,
 }
 
 /// TLS 元数据
@@ -138,6 +161,8 @@ pub struct TlsMetadata {
     pub version: Option<String>,
     /// 识别的应用（基于 SNI）
     pub application: Option<Application>,
+    /// JA4 TLS 指纹哈希
+    pub ja4: Option<String>,
 }
 
 /// HTTP 元数据
@@ -149,6 +174,8 @@ pub struct HttpMetadata {
     pub method: Option<String>,
     /// 请求路径
     pub path: Option<String>,
+    /// 基于 Host 头识别的应用
+    pub application: Option<Application>,
 }
 
 /// SSH 元数据
@@ -370,32 +397,203 @@ pub enum ModbusData {
 pub struct DetectionResult {
     /// 检测到的协议
     pub protocol: Protocol,
-    /// 置信度 (0.0-1.0)
-    pub confidence: f32,
+    /// 置信度级别
+    pub confidence: Confidence,
     /// 协议元数据
     pub metadata: Metadata,
+    /// 协议分类
+    pub category: ProtocolCategory,
+    /// 协议风险评级
+    pub breed: ProtocolBreed,
+    /// 应用层协议（如 YouTube, WeChat 等）
+    pub app_protocol: Option<Application>,
 }
 
 impl DetectionResult {
-    /// 创建新的检测结果
+    /// 创建新的检测结果，默认置信度为 Dpi
     pub fn new(protocol: Protocol) -> Self {
         Self {
             protocol,
-            confidence: 1.0,
+            confidence: Confidence::Dpi,
             metadata: Metadata::None,
+            category: protocol.category(),
+            breed: protocol.breed(),
+            app_protocol: None,
         }
     }
 
-    /// 添加元数据
+    /// 添加元数据并提取应用层协议
     pub fn with_metadata(mut self, metadata: Metadata) -> Self {
+        self.app_protocol = Self::extract_app(&metadata);
         self.metadata = metadata;
         self
     }
 
     /// 设置置信度
-    pub fn with_confidence(mut self, confidence: f32) -> Self {
-        self.confidence = confidence.clamp(0.0, 1.0);
+    pub fn with_confidence(mut self, confidence: Confidence) -> Self {
+        self.confidence = confidence;
         self
+    }
+
+    /// 从元数据中提取应用层协议
+    fn extract_app(metadata: &Metadata) -> Option<Application> {
+        match metadata {
+            Metadata::Tls(tls) => tls.application,
+            Metadata::Quic(quic) => quic.application,
+            Metadata::Dns(dns) => dns.application,
+            Metadata::Http(http) => http.application,
+            #[cfg(feature = "proto3")]
+            Metadata::Ftp(_) | Metadata::Sip(_) | Metadata::Rtp(_) => None,
+            _ => None,
+        }
+    }
+}
+
+/// 协议分类
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProtocolCategory {
+    /// 网络层协议（如 TCP, UDP, ICMP）
+    Network,
+    /// Web 协议（如 HTTP）
+    Web,
+    /// 加密隧道协议（如 TLS, QUIC）
+    EncryptedTunnel,
+    /// 邮件协议（如 SMTP, POP3, IMAP）
+    Mail,
+    /// DNS 协议
+    Dns,
+    /// 数据库协议（如 MySQL, PostgreSQL, Redis）
+    Database,
+    /// 远程访问协议（如 SSH）
+    RemoteAccess,
+    /// 文件传输协议（如 FTP）
+    FileTransfer,
+    /// VoIP 信令与媒体（SIP, RTP, RTCP）
+    Voip,
+    /// 基础设施协议（如 NTP, DHCP）
+    Infrastructure,
+    /// 网络管理协议（如 SNMP）
+    NetworkManagement,
+    /// 工业协议（如 Modbus）
+    Industrial,
+    /// IoT 协议 (feature: iot)
+    #[cfg(feature = "iot")]
+    Iot,
+    /// 其他协议
+    Other,
+}
+
+impl Protocol {
+    /// 获取协议所属分类
+    pub fn category(self) -> ProtocolCategory {
+        match self {
+            Protocol::Tcp | Protocol::Udp | Protocol::Icmp => ProtocolCategory::Network,
+            Protocol::Http => ProtocolCategory::Web,
+            Protocol::Tls | Protocol::Quic | Protocol::Http3 => ProtocolCategory::EncryptedTunnel,
+            Protocol::Smtp | Protocol::Pop3 | Protocol::Pop3s
+                | Protocol::Imap | Protocol::Imaps => ProtocolCategory::Mail,
+            Protocol::Dns => ProtocolCategory::Dns,
+            Protocol::Mysql | Protocol::Postgresql | Protocol::Redis => ProtocolCategory::Database,
+            Protocol::Ssh => ProtocolCategory::RemoteAccess,
+            #[cfg(feature = "proto3")]
+            Protocol::Ftp => ProtocolCategory::FileTransfer,
+            #[cfg(feature = "proto3")]
+            Protocol::Sip => ProtocolCategory::Voip,
+            #[cfg(feature = "proto3")]
+            Protocol::Rtp | Protocol::Rtcp => ProtocolCategory::Voip,
+            Protocol::Ntp | Protocol::Dhcp => ProtocolCategory::Infrastructure,
+            Protocol::Snmp => ProtocolCategory::NetworkManagement,
+            Protocol::Modbus => ProtocolCategory::Industrial,
+            #[cfg(feature = "iot")]
+            Protocol::Mqtt => ProtocolCategory::Iot,
+            Protocol::Other(_) => ProtocolCategory::Other,
+        }
+    }
+
+    /// 获取协议的风险评级
+    pub fn breed(self) -> ProtocolBreed {
+        match self {
+            Protocol::Dns | Protocol::Http | Protocol::Smtp
+                | Protocol::Pop3 | Protocol::Pop3s | Protocol::Imap
+                | Protocol::Imaps | Protocol::Ntp | Protocol::Dhcp
+                | Protocol::Tls | Protocol::Quic | Protocol::Http3
+                | Protocol::Ssh => ProtocolBreed::Safe,
+            Protocol::Mysql | Protocol::Postgresql | Protocol::Redis
+                | Protocol::Snmp | Protocol::Modbus => ProtocolBreed::Acceptable,
+            #[cfg(feature = "proto3")]
+            Protocol::Ftp => ProtocolBreed::Fun,
+            #[cfg(feature = "iot")]
+            Protocol::Mqtt => ProtocolBreed::Safe,
+            #[cfg(feature = "proto3")]
+            Protocol::Sip | Protocol::Rtp | Protocol::Rtcp => ProtocolBreed::Safe,
+            Protocol::Tcp | Protocol::Udp | Protocol::Icmp
+                | Protocol::Other(_) => ProtocolBreed::Unrated,
+        }
+    }
+
+    /// 获取主协议（当前返回自身，为扩展预留）
+    pub fn master(self) -> Protocol {
+        #[cfg(feature = "proto3")]
+        match self {
+            Protocol::Ftp | Protocol::Sip | Protocol::Rtp | Protocol::Rtcp => self,
+            _ => self,
+        }
+        #[cfg(not(feature = "proto3"))]
+        self
+    }
+}
+
+/// 协议风险评级
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ProtocolBreed {
+    /// 未评级
+    Unrated,
+    /// 安全
+    Safe,
+    /// 可接受
+    Acceptable,
+    /// 有趣（存在已知问题但常用）
+    Fun,
+    /// 不安全
+    Unsafe,
+    /// 潜在危险
+    PotentiallyDangerous,
+    /// 危险
+    Dangerous,
+    /// 跟踪/广告
+    TrackerAds,
+}
+
+/// 协议检测置信度级别
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Confidence {
+    /// 未识别
+    Unknown = 0,
+    /// 基于端口匹配（DPI 失败后兜底）
+    MatchByPort = 1,
+    /// 基于 IP 子网匹配
+    MatchByIp = 2,
+    /// DPI 缓存匹配（同一流的后续包复用）
+    DpiCache = 3,
+    /// 部分 DPI 匹配（仅有部分特征）
+    DpiPartial = 4,
+    /// 完整 DPI 负载匹配
+    Dpi = 5,
+    /// 用户自定义规则匹配
+    CustomRule = 6,
+}
+
+impl std::fmt::Display for Confidence {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Confidence::Unknown => write!(f, "Unknown"),
+            Confidence::MatchByPort => write!(f, "MatchByPort"),
+            Confidence::MatchByIp => write!(f, "MatchByIp"),
+            Confidence::DpiCache => write!(f, "DpiCache"),
+            Confidence::DpiPartial => write!(f, "DpiPartial"),
+            Confidence::Dpi => write!(f, "Dpi"),
+            Confidence::CustomRule => write!(f, "CustomRule"),
+        }
     }
 }
 
@@ -446,6 +644,41 @@ pub enum Application {
     Slack,
     Line,
     Signal,
+    // 云服务（用于 IP 子网/域名匹配）
+    Google,
+    // 通讯协作
+    Zoom,
+    Twitch,
+    // 新增强
+    // 流媒体
+    HBO,
+    DAZN,
+    Vimeo,
+    Dailymotion,
+    Spotify,
+    AppleTVPlus,
+    ParamountPlus,
+    // 社交
+    Instagram,
+    Snapchat,
+    Facebook,
+    Messenger,
+    Twitter,
+    LinkedIn,
+    Pinterest,
+    Reddit,
+    // 云服务
+    Microsoft,
+    AmazonAWS,
+    Azure,
+    GitHub,
+    GitLab,
+    Dropbox,
+    Box,
+    // 通讯
+    Teams,
+    Webex,
+    Skype,
 }
 
 impl Application {
@@ -461,7 +694,14 @@ impl Application {
             | Application::Youku
             | Application::Hulu
             | Application::DisneyPlus
-            | Application::AmazonPrime => ApplicationCategory::Streaming,
+            | Application::AmazonPrime
+            | Application::HBO
+            | Application::DAZN
+            | Application::Vimeo
+            | Application::Dailymotion
+            | Application::Spotify
+            | Application::AppleTVPlus
+            | Application::ParamountPlus => ApplicationCategory::Streaming,
 
             Application::WeChat
             | Application::Telegram
@@ -470,7 +710,30 @@ impl Application {
             | Application::QQ
             | Application::Slack
             | Application::Line
-            | Application::Signal => ApplicationCategory::Im,
+            | Application::Signal
+            | Application::Google
+            | Application::Zoom
+            | Application::Twitch
+            | Application::Instagram
+            | Application::Snapchat
+            | Application::Facebook
+            | Application::Messenger
+            | Application::Twitter
+            | Application::LinkedIn
+            | Application::Pinterest
+            | Application::Reddit
+            | Application::Teams
+            | Application::Webex
+            | Application::Skype => ApplicationCategory::Im,
+
+            // 云服务
+            Application::Microsoft
+            | Application::AmazonAWS
+            | Application::Azure
+            | Application::GitHub
+            | Application::GitLab
+            | Application::Dropbox
+            | Application::Box => ApplicationCategory::Other,
         }
     }
 
@@ -495,6 +758,76 @@ impl Application {
             Application::Slack => "Slack",
             Application::Line => "Line",
             Application::Signal => "Signal",
+            Application::Google => "Google",
+            Application::Zoom => "Zoom",
+            Application::Twitch => "Twitch",
+            Application::HBO => "HBO",
+            Application::DAZN => "DAZN",
+            Application::Vimeo => "Vimeo",
+            Application::Dailymotion => "Dailymotion",
+            Application::Spotify => "Spotify",
+            Application::AppleTVPlus => "AppleTVPlus",
+            Application::ParamountPlus => "ParamountPlus",
+            Application::Instagram => "Instagram",
+            Application::Snapchat => "Snapchat",
+            Application::Facebook => "Facebook",
+            Application::Messenger => "Messenger",
+            Application::Twitter => "Twitter",
+            Application::LinkedIn => "LinkedIn",
+            Application::Pinterest => "Pinterest",
+            Application::Reddit => "Reddit",
+            Application::Microsoft => "Microsoft",
+            Application::AmazonAWS => "AmazonAWS",
+            Application::Azure => "Azure",
+            Application::GitHub => "GitHub",
+            Application::GitLab => "GitLab",
+            Application::Dropbox => "Dropbox",
+            Application::Box => "Box",
+            Application::Teams => "Teams",
+            Application::Webex => "Webex",
+            Application::Skype => "Skype",
+        }
+    }
+
+    /// 获取应用对应的主协议
+    pub fn master_protocol(self) -> Protocol {
+        match self {
+            Application::YouTube | Application::Netflix | Application::Bilibili
+                | Application::Douyin | Application::Iqiyi
+                | Application::TencentVideo | Application::Youku
+                | Application::Hulu | Application::DisneyPlus
+                | Application::AmazonPrime
+                | Application::HBO
+                | Application::DAZN
+                | Application::Vimeo
+                | Application::Dailymotion
+                | Application::Spotify
+                | Application::AppleTVPlus
+                | Application::ParamountPlus => Protocol::Http,
+
+            Application::WeChat | Application::Telegram | Application::WhatsApp
+                | Application::Discord | Application::QQ | Application::Slack
+                | Application::Line | Application::Signal
+                | Application::Zoom | Application::Twitch
+                | Application::Google
+                | Application::Instagram
+                | Application::Snapchat
+                | Application::Facebook
+                | Application::Messenger
+                | Application::Twitter
+                | Application::LinkedIn
+                | Application::Pinterest
+                | Application::Reddit
+                | Application::Microsoft
+                | Application::AmazonAWS
+                | Application::Azure
+                | Application::GitHub
+                | Application::GitLab
+                | Application::Dropbox
+                | Application::Box
+                | Application::Teams
+                | Application::Webex
+                | Application::Skype => Protocol::Tls,
         }
     }
 }
@@ -524,4 +857,51 @@ pub struct PostgresqlMetadata {
 pub struct RedisMetadata {
     /// 命令类型 (如 GET, SET, SELECT)
     pub command: Option<String>,
+}
+
+/// MQTT 元数据 (feature: iot)
+#[cfg(feature = "iot")]
+#[derive(Debug, Clone)]
+pub struct MqttMetadata {
+    /// 协议名称: "MQTT" (v3.1.1/v5) 或 "MQIsdp" (v3.1)
+    pub protocol_name: String,
+    /// 协议级别: 3=MQTT 3.1, 4=MQTT 3.1.1, 5=MQTT 5.0
+    pub protocol_level: u8,
+    /// Connect 标志位
+    pub connect_flags: u8,
+    /// Keep Alive 间隔（秒）
+    pub keep_alive: u16,
+    /// 客户端标识符
+    pub client_id: Option<String>,
+    /// Will 主题 (如果设置了 Will Flag)
+    pub will_topic: Option<String>,
+}
+
+#[cfg(feature = "proto3")]
+#[derive(Debug, Clone)]
+pub struct FtpMetadata {
+    pub is_client: bool,
+    pub verb: Option<String>,
+    pub argument: Option<String>,
+    pub response_code: Option<u16>,
+}
+
+#[cfg(feature = "proto3")]
+#[derive(Debug, Clone)]
+pub struct SipMetadata {
+    pub is_request: bool,
+    pub method: Option<String>,
+    pub status_code: Option<u16>,
+    pub user_agent: Option<String>,
+}
+
+#[cfg(feature = "proto3")]
+#[derive(Debug, Clone)]
+pub struct RtpMetadata {
+    pub ssrc: u32,
+    pub payload_type: u8,
+    pub sequence_number: u16,
+    pub timestamp: u32,
+    pub ssrc_confirmed: bool,
+    pub is_rtcp: bool,
 }

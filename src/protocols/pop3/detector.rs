@@ -1,6 +1,6 @@
 //! POP3 protocol detector for rDpi
 
-use crate::core::types::{DetectionResult, Protocol};
+use crate::core::types::{Confidence, DetectionResult, Protocol};
 use crate::protocols::ProtocolDetector;
 
 use super::parser::{is_pop3_command_prefix, is_pop3_response_prefix, parse_pop3_command, parse_pop3_response};
@@ -79,7 +79,7 @@ mod tests {
         let data = b"+OK POP3 server ready\r\n";
         let result = detector.detect(data).unwrap();
         assert_eq!(result.protocol, Protocol::Pop3);
-        assert_eq!(result.confidence, 1.0);
+        assert_eq!(result.confidence, Confidence::Dpi);
     }
 
     #[test]
