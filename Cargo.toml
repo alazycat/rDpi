@@ -36,7 +36,10 @@ pcap = ["dep:pcap-file"]
 rule = ["serde", "serde_json"]
 proto3 = []    # FTP, SIP, RTP/RTCP
 iot = []       # MQTT
-vpn = []       # WireGuard
+vpn = []       # WireGuard, OpenVPN
+voip = []      # STUN
+auth = []      # Kerberos, LDAP
+remote = []    # RDP
 
 [dev-dependencies]
 pcap-file = "2.0"

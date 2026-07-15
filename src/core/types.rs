@@ -80,6 +80,18 @@ pub enum Protocol {
     /// VPN/隧道协议 (feature: vpn)
     #[cfg(feature = "vpn")]
     WireGuard,
+    #[cfg(feature = "vpn")]
+    OpenVpn,
+    #[cfg(feature = "voip")]
+    Stun,
+    #[cfg(feature = "auth")]
+    Kerberos,
+    #[cfg(feature = "auth")]
+    Ldap,
+    #[cfg(feature = "remote")]
+    Rdp,
+    #[cfg(feature = "infra")]
+    Bgp,
     /// 其他协议，包含协议号
     Other(u16),
 }
@@ -154,6 +166,12 @@ pub enum Metadata {
     /// WireGuard 元数据 (feature: vpn)
     #[cfg(feature = "vpn")]
     WireGuard(WireGuardMetadata),
+    /// STUN 元数据 (feature: voip)
+    #[cfg(feature = "voip")]
+    Stun(StunMetadata),
+    /// Kerberos 元数据 (feature: auth)
+    #[cfg(feature = "auth")]
+    Kerberos(KerberosMetadata),
 }
 
 /// DNS 元数据
@@ -495,6 +513,9 @@ pub enum ProtocolCategory {
     /// VPN/隧道协议 (feature: vpn)
     #[cfg(feature = "vpn")]
     Vpn,
+    /// 认证协议 (feature: auth)
+    #[cfg(feature = "auth")]
+    Authentication,
     /// 其他协议
     Other,
 }
@@ -529,6 +550,16 @@ impl Protocol {
             Protocol::Mqtt => ProtocolCategory::Iot,
             #[cfg(feature = "vpn")]
             Protocol::WireGuard => ProtocolCategory::Vpn,
+            #[cfg(feature = "vpn")]
+            Protocol::OpenVpn => ProtocolCategory::Vpn,
+            #[cfg(feature = "voip")]
+            Protocol::Stun => ProtocolCategory::Voip,
+            #[cfg(feature = "auth")]
+            Protocol::Kerberos | Protocol::Ldap => ProtocolCategory::Authentication,
+            #[cfg(feature = "remote")]
+            Protocol::Rdp => ProtocolCategory::RemoteAccess,
+            #[cfg(feature = "infra")]
+            Protocol::Bgp => ProtocolCategory::Infrastructure,
             Protocol::Other(_) => ProtocolCategory::Other,
         }
     }
@@ -550,6 +581,16 @@ impl Protocol {
             Protocol::Mqtt => ProtocolBreed::Safe,
             #[cfg(feature = "vpn")]
             Protocol::WireGuard => ProtocolBreed::Safe,
+            #[cfg(feature = "vpn")]
+            Protocol::OpenVpn => ProtocolBreed::Safe,
+            #[cfg(feature = "voip")]
+            Protocol::Stun => ProtocolBreed::Safe,
+            #[cfg(feature = "auth")]
+            Protocol::Kerberos | Protocol::Ldap => ProtocolBreed::Safe,
+            #[cfg(feature = "remote")]
+            Protocol::Rdp => ProtocolBreed::Acceptable,
+            #[cfg(feature = "infra")]
+            Protocol::Bgp => ProtocolBreed::Safe,
             #[cfg(feature = "proto3")]
             Protocol::Sip | Protocol::Rtp | Protocol::Rtcp
                 | Protocol::Http2 | Protocol::WebSocket => ProtocolBreed::Safe,
@@ -923,6 +964,28 @@ pub struct WireGuardMetadata {
     pub message_type: u8,
     /// 发送者索引
     pub sender_index: u32,
+}
+
+/// STUN 元数据 (feature: voip)
+#[cfg(feature = "voip")]
+#[derive(Debug, Clone)]
+pub struct StunMetadata {
+    /// 消息类型 (如 0x0001=Binding Request)
+    pub message_type: u16,
+    /// Transaction ID (12 bytes)
+    pub transaction_id: [u8; 12],
+    /// XOR-MAPPED-ADDRESS (仅 IPv4)
+    pub mapped_address: Option<String>,
+}
+
+/// Kerberos 元数据 (feature: auth)
+#[cfg(feature = "auth")]
+#[derive(Debug, Clone)]
+pub struct KerberosMetadata {
+    /// 消息类型: 10=AS-REQ, 11=AS-REP, 12=TGS-REQ, 13=TGS-REP
+    pub msg_type: u8,
+    /// Realm (域名)
+    pub realm: Option<String>,
 }
 
 #[cfg(feature = "proto3")]
