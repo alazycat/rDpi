@@ -1,15 +1,14 @@
 //! Built-in risk processors for rDpi
-//!
-//! Each module implements `RiskProcessor` for a specific risk category.
 
+pub mod dns;
 pub mod tls;
 
 use super::RiskRegistry;
 
-/// 注册所有内置风险处理器
+/// Register all built-in risk processors
 pub fn register_defaults(registry: &mut RiskRegistry) {
     registry.register(Box::new(tls::TlsRiskProcessor::new()));
-    // DNS processors — Phase 10.2
+    registry.register(Box::new(dns::DnsRiskProcessor::new()));
     // HTTP processors — Phase 10.3
     // Behavioral processors — Phase 10.4
 }
@@ -22,6 +21,6 @@ mod tests {
     fn test_register_defaults() {
         let mut registry = RiskRegistry::new();
         register_defaults(&mut registry);
-        assert!(registry.processor_count() > 0);
+        assert_eq!(registry.processor_count(), 2);
     }
 }
