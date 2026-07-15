@@ -56,6 +56,8 @@ pub mod parser;
 pub mod protocols;
 #[cfg(feature = "pcap")]
 pub mod pcap;
+#[cfg(feature = "rule")]
+pub mod rule;
 
 pub use core::types::*;
 pub use error::{Error, Result};

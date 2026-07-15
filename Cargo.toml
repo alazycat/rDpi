@@ -12,6 +12,8 @@ etherparse = "0.15"
 thiserror = "1.0"
 aho-corasick = "1.1"
 rustls = "0.23"
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
 pcap-file = { version = "2.0", optional = true }
 
 [features]
@@ -28,6 +30,7 @@ snmp = []
 modbus = []
 database = []
 pcap = ["dep:pcap-file"]
+rule = ["serde", "serde_json"]
 proto3 = []    # FTP, SIP, RTP/RTCP
 
 [dev-dependencies]
