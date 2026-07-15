@@ -31,10 +31,18 @@ impl ProtocolDetector for HttpDetector {
         if let Some(req) = parse_request_line(payload) {
             // Layer 3: Extract metadata
             let host = parse_host_header(payload);
+            let application = host.as_ref().and_then(|h| {
+                if !h.is_empty() {
+                    crate::application::identify(h)
+                } else {
+                    None
+                }
+            });
             let metadata = Metadata::Http(HttpMetadata {
                 host,
                 method: Some(req.method),
                 path: Some(req.path),
+                application,
             });
 
             return Some(
@@ -51,6 +59,7 @@ impl ProtocolDetector for HttpDetector {
                 host: None,
                 method: None,
                 path: None,
+                application: None,
             });
 
             return Some(
