@@ -61,8 +61,15 @@ pub use core::types::*;
 pub use error::{Error, Result};
 
 use core::flow::{Flow, FlowTable};
+use core::guess::{GuessEngine, GuessContext};
+use core::types::{Confidence, TransportProto};
 use protocols::Registry;
 use std::time::Duration;
+
+/// TCP 流 DPI 放弃阈值（包数）
+pub const DEFAULT_TCP_GIVEUP: u32 = 20;
+/// UDP 流 DPI 放弃阈值（包数）
+pub const DEFAULT_UDP_GIVEUP: u32 = 5;
 
 /// 主入口：包检测器
 ///
@@ -82,6 +89,8 @@ use std::time::Duration;
 pub struct Detector {
     registry: Registry,
     flow_table: FlowTable,
+    /// 新流是否默认启用猜测
+    default_guess: bool,
 }
 
 impl Detector {
@@ -104,6 +113,7 @@ impl Detector {
         Self {
             registry: Registry::default(),
             flow_table: FlowTable::new(max_flows, Duration::from_secs(timeout_secs)),
+            default_guess: true,
         }
     }
 
@@ -112,16 +122,23 @@ impl Detector {
         Self {
             registry,
             flow_table: FlowTable::new(10000, Duration::from_secs(120)),
+            default_guess: true,
         }
+    }
+
+    /// 禁用猜测（仅 DPI 模式）
+    pub fn disable_guess(&mut self) {
+        self.default_guess = false;
     }
 
     /// 检测单个包
     ///
     /// 自动更新流表：
     /// 1. 解析包，获取五元组
-    /// 2. 在流表中查找或创建流
+    /// 2. 在流表中查找或创建流，递增加包计数
     /// 3. 检测协议（首次成功后保持不变）
-    /// 4. 更新流统计
+    /// 4. 包数超过阈值后未识别的流触发猜测引擎
+    /// 5. 更新流统计
     ///
     /// # Returns
     ///
@@ -144,21 +161,47 @@ impl Detector {
         // 获取或创建流
         let flow = self.flow_table.get_or_create(key.clone());
 
+        // 新创建的流继承 Detector 的 guess 设置
+        if flow.packets_seen == 0 {
+            flow.dpi_only = !self.default_guess;
+        }
+
+        // 增加包计数
+        flow.packets_seen += 1;
+
+        // 计算 giveup 阈值
+        let giveup_threshold = match flow.key.transport {
+            TransportProto::Tcp => DEFAULT_TCP_GIVEUP,
+            TransportProto::Udp => DEFAULT_UDP_GIVEUP,
+            _ => DEFAULT_UDP_GIVEUP,
+        };
+
         // 检测协议（如果流还没有协议）
         let result = if flow.protocol.is_none() {
-            // 尝试带端口的检测
-            let detected = self.registry.detect_with_ports(
-                &parsed.payload,
-                parsed.src_port,
-                parsed.dst_port,
-            );
+            if flow.packets_seen < giveup_threshold || flow.dpi_only {
+                // DPI 阶段
+                let detected = self.registry.detect_with_ports(
+                    &parsed.payload,
+                    parsed.src_port,
+                    parsed.dst_port,
+                );
 
-            // 更新流的协议
-            if let Some(ref r) = detected {
-                flow.protocol = Some(r.protocol);
+                if let Some(ref r) = detected {
+                    flow.protocol = Some(r.protocol);
+                }
+
+                detected
+            } else {
+                // Giveup 阶段：DPI 达到阈值仍未识别，启用猜测引擎
+                let ctx = GuessContext::new(parsed.dst_port);
+                let guess = GuessEngine::guess(&ctx);
+
+                if let Some(ref r) = guess {
+                    flow.protocol = Some(r.protocol);
+                }
+
+                guess
             }
-
-            detected
         } else {
             // 流已有协议，不重复检测，但需要返回当前协议信息
             flow.protocol.map(|p| DetectionResult::new(p))
