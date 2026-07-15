@@ -62,6 +62,7 @@ pub use error::{Error, Result};
 
 use core::flow::{Flow, FlowTable};
 use core::guess::{GuessEngine, GuessContext};
+use core::guess::info::DomainInfo;
 use core::types::{Confidence, TransportProto};
 use protocols::Registry;
 use std::time::Duration;
@@ -195,6 +196,22 @@ impl Detector {
                 // Giveup 阶段：DPI 达到阈值仍未识别，启用猜测引擎
                 let mut ctx = GuessContext::new(parsed.dst_port);
                 ctx.dst_ip = Some(parsed.src_ip); // 对端 IP
+                // 从流元数据中收集域名信息
+                ctx.domain_info = DomainInfo {
+                    sni: flow.metadata.as_ref().and_then(|m| match m {
+                        Metadata::Tls(tls) => tls.sni.clone(),
+                        Metadata::Quic(quic) => quic.sni.clone(),
+                        _ => None,
+                    }),
+                    http_host: flow.metadata.as_ref().and_then(|m| match m {
+                        Metadata::Http(http) => http.host.clone(),
+                        _ => None,
+                    }),
+                    dns_query: flow.metadata.as_ref().and_then(|m| match m {
+                        Metadata::Dns(dns) => dns.query_domain.clone(),
+                        _ => None,
+                    }),
+                };
                 let guess = GuessEngine::new().guess(&ctx);
 
                 if let Some(ref r) = guess {
