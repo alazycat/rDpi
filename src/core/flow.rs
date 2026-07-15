@@ -63,6 +63,9 @@ pub struct Flow {
     pub packets_seen: u32,
     /// 仅 DPI 模式（不做猜测）
     pub dpi_only: bool,
+    /// 流关联的风险 (feature: risk)
+    #[cfg(feature = "risk")]
+    pub risks: Vec<crate::risk::types::RiskResult>,
 }
 
 impl Flow {
@@ -76,6 +79,8 @@ impl Flow {
             metadata: None,
             packets_seen: 0,
             dpi_only: false,
+            #[cfg(feature = "risk")]
+            risks: Vec::new(),
         }
     }
 }

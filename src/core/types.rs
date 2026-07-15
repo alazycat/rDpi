@@ -438,6 +438,9 @@ pub struct DetectionResult {
     pub breed: ProtocolBreed,
     /// 应用层协议（如 YouTube, WeChat 等）
     pub app_protocol: Option<Application>,
+    /// 风险分析结果 (feature: risk)
+    #[cfg(feature = "risk")]
+    pub risks: Vec<super::super::risk::types::RiskResult>,
 }
 
 impl DetectionResult {
@@ -450,6 +453,8 @@ impl DetectionResult {
             category: protocol.category(),
             breed: protocol.breed(),
             app_protocol: None,
+            #[cfg(feature = "risk")]
+            risks: Vec::new(),
         }
     }
 
