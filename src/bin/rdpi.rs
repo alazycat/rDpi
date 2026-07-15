@@ -11,7 +11,7 @@ use std::time::Instant;
 
 /// rDpi — Rust Deep Packet Inspection CLI
 #[derive(Parser)]
-#[command(name = "rdpi", version = "0.1.1", about = "Network traffic protocol identification tool")]
+#[command(name = "rdpi", version = "0.2.0", about = "Network traffic protocol identification tool")]
 struct Cli {
     /// 输入的 pcap/pcapng 文件路径
     #[arg(short = 'i', long = "input", value_name = "FILE")]
