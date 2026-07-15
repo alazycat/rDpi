@@ -238,6 +238,31 @@ fn test_application_master_protocol() {
 }
 
 #[test]
+fn test_new_application_variants() {
+    // 流媒体新变体
+    assert_eq!(Application::HBO.category(), ApplicationCategory::Streaming);
+    assert_eq!(Application::DAZN.category(), ApplicationCategory::Streaming);
+    assert_eq!(Application::Spotify.category(), ApplicationCategory::Streaming);
+    // 社交
+    assert_eq!(Application::Facebook.category(), ApplicationCategory::Im);
+    assert_eq!(Application::Twitter.category(), ApplicationCategory::Im);
+    assert_eq!(Application::Instagram.category(), ApplicationCategory::Im);
+    // 云服务
+    assert_eq!(Application::GitHub.category(), ApplicationCategory::Other);
+    // 通讯
+    assert_eq!(Application::Teams.category(), ApplicationCategory::Im);
+}
+
+#[test]
+fn test_new_application_names() {
+    assert_eq!(Application::HBO.name(), "HBO");
+    assert_eq!(Application::Spotify.name(), "Spotify");
+    assert_eq!(Application::Facebook.name(), "Facebook");
+    assert_eq!(Application::GitHub.name(), "GitHub");
+    assert_eq!(Application::Teams.name(), "Teams");
+}
+
+#[test]
 fn test_detection_result_default_fields() {
     let result = DetectionResult::new(Protocol::Dns);
     assert_eq!(result.category, ProtocolCategory::Dns);

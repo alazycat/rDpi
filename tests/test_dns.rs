@@ -2,6 +2,27 @@ use rdpi::Detector;
 use rdpi::core::types::*;
 use rdpi::protocols::{ProtocolDetector, Registry};
 
+/// Build a minimal DNS query for a given domain name
+fn build_dns_query(domain: &str) -> Vec<u8> {
+    let mut pkt = vec![
+        0x12, 0x34, // Transaction ID
+        0x01, 0x00, // Flags: standard query
+        0x00, 0x01, // Questions: 1
+        0x00, 0x00, // Answers: 0
+        0x00, 0x00, // Authority: 0
+        0x00, 0x00, // Additional: 0
+    ];
+    // Encode domain name as length-prefixed labels
+    for label in domain.split('.') {
+        pkt.push(label.len() as u8);
+        pkt.extend_from_slice(label.as_bytes());
+    }
+    pkt.push(0x00); // End of name
+    pkt.extend_from_slice(&[0x00, 0x01]); // Type: A
+    pkt.extend_from_slice(&[0x00, 0x01]); // Class: IN
+    pkt
+}
+
 #[test]
 fn test_registry_new() {
     let registry = Registry::new();
@@ -86,4 +107,17 @@ fn test_detector_with_dns() {
     let result = detector.detect(&packet).unwrap();
     assert!(result.is_some());
     assert_eq!(result.unwrap().protocol, Protocol::Dns);
+}
+
+#[test]
+fn test_dns_query_to_application() {
+    let detector = rdpi::protocols::dns::DnsDetector::new();
+    // DNS 查询 netflix.com
+    let pkt = build_dns_query("netflix.com");
+    let result = detector.detect(&pkt).unwrap();
+    if let Metadata::Dns(meta) = result.metadata {
+        assert_eq!(meta.application, Some(Application::Netflix));
+    } else {
+        panic!("Expected Dns metadata");
+    }
 }
