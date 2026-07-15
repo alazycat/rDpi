@@ -70,6 +70,8 @@ pub enum Protocol {
     Rtp,
     #[cfg(feature = "proto3")]
     Rtcp,
+    #[cfg(feature = "proto3")]
+    Http2,
     /// IoT 协议 (feature: iot)
     #[cfg(feature = "iot")]
     Mqtt,
@@ -511,6 +513,8 @@ impl Protocol {
             #[cfg(feature = "proto3")]
             Protocol::Ftp => ProtocolCategory::FileTransfer,
             #[cfg(feature = "proto3")]
+            Protocol::Http2 => ProtocolCategory::Web,
+            #[cfg(feature = "proto3")]
             Protocol::Sip => ProtocolCategory::Voip,
             #[cfg(feature = "proto3")]
             Protocol::Rtp | Protocol::Rtcp => ProtocolCategory::Voip,
@@ -543,7 +547,8 @@ impl Protocol {
             #[cfg(feature = "vpn")]
             Protocol::WireGuard => ProtocolBreed::Safe,
             #[cfg(feature = "proto3")]
-            Protocol::Sip | Protocol::Rtp | Protocol::Rtcp => ProtocolBreed::Safe,
+            Protocol::Sip | Protocol::Rtp | Protocol::Rtcp
+                | Protocol::Http2 => ProtocolBreed::Safe,
             Protocol::Tcp | Protocol::Udp | Protocol::Icmp
                 | Protocol::Other(_) => ProtocolBreed::Unrated,
         }
