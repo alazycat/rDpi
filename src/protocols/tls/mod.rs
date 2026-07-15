@@ -47,7 +47,7 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
         // Parse ClientHello to extract SNI and version
         let info = parse_client_hello(payload)?;
 
-        use crate::core::types::{DetectionResult, Metadata, Protocol, TlsMetadata};
+        use crate::core::types::{Confidence, DetectionResult, Metadata, Protocol, TlsMetadata};
 
         // 根据 SNI 识别应用
         let application = info
@@ -64,7 +64,7 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
         Some(
             DetectionResult::new(Protocol::Tls)
                 .with_metadata(Metadata::Tls(metadata))
-                .with_confidence(1.0),
+                .with_confidence(Confidence::Dpi),
         )
     }
 }

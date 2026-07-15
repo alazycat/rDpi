@@ -1,6 +1,6 @@
 //! IMAP protocol detector for rDpi
 
-use crate::core::types::{DetectionResult, Protocol};
+use crate::core::types::{Confidence, DetectionResult, Protocol};
 use crate::protocols::ProtocolDetector;
 
 use super::parser::{is_imap_command_prefix, is_imap_response_prefix, parse_imap_command, parse_imap_response};
@@ -79,7 +79,7 @@ mod tests {
         let data = b"* OK IMAP4rev1 Service Ready\r\n";
         let result = detector.detect(data).unwrap();
         assert_eq!(result.protocol, Protocol::Imap);
-        assert_eq!(result.confidence, 1.0);
+        assert_eq!(result.confidence, Confidence::Dpi);
     }
 
     #[test]

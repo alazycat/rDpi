@@ -100,7 +100,7 @@ fn test_parse_ssh_version_empty() {
 // SSH Detector Tests
 // ============================================================
 
-use rdpi::core::types::{Metadata, Protocol};
+use rdpi::core::types::{Confidence, Metadata, Protocol};
 use rdpi::protocols::ProtocolDetector;
 use rdpi::protocols::ssh::SshDetector;
 
@@ -114,7 +114,7 @@ fn test_ssh_detector_openssh() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Ssh);
-    assert_eq!(detection.confidence, 1.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 
     if let Metadata::Ssh(meta) = detection.metadata {
         assert_eq!(meta.version, Some("2.0".to_string()));

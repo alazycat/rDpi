@@ -1,6 +1,6 @@
 #![cfg(feature = "quic")]
 
-use rdpi::core::types::{Metadata, Protocol};
+use rdpi::core::types::{Confidence, Metadata, Protocol};
 use rdpi::protocols::ProtocolDetector;
 use rdpi::protocols::quic::{
     QUIC_VERSION_1, QUIC_VERSION_DRAFT29, QuicDetector, is_quic_initial, parse_quic_initial,
@@ -143,8 +143,7 @@ fn test_quic_detector_metadata() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Quic);
-    assert!(!detection.confidence.is_nan());
-    assert!(detection.confidence > 0.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 
     if let Metadata::Quic(meta) = detection.metadata {
         assert_eq!(meta.version, Some("00000001".to_string())); // QUIC v1 in hex
@@ -289,7 +288,7 @@ fn test_http3_detection_quic_v1_port_443() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Http3);
-    assert!((detection.confidence - 0.8).abs() < 0.01);
+    assert_eq!(detection.confidence, Confidence::DpiPartial);
 }
 
 #[test]
@@ -310,7 +309,7 @@ fn test_http3_detection_quic_v2_port_443() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Http3);
-    assert!((detection.confidence - 0.8).abs() < 0.01);
+    assert_eq!(detection.confidence, Confidence::DpiPartial);
 }
 
 #[test]
@@ -331,7 +330,7 @@ fn test_http3_detection_quic_v1_non_443_port() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Quic);
-    assert!((detection.confidence - 0.9).abs() < 0.01);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 }
 
 #[test]

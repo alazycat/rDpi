@@ -1,6 +1,6 @@
 //! SMTP protocol detector for rDpi
 
-use crate::core::types::{DetectionResult, Metadata, Protocol, SmtpMetadata};
+use crate::core::types::{Confidence, DetectionResult, Metadata, Protocol, SmtpMetadata};
 use crate::protocols::ProtocolDetector;
 
 use super::parser::{
@@ -48,7 +48,7 @@ impl ProtocolDetector for SmtpDetector {
                 return Some(
                     DetectionResult::new(Protocol::Smtp)
                         .with_metadata(metadata)
-                        .with_confidence(1.0),
+                        .with_confidence(Confidence::Dpi),
                 );
             }
         }
@@ -65,7 +65,7 @@ impl ProtocolDetector for SmtpDetector {
                 return Some(
                     DetectionResult::new(Protocol::Smtp)
                         .with_metadata(metadata)
-                        .with_confidence(1.0),
+                        .with_confidence(Confidence::Dpi),
                 );
             }
         }
@@ -105,7 +105,7 @@ mod tests {
         let data = b"220 mail.example.com ESMTP Postfix\r\n";
         let result = detector.detect(data).unwrap();
         assert_eq!(result.protocol, Protocol::Smtp);
-        assert_eq!(result.confidence, 1.0);
+        assert_eq!(result.confidence, Confidence::Dpi);
 
         if let Metadata::Smtp(meta) = result.metadata {
             assert_eq!(meta.hostname, Some("mail.example.com".to_string()));

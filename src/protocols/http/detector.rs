@@ -40,7 +40,7 @@ impl ProtocolDetector for HttpDetector {
             return Some(
                 DetectionResult::new(Protocol::Http)
                     .with_metadata(metadata)
-                    .with_confidence(1.0),
+                    .with_confidence(Confidence::Dpi),
             );
         }
 
@@ -56,7 +56,7 @@ impl ProtocolDetector for HttpDetector {
             return Some(
                 DetectionResult::new(Protocol::Http)
                     .with_metadata(metadata)
-                    .with_confidence(1.0),
+                    .with_confidence(Confidence::Dpi),
             );
         }
 

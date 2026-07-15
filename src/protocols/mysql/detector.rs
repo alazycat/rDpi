@@ -1,6 +1,6 @@
 //! MySQL protocol detector for rDpi
 
-use crate::core::types::{DetectionResult, Metadata, Protocol};
+use crate::core::types::{Confidence, DetectionResult, Metadata, Protocol};
 use crate::protocols::ProtocolDetector;
 
 use super::parser::parse_mysql_handshake;
@@ -32,7 +32,7 @@ impl ProtocolDetector for MysqlDetector {
             return Some(
                 DetectionResult::new(Protocol::Mysql)
                     .with_metadata(Metadata::Mysql(metadata))
-                    .with_confidence(1.0),
+                    .with_confidence(Confidence::Dpi),
             );
         }
         None
@@ -70,7 +70,7 @@ mod tests {
         let result = detector.detect(&packet).unwrap();
 
         assert_eq!(result.protocol, Protocol::Mysql);
-        assert_eq!(result.confidence, 1.0);
+        assert_eq!(result.confidence, Confidence::Dpi);
     }
 
     #[test]

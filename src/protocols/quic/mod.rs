@@ -6,7 +6,7 @@ mod parser;
 
 pub use parser::*;
 
-use crate::core::types::{DetectionResult, Metadata, Protocol, QuicMetadata};
+use crate::core::types::{Confidence, DetectionResult, Metadata, Protocol, QuicMetadata};
 use crate::protocols::Registry;
 
 pub fn register(registry: &mut Registry) {
@@ -58,7 +58,7 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
         Some(
             DetectionResult::new(Protocol::Quic)
                 .with_metadata(Metadata::Quic(metadata))
-                .with_confidence(0.9),
+                .with_confidence(Confidence::Dpi),
         )
     }
 
@@ -81,9 +81,9 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
 
         // HTTP/3 判断：UDP 443 + 标准版本
         let (protocol, confidence) = if ctx.is_http3_port && is_standard_version {
-            (Protocol::Http3, 0.8)
+            (Protocol::Http3, Confidence::DpiPartial)  // HTTP/3 需要端口+版本双重确认
         } else {
-            (Protocol::Quic, 0.9)
+            (Protocol::Quic, Confidence::Dpi)
         };
 
         Some(

@@ -150,3 +150,46 @@ fn test_quic_metadata_with_application() {
 
     assert!(metadata.application.is_none());
 }
+
+// ============================================================================
+// Confidence Tests (Phase 1)
+// ============================================================================
+
+#[test]
+fn test_confidence_ordering() {
+    assert!(Confidence::Dpi > Confidence::DpiPartial);
+    assert!(Confidence::DpiPartial > Confidence::MatchByIp);
+    assert!(Confidence::MatchByIp > Confidence::MatchByPort);
+    assert!(Confidence::MatchByPort > Confidence::Unknown);
+    assert!(Confidence::CustomRule > Confidence::Dpi);
+}
+
+#[test]
+fn test_confidence_default() {
+    let result = DetectionResult::new(Protocol::Dns);
+    assert_eq!(result.confidence, Confidence::Dpi);
+}
+
+#[test]
+fn test_confidence_as_u8() {
+    assert_eq!(Confidence::Unknown as u8, 0);
+    assert_eq!(Confidence::MatchByPort as u8, 1);
+    assert_eq!(Confidence::MatchByIp as u8, 2);
+    assert_eq!(Confidence::DpiCache as u8, 3);
+    assert_eq!(Confidence::DpiPartial as u8, 4);
+    assert_eq!(Confidence::Dpi as u8, 5);
+    assert_eq!(Confidence::CustomRule as u8, 6);
+}
+
+#[test]
+fn test_confidence_equality() {
+    assert_eq!(Confidence::Dpi, Confidence::Dpi);
+    assert_ne!(Confidence::Dpi, Confidence::DpiPartial);
+}
+
+#[test]
+fn test_confidence_display() {
+    assert_eq!(format!("{}", Confidence::Dpi), "Dpi");
+    assert_eq!(format!("{}", Confidence::MatchByPort), "MatchByPort");
+    assert_eq!(format!("{}", Confidence::Unknown), "Unknown");
+}

@@ -1,4 +1,4 @@
-use rdpi::core::types::{Metadata, Protocol};
+use rdpi::core::types::{Confidence, Metadata, Protocol};
 use rdpi::protocols::ProtocolDetector;
 use rdpi::protocols::tls::{
     TlsDetector, extract_sni, extract_tls_version, is_client_hello, is_tls_record,
@@ -355,7 +355,7 @@ fn test_tls_detector_with_sni() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Tls);
-    assert_eq!(detection.confidence, 1.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 
     if let Metadata::Tls(meta) = detection.metadata {
         assert_eq!(meta.sni, Some("example.com".to_string()));

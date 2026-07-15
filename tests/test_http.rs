@@ -1,4 +1,4 @@
-use rdpi::core::types::{Metadata, Protocol};
+use rdpi::core::types::{Confidence, Metadata, Protocol};
 use rdpi::protocols::ProtocolDetector;
 use rdpi::protocols::http::{
     HttpDetector, is_http_prefix, parse_host_header, parse_request_line, parse_response_line,
@@ -146,7 +146,7 @@ fn test_http_detector_request() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Http);
-    assert_eq!(detection.confidence, 1.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 
     if let Metadata::Http(meta) = detection.metadata {
         assert_eq!(meta.method, Some("GET".to_string()));
@@ -167,7 +167,7 @@ fn test_http_detector_response() {
 
     let detection = result.unwrap();
     assert_eq!(detection.protocol, Protocol::Http);
-    assert_eq!(detection.confidence, 1.0);
+    assert_eq!(detection.confidence, Confidence::Dpi);
 
     if let Metadata::Http(meta) = detection.metadata {
         // Responses don't have method/path/host

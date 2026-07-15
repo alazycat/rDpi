@@ -1,6 +1,6 @@
 //! Redis protocol detector for rDpi
 
-use crate::core::types::{DetectionResult, Metadata, Protocol};
+use crate::core::types::{Confidence, DetectionResult, Metadata, Protocol};
 use crate::protocols::ProtocolDetector;
 
 use super::parser::parse_redis_command;
@@ -32,7 +32,7 @@ impl ProtocolDetector for RedisDetector {
             return Some(
                 DetectionResult::new(Protocol::Redis)
                     .with_metadata(Metadata::Redis(metadata))
-                    .with_confidence(1.0),
+                    .with_confidence(Confidence::Dpi),
             );
         }
         None
@@ -55,7 +55,7 @@ mod tests {
         let result = detector.detect(&data).unwrap();
 
         assert_eq!(result.protocol, Protocol::Redis);
-        assert_eq!(result.confidence, 1.0);
+        assert_eq!(result.confidence, Confidence::Dpi);
 
         if let Metadata::Redis(meta) = result.metadata {
             assert_eq!(meta.command, Some("GET".to_string()));

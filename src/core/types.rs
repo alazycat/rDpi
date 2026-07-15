@@ -370,18 +370,18 @@ pub enum ModbusData {
 pub struct DetectionResult {
     /// 检测到的协议
     pub protocol: Protocol,
-    /// 置信度 (0.0-1.0)
-    pub confidence: f32,
+    /// 置信度级别
+    pub confidence: Confidence,
     /// 协议元数据
     pub metadata: Metadata,
 }
 
 impl DetectionResult {
-    /// 创建新的检测结果
+    /// 创建新的检测结果，默认置信度为 Dpi
     pub fn new(protocol: Protocol) -> Self {
         Self {
             protocol,
-            confidence: 1.0,
+            confidence: Confidence::Dpi,
             metadata: Metadata::None,
         }
     }
@@ -393,9 +393,42 @@ impl DetectionResult {
     }
 
     /// 设置置信度
-    pub fn with_confidence(mut self, confidence: f32) -> Self {
-        self.confidence = confidence.clamp(0.0, 1.0);
+    pub fn with_confidence(mut self, confidence: Confidence) -> Self {
+        self.confidence = confidence;
         self
+    }
+}
+
+/// 协议检测置信度级别
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Confidence {
+    /// 未识别
+    Unknown = 0,
+    /// 基于端口匹配（DPI 失败后兜底）
+    MatchByPort = 1,
+    /// 基于 IP 子网匹配
+    MatchByIp = 2,
+    /// DPI 缓存匹配（同一流的后续包复用）
+    DpiCache = 3,
+    /// 部分 DPI 匹配（仅有部分特征）
+    DpiPartial = 4,
+    /// 完整 DPI 负载匹配
+    Dpi = 5,
+    /// 用户自定义规则匹配
+    CustomRule = 6,
+}
+
+impl std::fmt::Display for Confidence {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Confidence::Unknown => write!(f, "Unknown"),
+            Confidence::MatchByPort => write!(f, "MatchByPort"),
+            Confidence::MatchByIp => write!(f, "MatchByIp"),
+            Confidence::DpiCache => write!(f, "DpiCache"),
+            Confidence::DpiPartial => write!(f, "DpiPartial"),
+            Confidence::Dpi => write!(f, "Dpi"),
+            Confidence::CustomRule => write!(f, "CustomRule"),
+        }
     }
 }
 

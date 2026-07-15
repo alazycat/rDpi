@@ -43,7 +43,7 @@ impl crate::protocols::ProtocolDetector for SshDetector {
         // Parse SSH version banner
         let info = parse_ssh_version(payload)?;
 
-        use crate::core::types::{DetectionResult, Metadata, Protocol, SshMetadata};
+        use crate::core::types::{Confidence, DetectionResult, Metadata, Protocol, SshMetadata};
 
         let metadata = SshMetadata {
             version: Some(info.protocol_version),
@@ -53,7 +53,7 @@ impl crate::protocols::ProtocolDetector for SshDetector {
         Some(
             DetectionResult::new(Protocol::Ssh)
                 .with_metadata(Metadata::Ssh(metadata))
-                .with_confidence(1.0),
+                .with_confidence(Confidence::Dpi),
         )
     }
 }
