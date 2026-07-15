@@ -41,6 +41,7 @@ voip = []      # STUN
 auth = []      # Kerberos, LDAP
 remote = []    # RDP
 risk = ["serde", "serde_json"]
+storage = []   # NFS
 
 [dev-dependencies]
 pcap-file = "2.0"

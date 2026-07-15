@@ -92,6 +92,23 @@ pub enum Protocol {
     Rdp,
     #[cfg(feature = "infra")]
     Bgp,
+    // Phase 11A — 简单协议
+    Tftp,
+    Rsync,
+    Whois,
+    Syslog,
+    #[cfg(feature = "proto3")]
+    Rtmp,
+    #[cfg(feature = "proto3")]
+    Socks,
+    #[cfg(feature = "infra")]
+    Netflow,
+    #[cfg(feature = "infra")]
+    Ike,
+    #[cfg(feature = "infra")]
+    Ptpv2,
+    #[cfg(feature = "infra")]
+    Nfs,
     /// 其他协议，包含协议号
     Other(u16),
 }
@@ -617,6 +634,21 @@ impl Protocol {
             #[cfg(feature = "infra")]
             Protocol::Bgp => ProtocolCategory::Routing,
 
+            // Phase 11A — 简单协议
+            Protocol::Tftp | Protocol::Rsync | Protocol::Whois => ProtocolCategory::FileTransfer,
+            Protocol::Syslog => ProtocolCategory::NetworkManagement,
+            #[cfg(feature = "proto3")]
+            Protocol::Rtmp => ProtocolCategory::Web,
+            #[cfg(feature = "proto3")]
+            Protocol::Socks => ProtocolCategory::Tunnel,
+            #[cfg(feature = "infra")]
+            Protocol::Netflow => ProtocolCategory::NetworkManagement,
+            #[cfg(feature = "infra")]
+            Protocol::Ike => ProtocolCategory::Tunnel,
+            #[cfg(feature = "infra")]
+            Protocol::Ptpv2 => ProtocolCategory::Infrastructure,
+            #[cfg(feature = "infra")]
+            Protocol::Nfs => ProtocolCategory::FileTransfer,
             // Other
             Protocol::Other(_) => ProtocolCategory::Other,
         }
@@ -652,6 +684,14 @@ impl Protocol {
             #[cfg(feature = "proto3")]
             Protocol::Sip | Protocol::Rtp | Protocol::Rtcp
                 | Protocol::Http2 | Protocol::WebSocket => ProtocolBreed::Safe,
+            Protocol::Tftp | Protocol::Rsync | Protocol::Whois => ProtocolBreed::Safe,
+            Protocol::Syslog => ProtocolBreed::Safe,
+            #[cfg(feature = "proto3")]
+            Protocol::Rtmp => ProtocolBreed::Acceptable,
+            #[cfg(feature = "proto3")]
+            Protocol::Socks => ProtocolBreed::Unsafe,
+            #[cfg(feature = "infra")]
+            Protocol::Netflow | Protocol::Ike | Protocol::Ptpv2 | Protocol::Nfs => ProtocolBreed::Safe,
             Protocol::Tcp | Protocol::Udp | Protocol::Icmp
                 | Protocol::Other(_) => ProtocolBreed::Unrated,
         }

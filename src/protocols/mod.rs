@@ -62,6 +62,23 @@ pub mod ldap;
 pub mod rdp;
 #[cfg(feature = "infra")]
 pub mod bgp;
+// Phase 11A — 简单协议
+pub mod tftp;
+pub mod rsync;
+pub mod whois;
+pub mod syslog;
+#[cfg(feature = "proto3")]
+pub mod rtmp;
+#[cfg(feature = "proto3")]
+pub mod socks;
+#[cfg(feature = "infra")]
+pub mod netflow;
+#[cfg(feature = "infra")]
+pub mod ike;
+#[cfg(feature = "infra")]
+pub mod ptpv2;
+#[cfg(feature = "storage")]
+pub mod nfs;
 
 /// 协议检测器 Trait
 pub trait ProtocolDetector: Send + Sync {
@@ -198,4 +215,22 @@ pub fn register_defaults(_registry: &mut Registry) {
     http::register(_registry);
     #[cfg(feature = "dns")]
     dns::register(_registry);
+    // Phase 11A — 简单协议（最低特异性，DNS/HTTP 之后检测）
+    syslog::register(_registry);
+    tftp::register(_registry);
+    rsync::register(_registry);
+    whois::register(_registry);
+    #[cfg(feature = "infra")]
+    {
+        netflow::register(_registry);
+        ike::register(_registry);
+        ptpv2::register(_registry);
+    }
+    #[cfg(feature = "proto3")]
+    {
+        rtmp::register(_registry);
+        socks::register(_registry);
+    }
+    #[cfg(feature = "storage")]
+    nfs::register(_registry);
 }
