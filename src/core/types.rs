@@ -142,6 +142,8 @@ pub enum Metadata {
 pub struct DnsMetadata {
     /// 查询域名
     pub query_domain: Option<String>,
+    /// 基于查询域名识别的应用
+    pub application: Option<Application>,
 }
 
 /// TLS 元数据
@@ -164,6 +166,8 @@ pub struct HttpMetadata {
     pub method: Option<String>,
     /// 请求路径
     pub path: Option<String>,
+    /// 基于 Host 头识别的应用
+    pub application: Option<Application>,
 }
 
 /// SSH 元数据
@@ -428,11 +432,8 @@ impl DetectionResult {
         match metadata {
             Metadata::Tls(tls) => tls.application,
             Metadata::Quic(quic) => quic.application,
-            Metadata::Http(http) => {
-                http.host.as_ref().and_then(|host| {
-                    crate::application::identify(host)
-                })
-            },
+            Metadata::Dns(dns) => dns.application,
+            Metadata::Http(http) => http.application,
             #[cfg(feature = "proto3")]
             Metadata::Ftp(_) | Metadata::Sip(_) | Metadata::Rtp(_) => None,
             _ => None,
