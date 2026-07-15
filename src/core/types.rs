@@ -42,6 +42,7 @@ pub enum Protocol {
     Ssh,
     Smtp,
     // 文件传输
+    #[cfg(feature = "proto3")]
     Ftp,
     // 扩展协议
     Quic,
@@ -62,6 +63,12 @@ pub enum Protocol {
     Mysql,
     Postgresql,
     Redis,
+    #[cfg(feature = "proto3")]
+    Sip,
+    #[cfg(feature = "proto3")]
+    Rtp,
+    #[cfg(feature = "proto3")]
+    Rtcp,
     /// 其他协议，包含协议号
     Other(u16),
 }
@@ -122,6 +129,12 @@ pub enum Metadata {
     Postgresql(PostgresqlMetadata),
     /// Redis 元数据
     Redis(RedisMetadata),
+    #[cfg(feature = "proto3")]
+    Ftp(FtpMetadata),
+    #[cfg(feature = "proto3")]
+    Sip(SipMetadata),
+    #[cfg(feature = "proto3")]
+    Rtp(RtpMetadata),
 }
 
 /// DNS 元数据
@@ -420,6 +433,8 @@ impl DetectionResult {
                     crate::application::identify(host)
                 })
             },
+            #[cfg(feature = "proto3")]
+            Metadata::Ftp(_) | Metadata::Sip(_) | Metadata::Rtp(_) => None,
             _ => None,
         }
     }
@@ -444,6 +459,8 @@ pub enum ProtocolCategory {
     RemoteAccess,
     /// 文件传输协议（如 FTP）
     FileTransfer,
+    /// VoIP 信令与媒体（SIP, RTP, RTCP）
+    Voip,
     /// 基础设施协议（如 NTP, DHCP）
     Infrastructure,
     /// 网络管理协议（如 SNMP）
@@ -466,7 +483,12 @@ impl Protocol {
             Protocol::Dns => ProtocolCategory::Dns,
             Protocol::Mysql | Protocol::Postgresql | Protocol::Redis => ProtocolCategory::Database,
             Protocol::Ssh => ProtocolCategory::RemoteAccess,
+            #[cfg(feature = "proto3")]
             Protocol::Ftp => ProtocolCategory::FileTransfer,
+            #[cfg(feature = "proto3")]
+            Protocol::Sip => ProtocolCategory::Voip,
+            #[cfg(feature = "proto3")]
+            Protocol::Rtp | Protocol::Rtcp => ProtocolCategory::Voip,
             Protocol::Ntp | Protocol::Dhcp => ProtocolCategory::Infrastructure,
             Protocol::Snmp => ProtocolCategory::NetworkManagement,
             Protocol::Modbus => ProtocolCategory::Industrial,
@@ -484,7 +506,10 @@ impl Protocol {
                 | Protocol::Ssh => ProtocolBreed::Safe,
             Protocol::Mysql | Protocol::Postgresql | Protocol::Redis
                 | Protocol::Snmp | Protocol::Modbus => ProtocolBreed::Acceptable,
+            #[cfg(feature = "proto3")]
             Protocol::Ftp => ProtocolBreed::Fun,
+            #[cfg(feature = "proto3")]
+            Protocol::Sip | Protocol::Rtp | Protocol::Rtcp => ProtocolBreed::Safe,
             Protocol::Tcp | Protocol::Udp | Protocol::Icmp
                 | Protocol::Other(_) => ProtocolBreed::Unrated,
         }
@@ -492,6 +517,12 @@ impl Protocol {
 
     /// 获取主协议（当前返回自身，为扩展预留）
     pub fn master(self) -> Protocol {
+        #[cfg(feature = "proto3")]
+        match self {
+            Protocol::Ftp | Protocol::Sip | Protocol::Rtp | Protocol::Rtcp => self,
+            _ => self,
+        }
+        #[cfg(not(feature = "proto3"))]
         self
     }
 }
@@ -703,4 +734,33 @@ pub struct PostgresqlMetadata {
 pub struct RedisMetadata {
     /// 命令类型 (如 GET, SET, SELECT)
     pub command: Option<String>,
+}
+
+#[cfg(feature = "proto3")]
+#[derive(Debug, Clone)]
+pub struct FtpMetadata {
+    pub is_client: bool,
+    pub verb: Option<String>,
+    pub argument: Option<String>,
+    pub response_code: Option<u16>,
+}
+
+#[cfg(feature = "proto3")]
+#[derive(Debug, Clone)]
+pub struct SipMetadata {
+    pub is_request: bool,
+    pub method: Option<String>,
+    pub status_code: Option<u16>,
+    pub user_agent: Option<String>,
+}
+
+#[cfg(feature = "proto3")]
+#[derive(Debug, Clone)]
+pub struct RtpMetadata {
+    pub ssrc: u32,
+    pub payload_type: u8,
+    pub sequence_number: u16,
+    pub timestamp: u32,
+    pub ssrc_confirmed: bool,
+    pub is_rtcp: bool,
 }

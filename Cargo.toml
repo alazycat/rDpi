@@ -28,5 +28,6 @@ snmp = []
 modbus = []
 database = []
 pcap = ["dep:pcap-file"]
+proto3 = []    # FTP, SIP, RTP/RTCP
 
 [dev-dependencies]

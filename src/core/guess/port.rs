@@ -6,7 +6,9 @@ use crate::core::types::{Confidence, DetectionResult, Protocol};
 
 /// 常见端口→协议映射（用于 DPI 失败后的回退猜测）
 pub(crate) static PORT_MAP: &[(u16, &[Protocol])] = &[
+    #[cfg(feature = "proto3")]
     (20u16,   &[Protocol::Ftp]),
+    #[cfg(feature = "proto3")]
     (21u16,   &[Protocol::Ftp]),
     (22u16,   &[Protocol::Ssh]),
     (25u16,   &[Protocol::Smtp]),
@@ -25,6 +27,10 @@ pub(crate) static PORT_MAP: &[(u16, &[Protocol])] = &[
     (3306u16, &[Protocol::Mysql]),
     (5432u16, &[Protocol::Postgresql]),
     (6379u16, &[Protocol::Redis]),
+    #[cfg(feature = "proto3")]
+    (5060u16, &[Protocol::Sip]),
+    #[cfg(feature = "proto3")]
+    (5061u16, &[Protocol::Sip]),
 ];
 
 /// 通过端口匹配协议
