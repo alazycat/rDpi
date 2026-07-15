@@ -490,41 +490,61 @@ impl DetectionResult {
 }
 
 /// 协议分类
+///
+/// 共 25 个分类，涵盖网络层到应用层的业务分类。
+/// 新增分类保持向后兼容，未使用的预留给未来协议扩展。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProtocolCategory {
     /// 网络层协议（如 TCP, UDP, ICMP）
     Network,
-    /// Web 协议（如 HTTP）
+    /// Web 协议（如 HTTP, HTTP/2, WebSocket）
     Web,
-    /// 加密隧道协议（如 TLS, QUIC）
-    EncryptedTunnel,
+    /// 加密 Web 隧道（TLS, QUIC, HTTP/3）
+    WebTunnel,
+    /// VPN 隧道协议（WireGuard, OpenVPN）
+    Vpn,
+    /// 通用隧道协议（GRE, IPsec — 预留）
+    Tunnel,
     /// 邮件协议（如 SMTP, POP3, IMAP）
     Mail,
     /// DNS 协议
     Dns,
-    /// 数据库协议（如 MySQL, PostgreSQL, Redis）
+    /// 数据库协议（如 MySQL, PostgreSQL, Redis, MongoDB）
     Database,
-    /// 远程访问协议（如 SSH）
+    /// 远程访问协议（如 SSH, RDP）
     RemoteAccess,
     /// 文件传输协议（如 FTP）
     FileTransfer,
-    /// VoIP 信令与媒体（SIP, RTP, RTCP）
+    /// VoIP 与实时通信（SIP, RTP, RTCP, STUN）
     Voip,
     /// 基础设施协议（如 NTP, DHCP）
     Infrastructure,
     /// 网络管理协议（如 SNMP）
     NetworkManagement,
-    /// 工业协议（如 Modbus）
+    /// 工业/工控协议（如 Modbus）
     Industrial,
-    /// IoT 协议 (feature: iot)
-    #[cfg(feature = "iot")]
+    /// IoT 协议（如 MQTT）
     Iot,
-    /// VPN/隧道协议 (feature: vpn)
-    #[cfg(feature = "vpn")]
-    Vpn,
-    /// 认证协议 (feature: auth)
-    #[cfg(feature = "auth")]
+    /// 认证协议（Kerberos, LDAP）
     Authentication,
+    /// 流媒体视频（预留）
+    Video,
+    /// 流媒体音频（预留）
+    Audio,
+    /// 云服务（预留）
+    Cloud,
+    /// 即时通讯（预留）
+    Messaging,
+    /// 社交网络（预留）
+    Social,
+    /// 在线游戏（预留）
+    Gaming,
+    /// 协同办公（预留）
+    Collaboration,
+    /// 文件共享/P2P（预留）
+    FileSharing,
+    /// 路由协议（BGP, OSPF — 预留）
+    Routing,
     /// 其他协议
     Other,
 }
@@ -533,42 +553,71 @@ impl Protocol {
     /// 获取协议所属分类
     pub fn category(self) -> ProtocolCategory {
         match self {
+            // Network
             Protocol::Tcp | Protocol::Udp | Protocol::Icmp => ProtocolCategory::Network,
+
+            // Web
             Protocol::Http => ProtocolCategory::Web,
-            Protocol::Tls | Protocol::Quic | Protocol::Http3 => ProtocolCategory::EncryptedTunnel,
+            #[cfg(feature = "proto3")]
+            Protocol::Http2 | Protocol::WebSocket => ProtocolCategory::Web,
+
+            // WebTunnel
+            Protocol::Tls | Protocol::Quic | Protocol::Http3 => ProtocolCategory::WebTunnel,
+
+            // VPN
+            #[cfg(feature = "vpn")]
+            Protocol::WireGuard | Protocol::OpenVpn => ProtocolCategory::Vpn,
+
+            // Mail
             Protocol::Smtp | Protocol::Pop3 | Protocol::Pop3s
                 | Protocol::Imap | Protocol::Imaps => ProtocolCategory::Mail,
+
+            // DNS
             Protocol::Dns => ProtocolCategory::Dns,
+
+            // Database
             Protocol::Mysql | Protocol::Postgresql | Protocol::Redis
                 | Protocol::Mongodb => ProtocolCategory::Database,
+
+            // RemoteAccess
             Protocol::Ssh => ProtocolCategory::RemoteAccess,
+            #[cfg(feature = "remote")]
+            Protocol::Rdp => ProtocolCategory::RemoteAccess,
+
+            // FileTransfer
             #[cfg(feature = "proto3")]
             Protocol::Ftp => ProtocolCategory::FileTransfer,
-            #[cfg(feature = "proto3")]
-            Protocol::Http2 => ProtocolCategory::Web,
-            #[cfg(feature = "proto3")]
-            Protocol::WebSocket => ProtocolCategory::Web,
+
+            // VoIP
             #[cfg(feature = "proto3")]
             Protocol::Sip => ProtocolCategory::Voip,
             #[cfg(feature = "proto3")]
             Protocol::Rtp | Protocol::Rtcp => ProtocolCategory::Voip,
-            Protocol::Ntp | Protocol::Dhcp => ProtocolCategory::Infrastructure,
-            Protocol::Snmp => ProtocolCategory::NetworkManagement,
-            Protocol::Modbus => ProtocolCategory::Industrial,
-            #[cfg(feature = "iot")]
-            Protocol::Mqtt => ProtocolCategory::Iot,
-            #[cfg(feature = "vpn")]
-            Protocol::WireGuard => ProtocolCategory::Vpn,
-            #[cfg(feature = "vpn")]
-            Protocol::OpenVpn => ProtocolCategory::Vpn,
             #[cfg(feature = "voip")]
             Protocol::Stun => ProtocolCategory::Voip,
+
+            // Infrastructure
+            Protocol::Ntp | Protocol::Dhcp => ProtocolCategory::Infrastructure,
+
+            // NetworkManagement
+            Protocol::Snmp => ProtocolCategory::NetworkManagement,
+
+            // Industrial
+            Protocol::Modbus => ProtocolCategory::Industrial,
+
+            // IoT
+            #[cfg(feature = "iot")]
+            Protocol::Mqtt => ProtocolCategory::Iot,
+
+            // Authentication
             #[cfg(feature = "auth")]
             Protocol::Kerberos | Protocol::Ldap => ProtocolCategory::Authentication,
-            #[cfg(feature = "remote")]
-            Protocol::Rdp => ProtocolCategory::RemoteAccess,
+
+            // Routing
             #[cfg(feature = "infra")]
-            Protocol::Bgp => ProtocolCategory::Infrastructure,
+            Protocol::Bgp => ProtocolCategory::Routing,
+
+            // Other
             Protocol::Other(_) => ProtocolCategory::Other,
         }
     }
@@ -658,6 +707,104 @@ pub enum Confidence {
     Dpi = 5,
     /// 用户自定义规则匹配
     CustomRule = 6,
+}
+
+impl ProtocolCategory {
+    /// 获取协议分类的人类可读名称
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            ProtocolCategory::Network => "Network",
+            ProtocolCategory::Web => "Web",
+            ProtocolCategory::WebTunnel => "Web Tunnel",
+            ProtocolCategory::Vpn => "VPN",
+            ProtocolCategory::Tunnel => "Tunnel",
+            ProtocolCategory::Mail => "Mail",
+            ProtocolCategory::Dns => "DNS",
+            ProtocolCategory::Database => "Database",
+            ProtocolCategory::RemoteAccess => "Remote Access",
+            ProtocolCategory::FileTransfer => "File Transfer",
+            ProtocolCategory::Voip => "VoIP",
+            ProtocolCategory::Infrastructure => "Infrastructure",
+            ProtocolCategory::NetworkManagement => "Network Management",
+            ProtocolCategory::Industrial => "Industrial",
+            ProtocolCategory::Iot => "IoT",
+            ProtocolCategory::Authentication => "Authentication",
+            ProtocolCategory::Video => "Video",
+            ProtocolCategory::Audio => "Audio",
+            ProtocolCategory::Cloud => "Cloud",
+            ProtocolCategory::Messaging => "Messaging",
+            ProtocolCategory::Social => "Social Network",
+            ProtocolCategory::Gaming => "Gaming",
+            ProtocolCategory::Collaboration => "Collaboration",
+            ProtocolCategory::FileSharing => "File Sharing",
+            ProtocolCategory::Routing => "Routing",
+            ProtocolCategory::Other => "Other",
+        }
+    }
+
+    /// 获取协议分类的简短描述
+    pub fn description(&self) -> &'static str {
+        match self {
+            ProtocolCategory::Network => "Network layer protocols (TCP, UDP, ICMP)",
+            ProtocolCategory::Web => "Web protocols (HTTP, HTTP/2, WebSocket)",
+            ProtocolCategory::WebTunnel => "Encrypted web traffic (TLS, QUIC, HTTP/3)",
+            ProtocolCategory::Vpn => "VPN and encrypted tunnel protocols",
+            ProtocolCategory::Tunnel => "Network tunneling protocols",
+            ProtocolCategory::Mail => "Email protocols (SMTP, POP3, IMAP)",
+            ProtocolCategory::Dns => "Domain Name System protocols",
+            ProtocolCategory::Database => "Database protocols (MySQL, PostgreSQL, Redis, MongoDB)",
+            ProtocolCategory::RemoteAccess => "Remote access and administration protocols",
+            ProtocolCategory::FileTransfer => "File transfer protocols (FTP)",
+            ProtocolCategory::Voip => "Voice/Video over IP and real-time communication",
+            ProtocolCategory::Infrastructure => "Network infrastructure protocols (NTP, DHCP)",
+            ProtocolCategory::NetworkManagement => "Network management protocols (SNMP)",
+            ProtocolCategory::Industrial => "Industrial control system protocols (Modbus)",
+            ProtocolCategory::Iot => "Internet of Things protocols (MQTT)",
+            ProtocolCategory::Authentication => "Authentication and directory protocols",
+            ProtocolCategory::Video => "Video streaming protocols",
+            ProtocolCategory::Audio => "Audio streaming protocols",
+            ProtocolCategory::Cloud => "Cloud service platforms",
+            ProtocolCategory::Messaging => "Instant messaging protocols",
+            ProtocolCategory::Social => "Social network platforms",
+            ProtocolCategory::Gaming => "Online gaming protocols",
+            ProtocolCategory::Collaboration => "Collaboration and conferencing tools",
+            ProtocolCategory::FileSharing => "File sharing and P2P protocols",
+            ProtocolCategory::Routing => "Network routing protocols (BGP)",
+            ProtocolCategory::Other => "Other/unknown protocols",
+        }
+    }
+
+    /// 获取对应的 nDPI 分类 ID
+    pub fn ndpi_category_id(&self) -> u32 {
+        match self {
+            ProtocolCategory::Network => 14,
+            ProtocolCategory::Web => 5,
+            ProtocolCategory::WebTunnel => 5,
+            ProtocolCategory::Vpn => 2,
+            ProtocolCategory::Tunnel => 2,
+            ProtocolCategory::Mail => 3,
+            ProtocolCategory::Dns => 14,
+            ProtocolCategory::Database => 11,
+            ProtocolCategory::RemoteAccess => 12,
+            ProtocolCategory::FileTransfer => 7,
+            ProtocolCategory::Voip => 10,
+            ProtocolCategory::Infrastructure => 14,
+            ProtocolCategory::NetworkManagement => 14,
+            ProtocolCategory::Industrial => 31,
+            ProtocolCategory::Iot => 31,
+            ProtocolCategory::Authentication => 14,
+            ProtocolCategory::Video => 26,
+            ProtocolCategory::Audio => 25,
+            ProtocolCategory::Cloud => 13,
+            ProtocolCategory::Messaging => 9,
+            ProtocolCategory::Social => 6,
+            ProtocolCategory::Gaming => 8,
+            ProtocolCategory::Collaboration => 15,
+            ProtocolCategory::FileSharing => 29,
+            ProtocolCategory::Routing => 14,
+            ProtocolCategory::Other => 0,
+        }
+    }
 }
 
 impl std::fmt::Display for Confidence {
