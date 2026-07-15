@@ -35,6 +35,8 @@ database = []
 pcap = ["dep:pcap-file"]
 rule = ["serde", "serde_json"]
 proto3 = []    # FTP, SIP, RTP/RTCP
+iot = []       # MQTT
+vpn = []       # WireGuard
 
 [dev-dependencies]
 pcap-file = "2.0"

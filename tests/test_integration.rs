@@ -202,6 +202,14 @@ fn test_registry_default_detector_count() {
         {
             count += 3; // FTP + SIP + RTP
         }
+        #[cfg(feature = "iot")]
+        {
+            count += 1; // MQTT
+        }
+        #[cfg(feature = "vpn")]
+        {
+            count += 1; // WireGuard
+        }
         count
     };
     assert_eq!(registry.detector_count(), expected_count);

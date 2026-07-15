@@ -40,6 +40,8 @@ pub mod ftp;
 pub mod sip;
 #[cfg(feature = "proto3")]
 pub mod rtp;
+#[cfg(feature = "iot")]
+pub mod mqtt;
 
 /// 协议检测器 Trait
 pub trait ProtocolDetector: Send + Sync {
@@ -151,6 +153,8 @@ pub fn register_defaults(_registry: &mut Registry) {
         ntp::register(_registry);
         dhcp::register(_registry);
     }
+    #[cfg(feature = "iot")]
+    mqtt::register(_registry);
     #[cfg(feature = "http")]
     http::register(_registry);
     #[cfg(feature = "dns")]

@@ -69,6 +69,9 @@ pub enum Protocol {
     Rtp,
     #[cfg(feature = "proto3")]
     Rtcp,
+    /// IoT 协议 (feature: iot)
+    #[cfg(feature = "iot")]
+    Mqtt,
     /// 其他协议，包含协议号
     Other(u16),
 }
@@ -135,6 +138,9 @@ pub enum Metadata {
     Sip(SipMetadata),
     #[cfg(feature = "proto3")]
     Rtp(RtpMetadata),
+    /// MQTT 元数据 (feature: iot)
+    #[cfg(feature = "iot")]
+    Mqtt(MqttMetadata),
 }
 
 /// DNS 元数据
@@ -470,6 +476,9 @@ pub enum ProtocolCategory {
     NetworkManagement,
     /// 工业协议（如 Modbus）
     Industrial,
+    /// IoT 协议 (feature: iot)
+    #[cfg(feature = "iot")]
+    Iot,
     /// 其他协议
     Other,
 }
@@ -495,6 +504,8 @@ impl Protocol {
             Protocol::Ntp | Protocol::Dhcp => ProtocolCategory::Infrastructure,
             Protocol::Snmp => ProtocolCategory::NetworkManagement,
             Protocol::Modbus => ProtocolCategory::Industrial,
+            #[cfg(feature = "iot")]
+            Protocol::Mqtt => ProtocolCategory::Iot,
             Protocol::Other(_) => ProtocolCategory::Other,
         }
     }
@@ -511,6 +522,8 @@ impl Protocol {
                 | Protocol::Snmp | Protocol::Modbus => ProtocolBreed::Acceptable,
             #[cfg(feature = "proto3")]
             Protocol::Ftp => ProtocolBreed::Fun,
+            #[cfg(feature = "iot")]
+            Protocol::Mqtt => ProtocolBreed::Safe,
             #[cfg(feature = "proto3")]
             Protocol::Sip | Protocol::Rtp | Protocol::Rtcp => ProtocolBreed::Safe,
             Protocol::Tcp | Protocol::Udp | Protocol::Icmp
@@ -844,6 +857,24 @@ pub struct PostgresqlMetadata {
 pub struct RedisMetadata {
     /// 命令类型 (如 GET, SET, SELECT)
     pub command: Option<String>,
+}
+
+/// MQTT 元数据 (feature: iot)
+#[cfg(feature = "iot")]
+#[derive(Debug, Clone)]
+pub struct MqttMetadata {
+    /// 协议名称: "MQTT" (v3.1.1/v5) 或 "MQIsdp" (v3.1)
+    pub protocol_name: String,
+    /// 协议级别: 3=MQTT 3.1, 4=MQTT 3.1.1, 5=MQTT 5.0
+    pub protocol_level: u8,
+    /// Connect 标志位
+    pub connect_flags: u8,
+    /// Keep Alive 间隔（秒）
+    pub keep_alive: u16,
+    /// 客户端标识符
+    pub client_id: Option<String>,
+    /// Will 主题 (如果设置了 Will Flag)
+    pub will_topic: Option<String>,
 }
 
 #[cfg(feature = "proto3")]
