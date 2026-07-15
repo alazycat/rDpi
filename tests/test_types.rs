@@ -134,6 +134,10 @@ fn test_tls_metadata_with_application() {
         ja4: None,
         cipher_suites: vec![],
         alpn: None,
+        cert_subject: None,
+        cert_issuer: None,
+        cert_valid_from: None,
+        cert_valid_to: None,
     };
 }
 
@@ -281,6 +285,10 @@ fn test_detection_result_app_protocol_from_tls() {
         ja4: None,
         cipher_suites: vec![],
         alpn: None,
+        cert_subject: None,
+        cert_issuer: None,
+        cert_valid_from: None,
+        cert_valid_to: None,
     });
     let result = DetectionResult::new(Protocol::Tls)
         .with_metadata(metadata);

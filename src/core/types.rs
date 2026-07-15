@@ -220,7 +220,7 @@ pub struct DnsMetadata {
 }
 
 /// TLS 元数据
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TlsMetadata {
     /// Server Name Indication (SNI)
     pub sni: Option<String>,
@@ -234,6 +234,14 @@ pub struct TlsMetadata {
     pub cipher_suites: Vec<u16>,
     /// ALPN 协商协议 (如 "h2", "http/1.1")
     pub alpn: Option<String>,
+    /// 证书主题 (CN)
+    pub cert_subject: Option<String>,
+    /// 证书签发者
+    pub cert_issuer: Option<String>,
+    /// 证书有效期起始 (Unix timestamp)
+    pub cert_valid_from: Option<u64>,
+    /// 证书有效期截止 (Unix timestamp)
+    pub cert_valid_to: Option<u64>,
 }
 
 /// HTTP 元数据
