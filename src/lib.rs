@@ -58,6 +58,8 @@ pub mod protocols;
 pub mod pcap;
 #[cfg(feature = "rule")]
 pub mod rule;
+#[cfg(feature = "risk")]
+pub mod risk;
 
 pub use core::types::*;
 pub use error::{Error, Result};
@@ -71,6 +73,8 @@ use std::time::Duration;
 
 #[cfg(feature = "rule")]
 use rule::{Rule, RuleContext, RuleEngine};
+#[cfg(feature = "risk")]
+use risk::RiskRegistry;
 
 /// TCP 流 DPI 放弃阈值（包数）
 pub const DEFAULT_TCP_GIVEUP: u32 = 20;
@@ -103,6 +107,9 @@ pub struct Detector {
     /// 仅规则模式（跳过内置 DPI 和 Guess）
     #[cfg(feature = "rule")]
     rules_only: bool,
+    /// 风险分析引擎
+    #[cfg(feature = "risk")]
+    risk_registry: RiskRegistry,
 }
 
 impl Detector {
@@ -130,6 +137,8 @@ impl Detector {
             rule_engine: None,
             #[cfg(feature = "rule")]
             rules_only: false,
+            #[cfg(feature = "risk")]
+            risk_registry: RiskRegistry::default(),
         }
     }
 
@@ -143,6 +152,8 @@ impl Detector {
             rule_engine: None,
             #[cfg(feature = "rule")]
             rules_only: false,
+            #[cfg(feature = "risk")]
+            risk_registry: RiskRegistry::default(),
         }
     }
 
@@ -160,6 +171,8 @@ impl Detector {
             default_guess: true,
             rule_engine: Some(RuleEngine { rules }),
             rules_only: false,
+            #[cfg(feature = "risk")]
+            risk_registry: RiskRegistry::default(),
         }
     }
 
@@ -237,7 +250,7 @@ impl Detector {
         };
 
         // 检测协议（如果流还没有协议）
-        let result = if flow.protocol.is_none() {
+        let mut result = if flow.protocol.is_none() {
             #[cfg(feature = "rule")]
             if let Some(ref engine) = self.rule_engine {
                 let rule_ctx = RuleContext {
@@ -315,6 +328,18 @@ impl Detector {
             flow.metadata = Some(r.metadata.clone());
         }
 
+        // 风险分析（将风险附加到检测结果和流）
+        #[cfg(feature = "risk")]
+        {
+            let risks = self.risk_registry.analyze_packet(&parsed, &*flow);
+            if !risks.is_empty() {
+                flow.risks.extend(risks.clone());
+                if let Some(ref mut r) = result {
+                    r.risks = risks;
+                }
+            }
+        }
+
         Ok(result)
     }
 
@@ -339,6 +364,20 @@ impl Detector {
     ///
     /// 过期的流键列表
     pub fn expire_flows(&mut self) -> Vec<FlowKey> {
+        #[cfg(feature = "risk")]
+        {
+            // 在过期前对流运行 analyze_flow
+            let keys: Vec<FlowKey> = self.flow_table.iter()
+                .filter(|(_, f)| std::time::Instant::now().duration_since(f.stats.last_time)
+                    > Duration::from_secs(120))
+                .map(|(k, _)| k.clone())
+                .collect();
+            for key in &keys {
+                if let Some(flow) = self.flow_table.get(key) {
+                    let _risks = self.risk_registry.analyze_flow(flow);
+                }
+            }
+        }
         self.flow_table.expire_timeout()
     }
 
