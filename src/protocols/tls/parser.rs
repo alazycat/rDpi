@@ -23,6 +23,12 @@ pub struct ClientHelloInfo {
     pub sni: Option<String>,
     /// TLS version string (e.g., "TLS 1.2", "TLS 1.3")
     pub version: Option<String>,
+    /// 密码套件列表
+    pub cipher_suites: Vec<u16>,
+    /// 扩展类型列表（按出现顺序）
+    pub extensions: Vec<u16>,
+    /// 支持的椭圆曲线/有限域组列表
+    pub supported_groups: Vec<u16>,
 }
 
 /// 检查是否为 TLS 记录
@@ -55,9 +61,9 @@ pub fn is_client_hello(data: &[u8]) -> bool {
     data[5] == HANDSHAKE_TYPE_CLIENT_HELLO
 }
 
-/// 解析 ClientHello，提取 SNI 和版本
+/// 解析 ClientHello，提取 SNI、版本、密码套件、扩展列表和 Supported Groups
 ///
-/// 返回 (SNI, Version) 元组
+/// 返回 ClientHelloInfo
 ///
 /// ClientHello 结构:
 /// - Handshake Type (1B): 0x01
@@ -78,16 +84,31 @@ pub fn parse_client_hello(data: &[u8]) -> Option<ClientHelloInfo> {
     let record_version = decode_tls_version(data[1], data[2]);
 
     // Parse extensions to find SNI and actual supported version
-    let (sni, supported_version) = parse_client_hello_extensions(data)?;
+    let (sni, supported_version, cipher_suites, extensions, supported_groups) =
+        parse_client_hello_fields(data)?;
 
     // Prefer supported_version extension over record layer version
     let version = supported_version.or(record_version);
 
-    Some(ClientHelloInfo { sni, version })
+    Some(ClientHelloInfo {
+        sni,
+        version,
+        cipher_suites,
+        extensions,
+        supported_groups,
+    })
 }
 
-/// 解析 ClientHello 扩展，提取 SNI 和 supported_version
-fn parse_client_hello_extensions(data: &[u8]) -> Option<(Option<String>, Option<String>)> {
+/// 解析 ClientHello 所有字段，提取 SNI、supported_version、密码套件、扩展列表和 Supported Groups
+fn parse_client_hello_fields(
+    data: &[u8],
+) -> Option<(
+    Option<String>,
+    Option<String>,
+    Vec<u16>,
+    Vec<u16>,
+    Vec<u16>,
+)> {
     // TLS record header: 5 bytes
     // Handshake header: 4 bytes
     // Client Version: 2 bytes
@@ -115,12 +136,24 @@ fn parse_client_hello_extensions(data: &[u8]) -> Option<(Option<String>, Option<
     let session_id_len = data[offset] as usize;
     offset += 1 + session_id_len;
 
-    // Skip cipher suites (2 bytes length + cipher suites)
+    // Capture cipher suites and advance offset
     if offset + 2 > data.len() {
         return None;
     }
     let cipher_suites_len = u16_from_be(&data[offset..offset + 2]) as usize;
-    offset += 2 + cipher_suites_len;
+    offset += 2;
+
+    if offset + cipher_suites_len > data.len() {
+        return None;
+    }
+    let mut cipher_suites = Vec::new();
+    let mut cs_off = offset;
+    let cs_end = offset + cipher_suites_len;
+    while cs_off + 2 <= cs_end {
+        cipher_suites.push(u16_from_be(&data[cs_off..cs_off + 2]));
+        cs_off += 2;
+    }
+    offset += cipher_suites_len;
 
     // Skip compression methods (1 byte length + compression methods)
     if offset >= data.len() {
@@ -143,6 +176,8 @@ fn parse_client_hello_extensions(data: &[u8]) -> Option<(Option<String>, Option<
 
     let mut sni: Option<String> = None;
     let mut supported_version: Option<String> = None;
+    let mut extensions: Vec<u16> = Vec::new();
+    let mut supported_groups: Vec<u16> = Vec::new();
 
     // Parse each extension
     while offset + 4 <= extensions_end {
@@ -155,6 +190,9 @@ fn parse_client_hello_extensions(data: &[u8]) -> Option<(Option<String>, Option<
             break;
         }
 
+        // 收集扩展类型（JA4 需要按顺序的扩展类型列表）
+        extensions.push(ext_type);
+
         match ext_type {
             EXTENSION_TYPE_SNI => {
                 sni = parse_sni_extension(&data[offset..offset + ext_len]);
@@ -164,13 +202,18 @@ fn parse_client_hello_extensions(data: &[u8]) -> Option<(Option<String>, Option<
                 supported_version =
                     parse_supported_versions_extension(&data[offset..offset + ext_len]);
             }
+            0x000a => {
+                // supported_groups extension (0x000a)
+                supported_groups =
+                    parse_supported_groups_extension(&data[offset..offset + ext_len]);
+            }
             _ => {}
         }
 
         offset += ext_len;
     }
 
-    Some((sni, supported_version))
+    Some((sni, supported_version, cipher_suites, extensions, supported_groups))
 }
 
 /// 解析 SNI 扩展
@@ -249,6 +292,28 @@ fn parse_supported_versions_extension(data: &[u8]) -> Option<String> {
     // Take the first (highest) version
     let version_bytes = &data[1..3];
     decode_tls_version(version_bytes[0], version_bytes[1])
+}
+
+/// 解析 supported_groups 扩展 (0x000a)
+///
+/// 格式:
+/// - Supported Groups Length (2B)
+/// - Supported Group (2B each)
+fn parse_supported_groups_extension(data: &[u8]) -> Vec<u16> {
+    if data.len() < 2 {
+        return Vec::new();
+    }
+    let groups_len = u16_from_be(&data[0..2]) as usize;
+    if groups_len + 2 > data.len() || groups_len % 2 != 0 {
+        return Vec::new();
+    }
+    let mut groups = Vec::with_capacity(groups_len / 2);
+    let mut offset = 2;
+    while offset + 2 <= 2 + groups_len {
+        groups.push(u16_from_be(&data[offset..offset + 2]));
+        offset += 2;
+    }
+    groups
 }
 
 /// 将 TLS 版本字节转换为字符串

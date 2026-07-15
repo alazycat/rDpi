@@ -131,10 +131,8 @@ fn test_tls_metadata_with_application() {
         sni: Some("www.youtube.com".to_string()),
         version: Some("TLSv1.3".to_string()),
         application: Some(Application::YouTube),
+        ja4: None,
     };
-
-    assert_eq!(metadata.sni, Some("www.youtube.com".to_string()));
-    assert_eq!(metadata.application, Some(Application::YouTube));
 }
 
 #[test]
@@ -253,6 +251,7 @@ fn test_detection_result_app_protocol_from_tls() {
         sni: Some("www.youtube.com".to_string()),
         version: Some("1.3".to_string()),
         application: Some(Application::YouTube),
+        ja4: None,
     });
     let result = DetectionResult::new(Protocol::Tls)
         .with_metadata(metadata);

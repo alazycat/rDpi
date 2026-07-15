@@ -155,6 +155,8 @@ pub struct TlsMetadata {
     pub version: Option<String>,
     /// 识别的应用（基于 SNI）
     pub application: Option<Application>,
+    /// JA4 TLS 指纹哈希
+    pub ja4: Option<String>,
 }
 
 /// HTTP 元数据
