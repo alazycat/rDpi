@@ -44,6 +44,8 @@ pub mod sip;
 pub mod rtp;
 #[cfg(feature = "proto3")]
 pub mod http2;
+#[cfg(feature = "proto3")]
+pub mod websocket;
 #[cfg(feature = "iot")]
 pub mod mqtt;
 #[cfg(feature = "vpn")]
@@ -167,6 +169,8 @@ pub fn register_defaults(_registry: &mut Registry) {
     mqtt::register(_registry);
     #[cfg(feature = "proto3")]
     http2::register(_registry);
+    #[cfg(feature = "proto3")]
+    websocket::register(_registry);
     #[cfg(feature = "http")]
     http::register(_registry);
     #[cfg(feature = "dns")]

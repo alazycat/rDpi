@@ -72,6 +72,8 @@ pub enum Protocol {
     Rtcp,
     #[cfg(feature = "proto3")]
     Http2,
+    #[cfg(feature = "proto3")]
+    WebSocket,
     /// IoT 协议 (feature: iot)
     #[cfg(feature = "iot")]
     Mqtt,
@@ -515,6 +517,8 @@ impl Protocol {
             #[cfg(feature = "proto3")]
             Protocol::Http2 => ProtocolCategory::Web,
             #[cfg(feature = "proto3")]
+            Protocol::WebSocket => ProtocolCategory::Web,
+            #[cfg(feature = "proto3")]
             Protocol::Sip => ProtocolCategory::Voip,
             #[cfg(feature = "proto3")]
             Protocol::Rtp | Protocol::Rtcp => ProtocolCategory::Voip,
@@ -548,7 +552,7 @@ impl Protocol {
             Protocol::WireGuard => ProtocolBreed::Safe,
             #[cfg(feature = "proto3")]
             Protocol::Sip | Protocol::Rtp | Protocol::Rtcp
-                | Protocol::Http2 => ProtocolBreed::Safe,
+                | Protocol::Http2 | Protocol::WebSocket => ProtocolBreed::Safe,
             Protocol::Tcp | Protocol::Udp | Protocol::Icmp
                 | Protocol::Other(_) => ProtocolBreed::Unrated,
         }

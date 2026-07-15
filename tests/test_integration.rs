@@ -200,7 +200,7 @@ fn test_registry_default_detector_count() {
         }
         #[cfg(feature = "proto3")]
         {
-            count += 4; // FTP + SIP + RTP + HTTP2
+            count += 5; // FTP + SIP + RTP + HTTP2 + WebSocket
         }
         #[cfg(feature = "iot")]
         {
