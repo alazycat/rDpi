@@ -41,6 +41,8 @@ pub enum Protocol {
     Tls,
     Ssh,
     Smtp,
+    // 文件传输
+    Ftp,
     // 扩展协议
     Quic,
     Http3,

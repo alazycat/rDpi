@@ -3,6 +3,7 @@
 //! This module contains shared types, flow management, and common utilities.
 
 pub mod flow;
+pub mod guess;
 pub mod stats;
 pub mod types;
 
