@@ -50,6 +50,18 @@ pub mod websocket;
 pub mod mqtt;
 #[cfg(feature = "vpn")]
 pub mod wireguard;
+#[cfg(feature = "vpn")]
+pub mod openvpn;
+#[cfg(feature = "voip")]
+pub mod stun;
+#[cfg(feature = "auth")]
+pub mod kerberos;
+#[cfg(feature = "auth")]
+pub mod ldap;
+#[cfg(feature = "remote")]
+pub mod rdp;
+#[cfg(feature = "infra")]
+pub mod bgp;
 
 /// 协议检测器 Trait
 pub trait ProtocolDetector: Send + Sync {
@@ -145,6 +157,14 @@ pub fn register_defaults(_registry: &mut Registry) {
         sip::register(_registry);
         rtp::register(_registry);
     }
+    #[cfg(feature = "voip")]
+    stun::register(_registry);
+    #[cfg(feature = "auth")]
+    kerberos::register(_registry);
+    #[cfg(feature = "auth")]
+    ldap::register(_registry);
+    #[cfg(feature = "remote")]
+    rdp::register(_registry);
     #[cfg(feature = "database")]
     mongodb::register(_registry);
     #[cfg(feature = "database")]
@@ -162,6 +182,7 @@ pub fn register_defaults(_registry: &mut Registry) {
     }
     #[cfg(feature = "infra")]
     {
+        bgp::register(_registry);
         ntp::register(_registry);
         dhcp::register(_registry);
     }
@@ -171,6 +192,8 @@ pub fn register_defaults(_registry: &mut Registry) {
     http2::register(_registry);
     #[cfg(feature = "proto3")]
     websocket::register(_registry);
+    #[cfg(feature = "vpn")]
+    openvpn::register(_registry);
     #[cfg(feature = "http")]
     http::register(_registry);
     #[cfg(feature = "dns")]

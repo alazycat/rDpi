@@ -184,7 +184,7 @@ fn test_registry_default_detector_count() {
         }
         #[cfg(feature = "infra")]
         {
-            count += 2; // NTP + DHCP
+            count += 3; // NTP + DHCP + BGP
         }
         #[cfg(feature = "snmp")]
         {
@@ -196,7 +196,7 @@ fn test_registry_default_detector_count() {
         }
         #[cfg(feature = "database")]
         {
-            count += 3; // MySQL + PostgreSQL + Redis
+            count += 4; // MySQL + PostgreSQL + Redis + MongoDB
         }
         #[cfg(feature = "proto3")]
         {
@@ -208,7 +208,19 @@ fn test_registry_default_detector_count() {
         }
         #[cfg(feature = "vpn")]
         {
-            count += 1; // WireGuard
+            count += 2; // WireGuard + OpenVPN
+        }
+        #[cfg(feature = "voip")]
+        {
+            count += 1; // STUN
+        }
+        #[cfg(feature = "auth")]
+        {
+            count += 2; // Kerberos + LDAP
+        }
+        #[cfg(feature = "remote")]
+        {
+            count += 1; // RDP
         }
         count
     };
