@@ -481,6 +481,8 @@ pub enum Application {
     Slack,
     Line,
     Signal,
+    // 云服务（用于 IP 子网/域名匹配）
+    Google,
 }
 
 impl Application {
@@ -505,7 +507,8 @@ impl Application {
             | Application::QQ
             | Application::Slack
             | Application::Line
-            | Application::Signal => ApplicationCategory::Im,
+            | Application::Signal
+            | Application::Google => ApplicationCategory::Im,
         }
     }
 
@@ -530,6 +533,7 @@ impl Application {
             Application::Slack => "Slack",
             Application::Line => "Line",
             Application::Signal => "Signal",
+            Application::Google => "Google",
         }
     }
 }

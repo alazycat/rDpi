@@ -193,8 +193,9 @@ impl Detector {
                 detected
             } else {
                 // Giveup 阶段：DPI 达到阈值仍未识别，启用猜测引擎
-                let ctx = GuessContext::new(parsed.dst_port);
-                let guess = GuessEngine::guess(&ctx);
+                let mut ctx = GuessContext::new(parsed.dst_port);
+                ctx.dst_ip = Some(parsed.src_ip); // 对端 IP
+                let guess = GuessEngine::new().guess(&ctx);
 
                 if let Some(ref r) = guess {
                     flow.protocol = Some(r.protocol);
