@@ -201,7 +201,7 @@ fn test_confidence_display() {
 #[test]
 fn test_protocol_category() {
     assert_eq!(Protocol::Http.category(), ProtocolCategory::Web);
-    assert_eq!(Protocol::Tls.category(), ProtocolCategory::EncryptedTunnel);
+    assert_eq!(Protocol::Tls.category(), ProtocolCategory::WebTunnel);
     assert_eq!(Protocol::Dns.category(), ProtocolCategory::Dns);
     assert_eq!(Protocol::Smtp.category(), ProtocolCategory::Mail);
     assert_eq!(Protocol::Mysql.category(), ProtocolCategory::Database);
