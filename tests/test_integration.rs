@@ -198,6 +198,10 @@ fn test_registry_default_detector_count() {
         {
             count += 3; // MySQL + PostgreSQL + Redis
         }
+        #[cfg(feature = "proto3")]
+        {
+            count += 3; // FTP + SIP + RTP
+        }
         count
     };
     assert_eq!(registry.detector_count(), expected_count);

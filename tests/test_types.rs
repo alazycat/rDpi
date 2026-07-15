@@ -209,6 +209,7 @@ fn test_protocol_category() {
     assert_eq!(Protocol::Ntp.category(), ProtocolCategory::Infrastructure);
     assert_eq!(Protocol::Snmp.category(), ProtocolCategory::NetworkManagement);
     assert_eq!(Protocol::Modbus.category(), ProtocolCategory::Industrial);
+    #[cfg(feature = "proto3")]
     assert_eq!(Protocol::Ftp.category(), ProtocolCategory::FileTransfer);
     assert_eq!(Protocol::Tcp.category(), ProtocolCategory::Network);
     assert_eq!(Protocol::Other(999).category(), ProtocolCategory::Other);
@@ -218,6 +219,7 @@ fn test_protocol_category() {
 fn test_protocol_breed() {
     assert_eq!(Protocol::Http.breed(), ProtocolBreed::Safe);
     assert_eq!(Protocol::Mysql.breed(), ProtocolBreed::Acceptable);
+    #[cfg(feature = "proto3")]
     assert_eq!(Protocol::Ftp.breed(), ProtocolBreed::Fun);
     assert_eq!(Protocol::Tcp.breed(), ProtocolBreed::Unrated);
 }
@@ -267,6 +269,7 @@ fn test_protocol_category_exhaustive() {
         Protocol::Imap, Protocol::Imaps, Protocol::Ntp,
         Protocol::Dhcp, Protocol::Snmp, Protocol::Modbus,
         Protocol::Mysql, Protocol::Postgresql, Protocol::Redis,
+        #[cfg(feature = "proto3")]
         Protocol::Ftp,
     ];
 

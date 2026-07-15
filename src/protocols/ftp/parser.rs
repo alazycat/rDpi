@@ -49,6 +49,13 @@ pub fn parse_ftp_command(payload: &[u8]) -> Option<FtpCommand> {
     let upper = line.to_uppercase();
     for verb in FTP_VERBS {
         if upper.starts_with(verb) {
+            // Ensure the verb is followed by a space or end-of-line
+            // to avoid false matches like "DELETE" matching "DELE"
+            if let Some(ch) = upper.as_bytes().get(verb.len()) {
+                if *ch != b' ' && *ch != b'\r' && *ch != b'\n' {
+                    continue;
+                }
+            }
             let arg = line[verb.len()..].trim().to_string();
             let argument = if arg.is_empty() { None } else { Some(arg) };
             return Some(FtpCommand {
@@ -130,6 +137,18 @@ mod tests {
     #[test]
     fn test_parse_ftp_command_invalid() {
         assert!(parse_ftp_command(b"GET / HTTP/1.1\r\n").is_none());
+    }
+
+    #[test]
+    fn test_parse_ftp_no_false_positive_delete() {
+        // "DELETE" starts with "DELE" but should not match as FTP
+        assert!(parse_ftp_command(b"DELETE /resource HTTP/1.1\r\n").is_none());
+    }
+
+    #[test]
+    fn test_parse_ftp_no_false_positive_options() {
+        // "OPTIONS" starts with "OPTS" but should not match as FTP
+        assert!(parse_ftp_command(b"OPTIONS * HTTP/1.1\r\n").is_none());
     }
 
     #[test]
