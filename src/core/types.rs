@@ -633,6 +633,36 @@ pub enum Application {
     // 通讯协作
     Zoom,
     Twitch,
+    // 新增强
+    // 流媒体
+    HBO,
+    DAZN,
+    Vimeo,
+    Dailymotion,
+    Spotify,
+    AppleTVPlus,
+    ParamountPlus,
+    // 社交
+    Instagram,
+    Snapchat,
+    Facebook,
+    Messenger,
+    Twitter,
+    LinkedIn,
+    Pinterest,
+    Reddit,
+    // 云服务
+    Microsoft,
+    AmazonAWS,
+    Azure,
+    GitHub,
+    GitLab,
+    Dropbox,
+    Box,
+    // 通讯
+    Teams,
+    Webex,
+    Skype,
 }
 
 impl Application {
@@ -648,7 +678,14 @@ impl Application {
             | Application::Youku
             | Application::Hulu
             | Application::DisneyPlus
-            | Application::AmazonPrime => ApplicationCategory::Streaming,
+            | Application::AmazonPrime
+            | Application::HBO
+            | Application::DAZN
+            | Application::Vimeo
+            | Application::Dailymotion
+            | Application::Spotify
+            | Application::AppleTVPlus
+            | Application::ParamountPlus => ApplicationCategory::Streaming,
 
             Application::WeChat
             | Application::Telegram
@@ -660,7 +697,27 @@ impl Application {
             | Application::Signal
             | Application::Google
             | Application::Zoom
-            | Application::Twitch => ApplicationCategory::Im,
+            | Application::Twitch
+            | Application::Instagram
+            | Application::Snapchat
+            | Application::Facebook
+            | Application::Messenger
+            | Application::Twitter
+            | Application::LinkedIn
+            | Application::Pinterest
+            | Application::Reddit
+            | Application::Teams
+            | Application::Webex
+            | Application::Skype => ApplicationCategory::Im,
+
+            // 云服务
+            Application::Microsoft
+            | Application::AmazonAWS
+            | Application::Azure
+            | Application::GitHub
+            | Application::GitLab
+            | Application::Dropbox
+            | Application::Box => ApplicationCategory::Other,
         }
     }
 
@@ -688,6 +745,31 @@ impl Application {
             Application::Google => "Google",
             Application::Zoom => "Zoom",
             Application::Twitch => "Twitch",
+            Application::HBO => "HBO",
+            Application::DAZN => "DAZN",
+            Application::Vimeo => "Vimeo",
+            Application::Dailymotion => "Dailymotion",
+            Application::Spotify => "Spotify",
+            Application::AppleTVPlus => "AppleTVPlus",
+            Application::ParamountPlus => "ParamountPlus",
+            Application::Instagram => "Instagram",
+            Application::Snapchat => "Snapchat",
+            Application::Facebook => "Facebook",
+            Application::Messenger => "Messenger",
+            Application::Twitter => "Twitter",
+            Application::LinkedIn => "LinkedIn",
+            Application::Pinterest => "Pinterest",
+            Application::Reddit => "Reddit",
+            Application::Microsoft => "Microsoft",
+            Application::AmazonAWS => "AmazonAWS",
+            Application::Azure => "Azure",
+            Application::GitHub => "GitHub",
+            Application::GitLab => "GitLab",
+            Application::Dropbox => "Dropbox",
+            Application::Box => "Box",
+            Application::Teams => "Teams",
+            Application::Webex => "Webex",
+            Application::Skype => "Skype",
         }
     }
 
@@ -698,13 +780,38 @@ impl Application {
                 | Application::Douyin | Application::Iqiyi
                 | Application::TencentVideo | Application::Youku
                 | Application::Hulu | Application::DisneyPlus
-                | Application::AmazonPrime => Protocol::Http,
+                | Application::AmazonPrime
+                | Application::HBO
+                | Application::DAZN
+                | Application::Vimeo
+                | Application::Dailymotion
+                | Application::Spotify
+                | Application::AppleTVPlus
+                | Application::ParamountPlus => Protocol::Http,
 
             Application::WeChat | Application::Telegram | Application::WhatsApp
                 | Application::Discord | Application::QQ | Application::Slack
                 | Application::Line | Application::Signal
                 | Application::Zoom | Application::Twitch
-                | Application::Google => Protocol::Tls,
+                | Application::Google
+                | Application::Instagram
+                | Application::Snapchat
+                | Application::Facebook
+                | Application::Messenger
+                | Application::Twitter
+                | Application::LinkedIn
+                | Application::Pinterest
+                | Application::Reddit
+                | Application::Microsoft
+                | Application::AmazonAWS
+                | Application::Azure
+                | Application::GitHub
+                | Application::GitLab
+                | Application::Dropbox
+                | Application::Box
+                | Application::Teams
+                | Application::Webex
+                | Application::Skype => Protocol::Tls,
         }
     }
 }
