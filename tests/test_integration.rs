@@ -153,7 +153,7 @@ fn test_registry_default_detector_count() {
     // All detectors should be registered by default
     // (assuming all features are enabled)
     let expected_count = {
-        let mut count = 0;
+        let mut count = 4; // TFTP + RSYNC + Whois + Syslog (always registered)
         #[cfg(feature = "tls")]
         {
             count += 1;
@@ -184,7 +184,7 @@ fn test_registry_default_detector_count() {
         }
         #[cfg(feature = "infra")]
         {
-            count += 3; // NTP + DHCP + BGP
+            count += 6; // NTP + DHCP + BGP + Netflow + IKE + PTPv2
         }
         #[cfg(feature = "snmp")]
         {
@@ -200,7 +200,7 @@ fn test_registry_default_detector_count() {
         }
         #[cfg(feature = "proto3")]
         {
-            count += 5; // FTP + SIP + RTP + HTTP2 + WebSocket
+            count += 7; // FTP + SIP + RTP + HTTP2 + WebSocket + RTMP + SOCKS
         }
         #[cfg(feature = "iot")]
         {
@@ -221,6 +221,10 @@ fn test_registry_default_detector_count() {
         #[cfg(feature = "remote")]
         {
             count += 1; // RDP
+        }
+        #[cfg(feature = "storage")]
+        {
+            count += 1; // NFS
         }
         count
     };
