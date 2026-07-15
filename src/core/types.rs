@@ -376,6 +376,12 @@ pub struct DetectionResult {
     pub confidence: Confidence,
     /// 协议元数据
     pub metadata: Metadata,
+    /// 协议分类
+    pub category: ProtocolCategory,
+    /// 协议风险评级
+    pub breed: ProtocolBreed,
+    /// 应用层协议（如 YouTube, WeChat 等）
+    pub app_protocol: Option<Application>,
 }
 
 impl DetectionResult {
@@ -385,11 +391,15 @@ impl DetectionResult {
             protocol,
             confidence: Confidence::Dpi,
             metadata: Metadata::None,
+            category: protocol.category(),
+            breed: protocol.breed(),
+            app_protocol: None,
         }
     }
 
-    /// 添加元数据
+    /// 添加元数据并提取应用层协议
     pub fn with_metadata(mut self, metadata: Metadata) -> Self {
+        self.app_protocol = Self::extract_app(&metadata);
         self.metadata = metadata;
         self
     }
@@ -399,6 +409,112 @@ impl DetectionResult {
         self.confidence = confidence;
         self
     }
+
+    /// 从元数据中提取应用层协议
+    fn extract_app(metadata: &Metadata) -> Option<Application> {
+        match metadata {
+            Metadata::Tls(tls) => tls.application,
+            Metadata::Quic(quic) => quic.application,
+            Metadata::Http(http) => {
+                http.host.as_ref().and_then(|host| {
+                    crate::application::identify(host)
+                })
+            },
+            _ => None,
+        }
+    }
+}
+
+/// 协议分类
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProtocolCategory {
+    /// 网络层协议（如 TCP, UDP, ICMP）
+    Network,
+    /// Web 协议（如 HTTP）
+    Web,
+    /// 加密隧道协议（如 TLS, QUIC）
+    EncryptedTunnel,
+    /// 邮件协议（如 SMTP, POP3, IMAP）
+    Mail,
+    /// DNS 协议
+    Dns,
+    /// 数据库协议（如 MySQL, PostgreSQL, Redis）
+    Database,
+    /// 远程访问协议（如 SSH）
+    RemoteAccess,
+    /// 文件传输协议（如 FTP）
+    FileTransfer,
+    /// 基础设施协议（如 NTP, DHCP）
+    Infrastructure,
+    /// 网络管理协议（如 SNMP）
+    NetworkManagement,
+    /// 工业协议（如 Modbus）
+    Industrial,
+    /// 其他协议
+    Other,
+}
+
+impl Protocol {
+    /// 获取协议所属分类
+    pub fn category(self) -> ProtocolCategory {
+        match self {
+            Protocol::Tcp | Protocol::Udp | Protocol::Icmp => ProtocolCategory::Network,
+            Protocol::Http => ProtocolCategory::Web,
+            Protocol::Tls | Protocol::Quic | Protocol::Http3 => ProtocolCategory::EncryptedTunnel,
+            Protocol::Smtp | Protocol::Pop3 | Protocol::Pop3s
+                | Protocol::Imap | Protocol::Imaps => ProtocolCategory::Mail,
+            Protocol::Dns => ProtocolCategory::Dns,
+            Protocol::Mysql | Protocol::Postgresql | Protocol::Redis => ProtocolCategory::Database,
+            Protocol::Ssh => ProtocolCategory::RemoteAccess,
+            Protocol::Ftp => ProtocolCategory::FileTransfer,
+            Protocol::Ntp | Protocol::Dhcp => ProtocolCategory::Infrastructure,
+            Protocol::Snmp => ProtocolCategory::NetworkManagement,
+            Protocol::Modbus => ProtocolCategory::Industrial,
+            Protocol::Other(_) => ProtocolCategory::Other,
+        }
+    }
+
+    /// 获取协议的风险评级
+    pub fn breed(self) -> ProtocolBreed {
+        match self {
+            Protocol::Dns | Protocol::Http | Protocol::Smtp
+                | Protocol::Pop3 | Protocol::Pop3s | Protocol::Imap
+                | Protocol::Imaps | Protocol::Ntp | Protocol::Dhcp
+                | Protocol::Tls | Protocol::Quic | Protocol::Http3
+                | Protocol::Ssh => ProtocolBreed::Safe,
+            Protocol::Mysql | Protocol::Postgresql | Protocol::Redis
+                | Protocol::Snmp | Protocol::Modbus => ProtocolBreed::Acceptable,
+            Protocol::Ftp => ProtocolBreed::Fun,
+            Protocol::Tcp | Protocol::Udp | Protocol::Icmp
+                | Protocol::Other(_) => ProtocolBreed::Unrated,
+        }
+    }
+
+    /// 获取主协议（当前返回自身，为扩展预留）
+    pub fn master(self) -> Protocol {
+        self
+    }
+}
+
+/// 协议风险评级
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ProtocolBreed {
+    /// 未评级
+    Unrated,
+    /// 安全
+    Safe,
+    /// 可接受
+    Acceptable,
+    /// 有趣（存在已知问题但常用）
+    Fun,
+    /// 不安全
+    Unsafe,
+    /// 潜在危险
+    PotentiallyDangerous,
+    /// 危险
+    Dangerous,
+    /// 跟踪/广告
+    TrackerAds,
 }
 
 /// 协议检测置信度级别
@@ -541,6 +657,23 @@ impl Application {
             Application::Google => "Google",
             Application::Zoom => "Zoom",
             Application::Twitch => "Twitch",
+        }
+    }
+
+    /// 获取应用对应的主协议
+    pub fn master_protocol(self) -> Protocol {
+        match self {
+            Application::YouTube | Application::Netflix | Application::Bilibili
+                | Application::Douyin | Application::Iqiyi
+                | Application::TencentVideo | Application::Youku
+                | Application::Hulu | Application::DisneyPlus
+                | Application::AmazonPrime => Protocol::Http,
+
+            Application::WeChat | Application::Telegram | Application::WhatsApp
+                | Application::Discord | Application::QQ | Application::Slack
+                | Application::Line | Application::Signal
+                | Application::Zoom | Application::Twitch
+                | Application::Google => Protocol::Tls,
         }
     }
 }

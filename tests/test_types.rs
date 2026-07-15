@@ -193,3 +193,85 @@ fn test_confidence_display() {
     assert_eq!(format!("{}", Confidence::MatchByPort), "MatchByPort");
     assert_eq!(format!("{}", Confidence::Unknown), "Unknown");
 }
+
+// ============================================================================
+// Protocol Classification Tests (Phase 2)
+// ============================================================================
+
+#[test]
+fn test_protocol_category() {
+    assert_eq!(Protocol::Http.category(), ProtocolCategory::Web);
+    assert_eq!(Protocol::Tls.category(), ProtocolCategory::EncryptedTunnel);
+    assert_eq!(Protocol::Dns.category(), ProtocolCategory::Dns);
+    assert_eq!(Protocol::Smtp.category(), ProtocolCategory::Mail);
+    assert_eq!(Protocol::Mysql.category(), ProtocolCategory::Database);
+    assert_eq!(Protocol::Ssh.category(), ProtocolCategory::RemoteAccess);
+    assert_eq!(Protocol::Ntp.category(), ProtocolCategory::Infrastructure);
+    assert_eq!(Protocol::Snmp.category(), ProtocolCategory::NetworkManagement);
+    assert_eq!(Protocol::Modbus.category(), ProtocolCategory::Industrial);
+    assert_eq!(Protocol::Ftp.category(), ProtocolCategory::FileTransfer);
+    assert_eq!(Protocol::Tcp.category(), ProtocolCategory::Network);
+    assert_eq!(Protocol::Other(999).category(), ProtocolCategory::Other);
+}
+
+#[test]
+fn test_protocol_breed() {
+    assert_eq!(Protocol::Http.breed(), ProtocolBreed::Safe);
+    assert_eq!(Protocol::Mysql.breed(), ProtocolBreed::Acceptable);
+    assert_eq!(Protocol::Ftp.breed(), ProtocolBreed::Fun);
+    assert_eq!(Protocol::Tcp.breed(), ProtocolBreed::Unrated);
+}
+
+#[test]
+fn test_protocol_master() {
+    assert_eq!(Protocol::Http.master(), Protocol::Http);
+    assert_eq!(Protocol::Tls.master(), Protocol::Tls);
+}
+
+#[test]
+fn test_application_master_protocol() {
+    assert_eq!(Application::YouTube.master_protocol(), Protocol::Http);
+    assert_eq!(Application::Netflix.master_protocol(), Protocol::Http);
+    assert_eq!(Application::WeChat.master_protocol(), Protocol::Tls);
+    assert_eq!(Application::Telegram.master_protocol(), Protocol::Tls);
+    assert_eq!(Application::Google.master_protocol(), Protocol::Tls);
+}
+
+#[test]
+fn test_detection_result_default_fields() {
+    let result = DetectionResult::new(Protocol::Dns);
+    assert_eq!(result.category, ProtocolCategory::Dns);
+    assert_eq!(result.breed, ProtocolBreed::Safe);
+    assert!(result.app_protocol.is_none());
+}
+
+#[test]
+fn test_detection_result_app_protocol_from_tls() {
+    let metadata = Metadata::Tls(TlsMetadata {
+        sni: Some("www.youtube.com".to_string()),
+        version: Some("1.3".to_string()),
+        application: Some(Application::YouTube),
+    });
+    let result = DetectionResult::new(Protocol::Tls)
+        .with_metadata(metadata);
+    assert_eq!(result.app_protocol, Some(Application::YouTube));
+}
+
+#[test]
+fn test_protocol_category_exhaustive() {
+    let protocols = vec![
+        Protocol::Tcp, Protocol::Udp, Protocol::Icmp,
+        Protocol::Dns, Protocol::Http, Protocol::Tls,
+        Protocol::Ssh, Protocol::Smtp, Protocol::Quic,
+        Protocol::Http3, Protocol::Pop3, Protocol::Pop3s,
+        Protocol::Imap, Protocol::Imaps, Protocol::Ntp,
+        Protocol::Dhcp, Protocol::Snmp, Protocol::Modbus,
+        Protocol::Mysql, Protocol::Postgresql, Protocol::Redis,
+        Protocol::Ftp,
+    ];
+
+    for p in protocols {
+        let cat = p.category();
+        assert_ne!(cat, ProtocolCategory::Other, "Known protocol {:?} should not map to Other", p);
+    }
+}
