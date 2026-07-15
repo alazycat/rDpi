@@ -13,3 +13,4 @@ docs/superpowers/
 *.swp
 *.swo
 CLAUDE.md
+.codegraph/
