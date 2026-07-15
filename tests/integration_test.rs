@@ -389,3 +389,24 @@ fn test_end_to_end_mongodb_detection() {
     let result = result.unwrap();
     assert_eq!(result.protocol, Protocol::Mongodb);
 }
+
+#[cfg(feature = "vpn")]
+#[test]
+fn test_end_to_end_wireguard_detection() {
+    let mut detector = Detector::new();
+
+    // WireGuard Handshake Initiation (type=1)
+    let mut wg_payload = vec![
+        0x01,       // message_type = Initiation
+        0x00, 0x00, 0x00, // reserved
+        0x00, 0x00, 0x00, 0x00, // sender_index = 0 (first handshake)
+    ];
+    wg_payload.extend(vec![0u8; 144]); // pad to >= 148
+
+    let packet = build_udp_packet(&wg_payload, 12345, 51820);
+    let result = detector.detect(&packet).unwrap();
+
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert_eq!(result.protocol, Protocol::WireGuard);
+}

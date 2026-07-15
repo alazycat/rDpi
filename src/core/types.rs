@@ -73,6 +73,9 @@ pub enum Protocol {
     /// IoT 协议 (feature: iot)
     #[cfg(feature = "iot")]
     Mqtt,
+    /// VPN/隧道协议 (feature: vpn)
+    #[cfg(feature = "vpn")]
+    WireGuard,
     /// 其他协议，包含协议号
     Other(u16),
 }
@@ -144,6 +147,9 @@ pub enum Metadata {
     /// MQTT 元数据 (feature: iot)
     #[cfg(feature = "iot")]
     Mqtt(MqttMetadata),
+    /// WireGuard 元数据 (feature: vpn)
+    #[cfg(feature = "vpn")]
+    WireGuard(WireGuardMetadata),
 }
 
 /// DNS 元数据
@@ -482,6 +488,9 @@ pub enum ProtocolCategory {
     /// IoT 协议 (feature: iot)
     #[cfg(feature = "iot")]
     Iot,
+    /// VPN/隧道协议 (feature: vpn)
+    #[cfg(feature = "vpn")]
+    Vpn,
     /// 其他协议
     Other,
 }
@@ -510,6 +519,8 @@ impl Protocol {
             Protocol::Modbus => ProtocolCategory::Industrial,
             #[cfg(feature = "iot")]
             Protocol::Mqtt => ProtocolCategory::Iot,
+            #[cfg(feature = "vpn")]
+            Protocol::WireGuard => ProtocolCategory::Vpn,
             Protocol::Other(_) => ProtocolCategory::Other,
         }
     }
@@ -529,6 +540,8 @@ impl Protocol {
             Protocol::Ftp => ProtocolBreed::Fun,
             #[cfg(feature = "iot")]
             Protocol::Mqtt => ProtocolBreed::Safe,
+            #[cfg(feature = "vpn")]
+            Protocol::WireGuard => ProtocolBreed::Safe,
             #[cfg(feature = "proto3")]
             Protocol::Sip | Protocol::Rtp | Protocol::Rtcp => ProtocolBreed::Safe,
             Protocol::Tcp | Protocol::Udp | Protocol::Icmp
@@ -891,6 +904,16 @@ pub struct MongodbMetadata {
     pub max_wire_version: Option<i32>,
     /// 最大消息大小 (字节)
     pub max_msg_size: Option<i32>,
+}
+
+/// WireGuard 元数据 (feature: vpn)
+#[cfg(feature = "vpn")]
+#[derive(Debug, Clone)]
+pub struct WireGuardMetadata {
+    /// 消息类型: 1=Initiation, 2=Response, 3=CookieReply, 4=Transport
+    pub message_type: u8,
+    /// 发送者索引
+    pub sender_index: u32,
 }
 
 #[cfg(feature = "proto3")]

@@ -44,6 +44,8 @@ pub mod sip;
 pub mod rtp;
 #[cfg(feature = "iot")]
 pub mod mqtt;
+#[cfg(feature = "vpn")]
+pub mod wireguard;
 
 /// 协议检测器 Trait
 pub trait ProtocolDetector: Send + Sync {
@@ -124,6 +126,8 @@ pub fn register_defaults(_registry: &mut Registry) {
     quic::register(_registry);
     #[cfg(feature = "tls")]
     tls::register(_registry);
+    #[cfg(feature = "vpn")]
+    wireguard::register(_registry);
     #[cfg(feature = "ssh")]
     ssh::register(_registry);
     #[cfg(feature = "proto3")]
