@@ -69,6 +69,9 @@ use core::types::{Confidence, TransportProto};
 use protocols::Registry;
 use std::time::Duration;
 
+#[cfg(feature = "rule")]
+use rule::{Rule, RuleContext, RuleEngine};
+
 /// TCP 流 DPI 放弃阈值（包数）
 pub const DEFAULT_TCP_GIVEUP: u32 = 20;
 /// UDP 流 DPI 放弃阈值（包数）
@@ -94,6 +97,12 @@ pub struct Detector {
     flow_table: FlowTable,
     /// 新流是否默认启用猜测
     default_guess: bool,
+    /// 规则引擎（可选）
+    #[cfg(feature = "rule")]
+    rule_engine: Option<RuleEngine>,
+    /// 仅规则模式（跳过内置 DPI 和 Guess）
+    #[cfg(feature = "rule")]
+    rules_only: bool,
 }
 
 impl Detector {
@@ -117,6 +126,10 @@ impl Detector {
             registry: Registry::default(),
             flow_table: FlowTable::new(max_flows, Duration::from_secs(timeout_secs)),
             default_guess: true,
+            #[cfg(feature = "rule")]
+            rule_engine: None,
+            #[cfg(feature = "rule")]
+            rules_only: false,
         }
     }
 
@@ -126,12 +139,56 @@ impl Detector {
             registry,
             flow_table: FlowTable::new(10000, Duration::from_secs(120)),
             default_guess: true,
+            #[cfg(feature = "rule")]
+            rule_engine: None,
+            #[cfg(feature = "rule")]
+            rules_only: false,
         }
     }
 
     /// 禁用猜测（仅 DPI 模式）
     pub fn disable_guess(&mut self) {
         self.default_guess = false;
+    }
+
+    /// 使用规则创建检测器
+    #[cfg(feature = "rule")]
+    pub fn with_rules(rules: Vec<Rule>) -> Self {
+        Self {
+            registry: Registry::default(),
+            flow_table: FlowTable::new(10000, Duration::from_secs(120)),
+            default_guess: true,
+            rule_engine: Some(RuleEngine { rules }),
+            rules_only: false,
+        }
+    }
+
+    /// 添加单条规则
+    #[cfg(feature = "rule")]
+    pub fn add_rule(&mut self, rule: Rule) {
+        self.rule_engine.get_or_insert_with(RuleEngine::new).add_rule(rule);
+    }
+
+    /// 从 JSON 加载规则
+    #[cfg(feature = "rule")]
+    pub fn load_rules_json(&mut self, json_str: &str) -> std::result::Result<(), String> {
+        let engine = RuleEngine::from_json(json_str)?;
+        self.rule_engine = Some(engine);
+        Ok(())
+    }
+
+    /// 从 JSON 文件加载规则
+    #[cfg(feature = "rule")]
+    pub fn load_rules_file(&mut self, path: &str) -> std::result::Result<(), String> {
+        let engine = RuleEngine::from_file(path)?;
+        self.rule_engine = Some(engine);
+        Ok(())
+    }
+
+    /// 启用/禁用仅规则模式
+    #[cfg(feature = "rule")]
+    pub fn set_rules_only(&mut self, enabled: bool) {
+        self.rules_only = enabled;
     }
 
     /// 检测单个包
@@ -181,6 +238,27 @@ impl Detector {
 
         // 检测协议（如果流还没有协议）
         let result = if flow.protocol.is_none() {
+            #[cfg(feature = "rule")]
+            if let Some(ref engine) = self.rule_engine {
+                let rule_ctx = RuleContext {
+                    src_port: parsed.src_port,
+                    dst_port: parsed.dst_port,
+                    sni: flow.metadata.as_ref().and_then(|m| match m {
+                        Metadata::Tls(tls) => tls.sni.clone(),
+                        Metadata::Quic(quic) => quic.sni.clone(),
+                        _ => None,
+                    }),
+                    payload: parsed.payload.clone(),
+                };
+                if let Some(r) = engine.match_rule(&rule_ctx) {
+                    flow.protocol = Some(r.protocol);
+                    flow.metadata = Some(r.metadata.clone());
+                    return Ok(Some(r));
+                }
+                if self.rules_only {
+                    return Ok(None);
+                }
+            }
             if flow.packets_seen < giveup_threshold || flow.dpi_only {
                 // DPI 阶段
                 let detected = self.registry.detect_with_ports(
