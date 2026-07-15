@@ -2,17 +2,18 @@
 //!
 //! 当 DPI 无法识别协议时，依次尝试域名匹配 → IP 子网 → 端口回退。
 
-pub(crate) mod domain;
-pub(crate) mod info;
-pub(crate) mod ip;
-pub(crate) mod port;
+pub mod domain;
+pub mod info;
+pub mod ip;
+pub mod port;
 
-pub(crate) use info::GuessContext;
+pub use info::GuessContext;
+pub use info::DomainInfo;
 
 use crate::core::types::{Confidence, DetectionResult, Metadata};
 
 /// 猜测引擎
-pub(crate) struct GuessEngine {
+pub struct GuessEngine {
     ip_matcher: Option<ip::IpMatcher>,
     domain_matcher: Option<domain::DomainMatcher>,
 }

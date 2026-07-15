@@ -7,7 +7,7 @@ use crate::core::types::{Application, Confidence, DetectionResult, Protocol};
 
 /// IP 子网条目
 #[derive(Debug, Clone)]
-pub(crate) struct IpSubnetEntry {
+pub struct IpSubnetEntry {
     pub network: IpAddr,
     pub prefix_len: u8,
     pub protocol: Protocol,
@@ -15,7 +15,7 @@ pub(crate) struct IpSubnetEntry {
 }
 
 /// IP 子网匹配器
-pub(crate) struct IpMatcher {
+pub struct IpMatcher {
     /// 按 (network ASC, prefix_len DESC) 排序
     entries: Vec<IpSubnetEntry>,
 }
@@ -83,7 +83,7 @@ fn entry_v4(
 }
 
 /// 内置 IP 子网映射表（第一阶段：主要云/CDN 服务）
-pub(crate) fn builtin_subnets() -> Vec<IpSubnetEntry> {
+pub fn builtin_subnets() -> Vec<IpSubnetEntry> {
     vec![
         // Google
         entry_v4("142.250.0.0", 15, Protocol::Http, Some(Application::Google)),

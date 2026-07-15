@@ -28,7 +28,7 @@ pub(crate) static PORT_MAP: &[(u16, &[Protocol])] = &[
 ];
 
 /// 通过端口匹配协议
-pub(crate) fn match_port(port: u16) -> Option<DetectionResult> {
+pub fn match_port(port: u16) -> Option<DetectionResult> {
     PORT_MAP
         .iter()
         .find(|(p, _)| *p == port)

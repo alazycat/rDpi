@@ -8,13 +8,13 @@ use crate::core::types::{Application, Confidence, DetectionResult, Protocol};
 
 /// 域名匹配结果
 #[derive(Debug, Clone)]
-pub(crate) struct DomainMatch {
+pub struct DomainMatch {
     pub protocol: Protocol,
     pub application: Option<Application>,
 }
 
 /// Aho-Corasick 域名匹配器
-pub(crate) struct DomainMatcher {
+pub struct DomainMatcher {
     automa: AhoCorasick,
     values: Vec<DomainMatch>,
 }
@@ -50,7 +50,7 @@ impl DomainMatcher {
 }
 
 /// 域名→(协议, 应用) 映射表
-pub(crate) fn domain_protocol_entries() -> Vec<(&'static str, Protocol, Option<Application>)> {
+pub fn domain_protocol_entries() -> Vec<(&'static str, Protocol, Option<Application>)> {
     vec![
         // Google 服务
         ("google.com",          Protocol::Http, Some(Application::Google)),
