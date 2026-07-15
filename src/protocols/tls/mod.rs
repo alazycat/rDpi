@@ -70,6 +70,8 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
             version: info.version,
             application,
             ja4,
+            cipher_suites: info.cipher_suites,
+            alpn: info.alpn,
         };
 
         Some(

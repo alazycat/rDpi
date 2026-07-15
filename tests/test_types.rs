@@ -132,6 +132,8 @@ fn test_tls_metadata_with_application() {
         version: Some("TLSv1.3".to_string()),
         application: Some(Application::YouTube),
         ja4: None,
+        cipher_suites: vec![],
+        alpn: None,
     };
 }
 
@@ -277,6 +279,8 @@ fn test_detection_result_app_protocol_from_tls() {
         version: Some("1.3".to_string()),
         application: Some(Application::YouTube),
         ja4: None,
+        cipher_suites: vec![],
+        alpn: None,
     });
     let result = DetectionResult::new(Protocol::Tls)
         .with_metadata(metadata);

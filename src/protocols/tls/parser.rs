@@ -29,6 +29,8 @@ pub struct ClientHelloInfo {
     pub extensions: Vec<u16>,
     /// 支持的椭圆曲线/有限域组列表
     pub supported_groups: Vec<u16>,
+    /// ALPN 协议协商 (如 "h2", "http/1.1")
+    pub alpn: Option<String>,
 }
 
 /// 检查是否为 TLS 记录
@@ -90,12 +92,15 @@ pub fn parse_client_hello(data: &[u8]) -> Option<ClientHelloInfo> {
     // Prefer supported_version extension over record layer version
     let version = supported_version.or(record_version);
 
+    let alpn = extract_alpn(data);
+
     Some(ClientHelloInfo {
         sni,
         version,
         cipher_suites,
         extensions,
         supported_groups,
+        alpn,
     })
 }
 
