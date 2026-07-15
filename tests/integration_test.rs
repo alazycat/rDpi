@@ -410,3 +410,18 @@ fn test_end_to_end_wireguard_detection() {
     let result = result.unwrap();
     assert_eq!(result.protocol, Protocol::WireGuard);
 }
+
+#[cfg(feature = "proto3")]
+#[test]
+fn test_end_to_end_http2_detection() {
+    let mut detector = Detector::new();
+
+    // HTTP/2 connection preface
+    let http2_preface = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+    let packet = build_tcp_packet(http2_preface, 54321, 443, false);
+    let result = detector.detect(&packet).unwrap();
+
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert_eq!(result.protocol, Protocol::Http2);
+}
