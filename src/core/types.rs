@@ -194,6 +194,10 @@ pub struct TlsMetadata {
     pub application: Option<Application>,
     /// JA4 TLS 指纹哈希
     pub ja4: Option<String>,
+    /// 客户端通告的密码套件列表 (IANA IDs)
+    pub cipher_suites: Vec<u16>,
+    /// ALPN 协商协议 (如 "h2", "http/1.1")
+    pub alpn: Option<String>,
 }
 
 /// HTTP 元数据
