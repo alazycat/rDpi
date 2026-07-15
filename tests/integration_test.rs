@@ -425,3 +425,17 @@ fn test_end_to_end_http2_detection() {
     let result = result.unwrap();
     assert_eq!(result.protocol, Protocol::Http2);
 }
+
+#[cfg(feature = "proto3")]
+#[test]
+fn test_end_to_end_websocket_detection() {
+    let mut detector = Detector::new();
+
+    let ws_request = b"GET /chat HTTP/1.1\r\nHost: example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGVzdA==\r\n\r\n";
+    let packet = build_tcp_packet(ws_request, 54321, 80, false);
+    let result = detector.detect(&packet).unwrap();
+
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert_eq!(result.protocol, Protocol::WebSocket);
+}
