@@ -89,4 +89,4 @@ cargo fmt ; cargo clippy      # 提交前（存量 never-used 警告见 risks.md
 | [docs/business/tls-sni-application.md](file:///d:/rust_code/rDpi/docs/business/tls-sni-application.md) | TLS SNI→应用→风险 全链路深挖（F1-F5, P6-P10） |
 | [docs/decisions/](file:///d:/rust_code/rDpi/docs/decisions) | ADR（追溯记录的历史决策） |
 
-注：docs/ 整体被 .gitignore 忽略（.gitignore:19），知识库仅存于本地工作区；AGENTS.md 位于仓库根目录、可提交。
+注：docs/ 已随仓库入库（2026-11-04 起取消 .gitignore 忽略）；AGENTS.md 位于仓库根目录、可提交。
