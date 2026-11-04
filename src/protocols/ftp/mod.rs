@@ -7,9 +7,7 @@ mod detector;
 mod parser;
 
 pub use detector::FtpDetector;
-pub use parser::{
-    parse_ftp_command, parse_ftp_response, FtpCommand, FtpResponse,
-};
+pub use parser::{FtpCommand, FtpResponse, parse_ftp_command, parse_ftp_response};
 
 use crate::protocols::Registry;
 

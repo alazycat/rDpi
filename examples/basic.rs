@@ -1,4 +1,4 @@
- //! Basic usage example for rDpi
+//! Basic usage example for rDpi
 //!
 //! Demonstrates single packet detection with automatic flow tracking.
 
@@ -87,8 +87,7 @@ fn build_dns_packet() -> Vec<u8> {
         0x00, 0x00, // Authority RRs: 0
         0x00, 0x00, // Additional RRs: 0
         // Query: example.com
-        0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e',
-        0x03, b'c', b'o', b'm',
+        0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x03, b'c', b'o', b'm',
         0x00, // End of name
         0x00, 0x01, // Type: A
         0x00, 0x01, // Class: IN

@@ -140,7 +140,11 @@ mod tests {
         };
 
         // HTTP GET request should NOT match MQTT
-        assert!(detector.detect_with_context(b"GET / HTTP/1.1\r\n", &ctx).is_none());
+        assert!(
+            detector
+                .detect_with_context(b"GET / HTTP/1.1\r\n", &ctx)
+                .is_none()
+        );
         // Empty payload
         assert!(detector.detect_with_context(b"", &ctx).is_none());
     }

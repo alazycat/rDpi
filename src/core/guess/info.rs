@@ -18,8 +18,10 @@ pub struct DomainInfo {
 pub struct GuessContext {
     /// 目的端口
     pub dst_port: u16,
-    /// 对端 IP 地址（用于 IP 子网匹配）
+    /// 当前包的目的 IP（R4：用于 IP 子网匹配，优先尝试）
     pub dst_ip: Option<IpAddr>,
+    /// 当前包的源 IP（R4：IP 子网匹配的次选——服务端可能在任一方向）
+    pub src_ip: Option<IpAddr>,
     /// 域名信息（用于域名匹配引擎）
     pub domain_info: DomainInfo,
 }
@@ -29,6 +31,7 @@ impl GuessContext {
         Self {
             dst_port,
             dst_ip: None,
+            src_ip: None,
             domain_info: DomainInfo::default(),
         }
     }

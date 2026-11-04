@@ -80,7 +80,10 @@ fn format_timestamp(ts: u64) -> String {
 fn extract_metadata_summary(result: &rdpi::DetectionResult) -> Option<String> {
     use rdpi::Metadata;
     match &result.metadata {
-        Metadata::Dns(dns) => dns.query_domain.as_ref().map(|d| format!("DNS query: {}", d)),
+        Metadata::Dns(dns) => dns
+            .query_domain
+            .as_ref()
+            .map(|d| format!("DNS query: {}", d)),
         Metadata::Tls(tls) => {
             let mut parts = vec![];
             if let Some(sni) = &tls.sni {
@@ -92,7 +95,11 @@ fn extract_metadata_summary(result: &rdpi::DetectionResult) -> Option<String> {
             if let Some(app) = tls.application {
                 parts.push(format!("Application: {:?}", app));
             }
-            if parts.is_empty() { None } else { Some(parts.join(", ")) }
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join(", "))
+            }
         }
         Metadata::Http(http) => {
             let mut parts = vec![];
@@ -105,7 +112,11 @@ fn extract_metadata_summary(result: &rdpi::DetectionResult) -> Option<String> {
             if let Some(host) = &http.host {
                 parts.push(format!("Host: {}", host));
             }
-            if parts.is_empty() { None } else { Some(parts.join(", ")) }
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join(", "))
+            }
         }
         Metadata::Ssh(ssh) => {
             let mut parts = vec![];
@@ -115,25 +126,27 @@ fn extract_metadata_summary(result: &rdpi::DetectionResult) -> Option<String> {
             if let Some(soft) = &ssh.software {
                 parts.push(format!("Software: {}", soft));
             }
-            if parts.is_empty() { None } else { Some(parts.join(", ")) }
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join(", "))
+            }
         }
-        Metadata::Smtp(smtp) => {
-            smtp.hostname.as_ref().map(|h| {
-                format!("Hostname: {} ({})", h, if smtp.is_client { "client" } else { "server" })
-            })
-        }
-        Metadata::Ntp(ntp) => {
-            Some(format!(
-                "Version: {}, Mode: {}, Stratum: {}",
-                ntp.version, ntp.mode, ntp.stratum
-            ))
-        }
-        Metadata::Dhcp(dhcp) => {
-            Some(format!(
-                "Opcode: {}, Client MAC: {:02x?}",
-                dhcp.opcode, dhcp.client_mac
-            ))
-        }
+        Metadata::Smtp(smtp) => smtp.hostname.as_ref().map(|h| {
+            format!(
+                "Hostname: {} ({})",
+                h,
+                if smtp.is_client { "client" } else { "server" }
+            )
+        }),
+        Metadata::Ntp(ntp) => Some(format!(
+            "Version: {}, Mode: {}, Stratum: {}",
+            ntp.version, ntp.mode, ntp.stratum
+        )),
+        Metadata::Dhcp(dhcp) => Some(format!(
+            "Opcode: {}, Client MAC: {:02x?}",
+            dhcp.opcode, dhcp.client_mac
+        )),
         _ => None,
     }
 }

@@ -44,7 +44,9 @@ mod tests {
         let mut p = vec![0u8; 20];
         p[0..2].copy_from_slice(&msg_type.to_be_bytes());
         p[4..8].copy_from_slice(&[0x21, 0x12, 0xA4, 0x42]);
-        for i in 0..12 { p[8 + i] = i as u8; }
+        for i in 0..12 {
+            p[8 + i] = i as u8;
+        }
         p
     }
 

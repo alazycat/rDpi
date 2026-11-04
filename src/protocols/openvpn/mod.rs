@@ -1,4 +1,7 @@
-mod detector; mod parser;
-pub use detector::OpenVpnDetector;
+mod detector;
+mod parser;
 use crate::protocols::Registry;
-pub fn register(registry: &mut Registry) { registry.register(Box::new(OpenVpnDetector::new())); }
+pub use detector::OpenVpnDetector;
+pub fn register(registry: &mut Registry) {
+    registry.register(Box::new(OpenVpnDetector::new()));
+}

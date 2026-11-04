@@ -34,8 +34,8 @@ mod parser;
 
 pub use parser::{detect_snmp, parse_snmp_message};
 
-use crate::protocols::Registry;
 use crate::protocols::ProtocolDetector;
+use crate::protocols::Registry;
 
 /// SNMP protocol detector
 pub struct SnmpDetector {

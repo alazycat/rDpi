@@ -2,7 +2,8 @@
 //!
 //! Parses SNMP v1/v2c packets and extracts metadata.
 
-use crate::asn1::{BerReader, Asn1Value, Asn1Class};
+use crate::asn1::ber::BerReader;
+use crate::asn1::types::{Asn1Class, Asn1Value};
 use crate::core::types::*;
 
 /// Parse SNMP message (v1 or v2c)
@@ -300,14 +301,12 @@ fn format_asn1_value(value: &Asn1Value) -> String {
                 _ => format!("App[{}]({})", num, hex::encode(data)),
             }
         }
-        Asn1Value::ContextSpecific(num, data) => {
-            match *num {
-                0 => "noSuchObject".to_string(),
-                1 => "noSuchInstance".to_string(),
-                2 => "endOfMibView".to_string(),
-                _ => format!("Context[{}]({})", num, hex::encode(data)),
-            }
-        }
+        Asn1Value::ContextSpecific(num, data) => match *num {
+            0 => "noSuchObject".to_string(),
+            1 => "noSuchInstance".to_string(),
+            2 => "endOfMibView".to_string(),
+            _ => format!("Context[{}]({})", num, hex::encode(data)),
+        },
         _ => "UNKNOWN".to_string(),
     }
 }
@@ -323,10 +322,7 @@ mod hex {
 pub fn detect_snmp(data: &[u8]) -> Option<DetectionResult> {
     let metadata = parse_snmp_message(data)?;
 
-    Some(
-        DetectionResult::new(Protocol::Snmp)
-            .with_metadata(Metadata::Snmp(metadata))
-    )
+    Some(DetectionResult::new(Protocol::Snmp).with_metadata(Metadata::Snmp(metadata)))
 }
 
 #[cfg(test)]
@@ -338,17 +334,18 @@ mod tests {
         // SNMP v1 GetRequest for sysDescr.0 (1.3.6.1.2.1.1.1.0)
         // Community: "public"
         vec![
-            0x30, 0x26,           // SEQUENCE, length 38
-            0x02, 0x01, 0x00,     // INTEGER: version 0 (v1)
+            0x30, 0x26, // SEQUENCE, length 38
+            0x02, 0x01, 0x00, // INTEGER: version 0 (v1)
             0x04, 0x06, 0x70, 0x75, 0x62, 0x6C, 0x69, 0x63, // OCTET STRING: "public"
-            0xA0, 0x19,           // GetRequest (context-specific 0, constructed)
-            0x02, 0x01, 0x01,     // request-id: 1
-            0x02, 0x01, 0x00,     // error-status: 0
-            0x02, 0x01, 0x00,     // error-index: 0
-            0x30, 0x0E,           // varbind-list SEQUENCE
-            0x30, 0x0C,           // varbind SEQUENCE
-            0x06, 0x08, 0x2B, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x00, // OID: 1.3.6.1.2.1.1.1.0
-            0x05, 0x00,           // NULL
+            0xA0, 0x19, // GetRequest (context-specific 0, constructed)
+            0x02, 0x01, 0x01, // request-id: 1
+            0x02, 0x01, 0x00, // error-status: 0
+            0x02, 0x01, 0x00, // error-index: 0
+            0x30, 0x0E, // varbind-list SEQUENCE
+            0x30, 0x0C, // varbind SEQUENCE
+            0x06, 0x08, 0x2B, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01,
+            0x00, // OID: 1.3.6.1.2.1.1.1.0
+            0x05, 0x00, // NULL
         ]
     }
 
@@ -404,16 +401,19 @@ mod tests {
         // SNMP v1 Trap: coldStart (generic-trap 0)
         // PDU content = 28 bytes: enterprise(10) + agent-addr(6) + generic(3) + specific(3) + timestamp(4) + varbind(2)
         vec![
-            0x30, 0x29,           // SEQUENCE, length = 41 (version(3) + community(8) + PDU header(2) + content(28))
-            0x02, 0x01, 0x00,     // version 0 (v1)
+            0x30,
+            0x29, // SEQUENCE, length = 41 (version(3) + community(8) + PDU header(2) + content(28))
+            0x02, 0x01, 0x00, // version 0 (v1)
             0x04, 0x06, 0x70, 0x75, 0x62, 0x6C, 0x69, 0x63, // community "public"
-            0xA4, 0x1C,           // Trap (context-specific 4), length = 28
-            0x06, 0x08, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x00, 0x00, 0x00, // enterprise OID: 1.3.6.1.4.1.0.0.0
-            0x40, 0x04, 0xC0, 0xA8, 0x01, 0x01, // agent-addr: 192.168.1.1 (IpAddress APPLICATION 0)
-            0x02, 0x01, 0x00,     // generic-trap: 0 (coldStart)
-            0x02, 0x01, 0x00,     // specific-trap: 0
+            0xA4, 0x1C, // Trap (context-specific 4), length = 28
+            0x06, 0x08, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x00, 0x00,
+            0x00, // enterprise OID: 1.3.6.1.4.1.0.0.0
+            0x40, 0x04, 0xC0, 0xA8, 0x01,
+            0x01, // agent-addr: 192.168.1.1 (IpAddress APPLICATION 0)
+            0x02, 0x01, 0x00, // generic-trap: 0 (coldStart)
+            0x02, 0x01, 0x00, // specific-trap: 0
             0x43, 0x02, 0x00, 0x01, // timestamp: 1 (TimeTicks APPLICATION 3)
-            0x30, 0x00,           // empty varbind list
+            0x30, 0x00, // empty varbind list
         ]
     }
 

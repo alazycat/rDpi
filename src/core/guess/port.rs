@@ -7,23 +7,23 @@ use crate::core::types::{Confidence, DetectionResult, Protocol};
 /// 常见端口→协议映射（用于 DPI 失败后的回退猜测）
 pub(crate) static PORT_MAP: &[(u16, &[Protocol])] = &[
     #[cfg(feature = "proto3")]
-    (20u16,   &[Protocol::Ftp]),
+    (20u16, &[Protocol::Ftp]),
     #[cfg(feature = "proto3")]
-    (21u16,   &[Protocol::Ftp]),
-    (22u16,   &[Protocol::Ssh]),
-    (25u16,   &[Protocol::Smtp]),
-    (53u16,   &[Protocol::Dns]),
-    (80u16,   &[Protocol::Http]),
-    (110u16,  &[Protocol::Pop3]),
-    (123u16,  &[Protocol::Ntp]),
-    (143u16,  &[Protocol::Imap]),
-    (161u16,  &[Protocol::Snmp]),
-    (443u16,  &[Protocol::Tls, Protocol::Quic, Protocol::Http3]),
-    (465u16,  &[Protocol::Smtp]),
-    (502u16,  &[Protocol::Modbus]),
-    (587u16,  &[Protocol::Smtp]),
-    (993u16,  &[Protocol::Imaps]),
-    (995u16,  &[Protocol::Pop3s]),
+    (21u16, &[Protocol::Ftp]),
+    (22u16, &[Protocol::Ssh]),
+    (25u16, &[Protocol::Smtp]),
+    (53u16, &[Protocol::Dns]),
+    (80u16, &[Protocol::Http]),
+    (110u16, &[Protocol::Pop3]),
+    (123u16, &[Protocol::Ntp]),
+    (143u16, &[Protocol::Imap]),
+    (161u16, &[Protocol::Snmp]),
+    (443u16, &[Protocol::Tls, Protocol::Quic, Protocol::Http3]),
+    (465u16, &[Protocol::Smtp]),
+    (502u16, &[Protocol::Modbus]),
+    (587u16, &[Protocol::Smtp]),
+    (993u16, &[Protocol::Imaps]),
+    (995u16, &[Protocol::Pop3s]),
     (3306u16, &[Protocol::Mysql]),
     (5432u16, &[Protocol::Postgresql]),
     (6379u16, &[Protocol::Redis]),
@@ -39,8 +39,7 @@ pub fn match_port(port: u16) -> Option<DetectionResult> {
         .iter()
         .find(|(p, _)| *p == port)
         .map(|(_, protocols)| {
-            DetectionResult::new(protocols[0])
-                .with_confidence(Confidence::MatchByPort)
+            DetectionResult::new(protocols[0]).with_confidence(Confidence::MatchByPort)
         })
 }
 

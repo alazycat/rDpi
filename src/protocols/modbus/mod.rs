@@ -28,8 +28,8 @@ mod parser;
 
 pub use parser::{detect_modbus, parse_modbus_frame};
 
-use crate::protocols::Registry;
 use crate::protocols::ProtocolDetector;
+use crate::protocols::Registry;
 
 /// Modbus TCP protocol detector
 pub struct ModbusDetector {

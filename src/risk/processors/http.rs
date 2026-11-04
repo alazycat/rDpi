@@ -4,33 +4,67 @@
 
 use crate::core::flow::Flow;
 use crate::core::types::Protocol;
-use crate::risk::types::{RiskFlag, RiskResult, RiskSeverity};
 use crate::parser::ParsedPacket;
 use crate::risk::RiskProcessor;
+use crate::risk::types::{RiskFlag, RiskResult, RiskSeverity};
 
 /// 已知爬虫 User-Agent 关键词（小写）
 const CRAWLER_AGENTS: &[&str] = &[
-    "googlebot", "bingbot", "slurp", "duckduckbot", "baiduspider",
-    "yandexbot", "facebot", "ia_archiver", "twitterbot",
-    "rogerbot", "linkedinbot", "embedly", "quora link preview",
-    "showyoubot", "outbrain", "pinterestbot",
-    "seznambot", "semrushbot", "ahrefsbot", "dotbot",
-    "applebot", "bytespider", "petalbot",
+    "googlebot",
+    "bingbot",
+    "slurp",
+    "duckduckbot",
+    "baiduspider",
+    "yandexbot",
+    "facebot",
+    "ia_archiver",
+    "twitterbot",
+    "rogerbot",
+    "linkedinbot",
+    "embedly",
+    "quora link preview",
+    "showyoubot",
+    "outbrain",
+    "pinterestbot",
+    "seznambot",
+    "semrushbot",
+    "ahrefsbot",
+    "dotbot",
+    "applebot",
+    "bytespider",
+    "petalbot",
 ];
 
 /// 过时 HTTP Server 版本关键词
 const OBSOLETE_SERVERS: &[&str] = &[
-    "apache/1.", "apache/2.0.", "apache/2.2.",
-    "iis/5.", "iis/6.", "iis/7.0",
-    "nginx/0.", "nginx/1.0.", "nginx/1.1.", "nginx/1.2.",
-    "nginx/1.3.", "nginx/1.4.", "nginx/1.5.", "nginx/1.6.",
-    "nginx/1.7.", "nginx/1.8.", "nginx/1.9.",
+    "apache/1.",
+    "apache/2.0.",
+    "apache/2.2.",
+    "iis/5.",
+    "iis/6.",
+    "iis/7.0",
+    "nginx/0.",
+    "nginx/1.0.",
+    "nginx/1.1.",
+    "nginx/1.2.",
+    "nginx/1.3.",
+    "nginx/1.4.",
+    "nginx/1.5.",
+    "nginx/1.6.",
+    "nginx/1.7.",
+    "nginx/1.8.",
+    "nginx/1.9.",
 ];
 
 /// 明文密码字段模式（小写）
 const PASSWORD_PATTERNS: &[&str] = &[
-    "password=", "passwd=", "pwd=", "userpassword=",
-    "pass=", "secret=", "passphrase=",
+    "password=",
+    "passwd=",
+    "pwd=",
+    "userpassword=",
+    "pass=",
+    "secret=",
+    "passphrase=",
 ];
 
 /// HTTP 安全风险处理器
@@ -116,7 +150,10 @@ fn has_password(lower: &str) -> bool {
 
 /// 查找爬虫
 fn find_crawler(lower: &str) -> Option<&'static str> {
-    CRAWLER_AGENTS.iter().find(|&&agent| lower.contains(agent)).copied()
+    CRAWLER_AGENTS
+        .iter()
+        .find(|&&agent| lower.contains(agent))
+        .copied()
 }
 
 /// 查找过时服务器
@@ -126,7 +163,10 @@ fn find_obsolete_server(lower: &str) -> Option<&'static str> {
         let server_val = &lower[pos + 8..];
         let end = server_val.find('\r').unwrap_or(server_val.len());
         let server = &server_val[..end];
-        OBSOLETE_SERVERS.iter().find(|&&s| server.contains(s)).copied()
+        OBSOLETE_SERVERS
+            .iter()
+            .find(|&&s| server.contains(s))
+            .copied()
     } else {
         None
     }
@@ -159,14 +199,16 @@ mod tests {
         let mut flow = Flow::new(FlowKey {
             src_ip: "10.0.0.1".parse().unwrap(),
             dst_ip: "10.0.0.2".parse().unwrap(),
-            src_port: 54321, dst_port: 80,
+            src_port: 54321,
+            dst_port: 80,
             transport: TransportProto::Tcp,
         });
         flow.protocol = Some(Protocol::Http);
         let parsed = ParsedPacket {
             src_ip: "10.0.0.1".parse().unwrap(),
             dst_ip: "10.0.0.2".parse().unwrap(),
-            src_port: 54321, dst_port: 80,
+            src_port: 54321,
+            dst_port: 80,
             transport: TransportProto::Tcp,
             payload: payload.as_bytes().to_vec(),
         };
@@ -178,7 +220,11 @@ mod tests {
         let (p, f) = make_http_flow("POST /login HTTP/1.1\r\npassword=secret123\r\n");
         let proc = HttpRiskProcessor::new();
         let risks = proc.analyze_packet(&p, &f);
-        assert!(risks.iter().any(|r| r.flag == RiskFlag::ClearTextCredentials));
+        assert!(
+            risks
+                .iter()
+                .any(|r| r.flag == RiskFlag::ClearTextCredentials)
+        );
     }
 
     #[test]
@@ -199,12 +245,19 @@ mod tests {
 
     #[test]
     fn test_suspicious_content() {
-        let payload = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n{}9999999999{}",
-            "A".repeat(2001), "B".repeat(2001));
+        let payload = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n{}9999999999{}",
+            "A".repeat(2001),
+            "B".repeat(2001)
+        );
         let (p, f) = make_http_flow(&payload);
         let proc = HttpRiskProcessor::new();
         let risks = proc.analyze_packet(&p, &f);
-        assert!(risks.iter().any(|r| r.flag == RiskFlag::HttpSuspiciousContent));
+        assert!(
+            risks
+                .iter()
+                .any(|r| r.flag == RiskFlag::HttpSuspiciousContent)
+        );
     }
 
     #[test]
@@ -220,13 +273,15 @@ mod tests {
         let flow = Flow::new(FlowKey {
             src_ip: "10.0.0.1".parse().unwrap(),
             dst_ip: "10.0.0.2".parse().unwrap(),
-            src_port: 54321, dst_port: 443,
+            src_port: 54321,
+            dst_port: 443,
             transport: TransportProto::Tcp,
         });
         let parsed = ParsedPacket {
             src_ip: "10.0.0.1".parse().unwrap(),
             dst_ip: "10.0.0.2".parse().unwrap(),
-            src_port: 54321, dst_port: 443,
+            src_port: 54321,
+            dst_port: 443,
             transport: TransportProto::Tcp,
             payload: b"password=secret".to_vec(),
         };

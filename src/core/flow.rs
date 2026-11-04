@@ -99,7 +99,7 @@ impl FlowTable {
     ///
     /// # Arguments
     ///
-    /// * `max_entries` - 最大流数（预留，未实现 LRU 淘汰）
+    /// * `max_entries` - 最大流数（满时先清超时流，再按最久未活跃逐出；0 = 不设上限）
     /// * `timeout` - 流超时时间
     pub fn new(max_entries: usize, timeout: Duration) -> Self {
         Self {
@@ -120,10 +120,41 @@ impl FlowTable {
     }
 
     /// 获取或创建流
+    ///
+    /// 容量控制（R2 修复，2026-11-04）：已存在的流直接命中；新流在表满时
+    /// 先清理超时流，仍满则按"最久未活跃"（`stats.last_time` 最小）逐出至有空位。
+    /// `max_entries == 0` 视为不设上限。
     pub fn get_or_create(&mut self, key: FlowKey) -> &mut Flow {
+        if self.flows.contains_key(&key) {
+            let flow = self.flows.get_mut(&key).unwrap();
+            // 命中即 touch：last_time 反映最近活跃时间，是逐出策略的依据
+            flow.stats.last_time = Instant::now();
+            return flow;
+        }
+        if self.max_entries > 0 && self.flows.len() >= self.max_entries {
+            self.evict_until_insertable();
+        }
         self.flows
             .entry(key.clone())
             .or_insert_with(|| Flow::new(key))
+    }
+
+    /// 表满时的逐出：先清理超时流，仍满则逐出最久未活跃的流（每次 O(n) 扫描，低频路径）
+    fn evict_until_insertable(&mut self) {
+        self.expire_timeout();
+        while self.flows.len() >= self.max_entries {
+            let oldest = self
+                .flows
+                .iter()
+                .min_by_key(|(_, f)| f.stats.last_time)
+                .map(|(k, _)| k.clone());
+            match oldest {
+                Some(k) => {
+                    self.flows.remove(&k);
+                }
+                None => break,
+            }
+        }
     }
 
     /// 获取指定流（只读）
@@ -139,6 +170,11 @@ impl FlowTable {
     /// 迭代所有流
     pub fn iter(&self) -> impl Iterator<Item = (&FlowKey, &Flow)> {
         self.flows.iter()
+    }
+
+    /// 获取流超时时间（R5：供外部过期窗口与 expire_timeout 保持一致）
+    pub fn timeout(&self) -> Duration {
+        self.timeout
     }
 
     /// 清理超时流
@@ -167,5 +203,92 @@ impl FlowTable {
     /// 清空流表
     pub fn clear(&mut self) {
         self.flows.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::IpAddr;
+    use std::net::Ipv4Addr;
+
+    fn key(port: u16) -> FlowKey {
+        FlowKey {
+            src_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            dst_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+            src_port: 10000 + port,
+            dst_port: 80,
+            transport: TransportProto::Tcp,
+        }
+    }
+
+    /// R2: 表满时插入新流 → 容量不超限，最久未活跃的流被逐出
+    #[test]
+    fn test_max_entries_evicts_oldest() {
+        let mut t = FlowTable::new(2, Duration::from_secs(120));
+        t.get_or_create(key(1));
+        std::thread::sleep(Duration::from_millis(5));
+        t.get_or_create(key(2));
+        std::thread::sleep(Duration::from_millis(5));
+        t.get_or_create(key(3)); // 满载插入 → 逐出 key(1)
+
+        assert_eq!(t.len(), 2);
+        assert!(
+            t.get(&key(1)).is_none(),
+            "oldest (least recently active) flow must be evicted"
+        );
+        assert!(t.get(&key(2)).is_some());
+        assert!(t.get(&key(3)).is_some());
+    }
+
+    /// R2: 被重新访问（活跃）的流不被逐出
+    #[test]
+    fn test_active_flow_survives_eviction() {
+        let mut t = FlowTable::new(2, Duration::from_secs(120));
+        t.get_or_create(key(1));
+        std::thread::sleep(Duration::from_millis(5));
+        t.get_or_create(key(2));
+        std::thread::sleep(Duration::from_millis(5));
+        // 摸一下 key(1)：模拟长连接仍在收包（lib.rs 每包更新 last_time）
+        t.get_or_create(key(1));
+        std::thread::sleep(Duration::from_millis(5));
+        t.get_or_create(key(3)); // 满载 → 此刻最久未活跃的是 key(2)
+
+        assert_eq!(t.len(), 2);
+        assert!(
+            t.get(&key(1)).is_some(),
+            "recently active flow must survive"
+        );
+        assert!(t.get(&key(2)).is_none());
+        assert!(t.get(&key(3)).is_some());
+    }
+
+    /// R2: 已存在的流满载命中时不触发逐出
+    #[test]
+    fn test_existing_key_no_eviction() {
+        let mut t = FlowTable::new(2, Duration::from_secs(120));
+        t.get_or_create(key(1));
+        t.get_or_create(key(2));
+        assert_eq!(t.len(), 2);
+        // 命中已有流：不逐出、不新建
+        t.get_or_create(key(1));
+        assert_eq!(t.len(), 2);
+    }
+
+    /// R2: max_entries = 0 视为不设上限
+    #[test]
+    fn test_zero_capacity_means_unlimited() {
+        let mut t = FlowTable::new(0, Duration::from_secs(120));
+        for i in 0..10 {
+            t.get_or_create(key(i));
+        }
+        assert_eq!(t.len(), 10);
+    }
+
+    /// R5: timeout() 访问器返回配置值（供外部过期窗口与 expire_timeout 对齐）
+    #[test]
+    fn test_timeout_accessor_returns_configured_value() {
+        let t = FlowTable::new(10, Duration::from_secs(7));
+        assert_eq!(t.timeout(), Duration::from_secs(7));
     }
 }

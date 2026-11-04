@@ -1,8 +1,19 @@
 /// SIP 方法列表
 const SIP_METHODS: &[&str] = &[
-    "INVITE", "REGISTER", "BYE", "ACK", "CANCEL", "OPTIONS",
-    "SUBSCRIBE", "NOTIFY", "MESSAGE", "PUBLISH", "INFO",
-    "PRACK", "UPDATE", "REFER",
+    "INVITE",
+    "REGISTER",
+    "BYE",
+    "ACK",
+    "CANCEL",
+    "OPTIONS",
+    "SUBSCRIBE",
+    "NOTIFY",
+    "MESSAGE",
+    "PUBLISH",
+    "INFO",
+    "PRACK",
+    "UPDATE",
+    "REFER",
 ];
 
 #[derive(Debug, Clone)]
@@ -102,10 +113,7 @@ mod tests {
 
     #[test]
     fn test_parse_sip_response() {
-        let resp = parse_sip_response(
-            b"SIP/2.0 200 OK\r\nVia: SIP/2.0/UDP 10.0.0.1\r\n",
-        )
-        .unwrap();
+        let resp = parse_sip_response(b"SIP/2.0 200 OK\r\nVia: SIP/2.0/UDP 10.0.0.1\r\n").unwrap();
         assert_eq!(resp.status_code, 200);
         assert_eq!(resp.reason, "OK");
     }

@@ -10,6 +10,8 @@ use sha2::{Digest, Sha256};
 use crate::core::types::Application;
 
 /// JA4 指纹 → Application 映射表
+/// 占位表：待真实流量采集后填充（结构见下）；填充前允许未使用。
+#[allow(dead_code)]
 pub(crate) const JA4_MAPPINGS: &[(&str, Application)] = &[
     // 将在真实流量采集后填充
     // 结构: ("tls13.{ciphers12}.{extensions12}.{groups6}", Application::Chrome),
@@ -27,12 +29,7 @@ pub(crate) const JA4_MAPPINGS: &[(&str, Application)] = &[
 /// # 返回
 ///
 /// 格式为 `tlsNN.{ciphers12}.{extensions12}.{groups6}` 的 JA4 指纹
-pub fn compute_ja4(
-    version: &str,
-    ciphers: &[u16],
-    extensions: &[u16],
-    groups: &[u16],
-) -> String {
+pub fn compute_ja4(version: &str, ciphers: &[u16], extensions: &[u16], groups: &[u16]) -> String {
     let ver = match version {
         "TLS 1.3" | "1.3" | "TLSv1.3" => "tls13",
         "TLS 1.2" | "1.2" | "TLSv1.2" => "tls12",

@@ -7,7 +7,7 @@ mod detector;
 mod parser;
 
 pub use detector::RtpDetector;
-pub use parser::{parse_rtp_header, RtpHeader};
+pub use parser::{RtpHeader, parse_rtp_header};
 
 use crate::protocols::Registry;
 

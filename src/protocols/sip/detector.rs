@@ -39,9 +39,7 @@ impl ProtocolDetector for SipDetector {
                 status_code: None,
                 user_agent: None,
             };
-            return Some(
-                DetectionResult::new(Protocol::Sip).with_metadata(Metadata::Sip(meta)),
-            );
+            return Some(DetectionResult::new(Protocol::Sip).with_metadata(Metadata::Sip(meta)));
         }
 
         // 尝试解析状态行
@@ -52,9 +50,7 @@ impl ProtocolDetector for SipDetector {
                 status_code: Some(resp.status_code),
                 user_agent: None,
             };
-            return Some(
-                DetectionResult::new(Protocol::Sip).with_metadata(Metadata::Sip(meta)),
-            );
+            return Some(DetectionResult::new(Protocol::Sip).with_metadata(Metadata::Sip(meta)));
         }
 
         None
@@ -90,6 +86,10 @@ mod tests {
     #[test]
     fn test_detect_sip_non_sip() {
         let detector = SipDetector::new();
-        assert!(detector.detect(b"GET / HTTP/1.1\r\nHost: example.com\r\n").is_none());
+        assert!(
+            detector
+                .detect(b"GET / HTTP/1.1\r\nHost: example.com\r\n")
+                .is_none()
+        );
     }
 }

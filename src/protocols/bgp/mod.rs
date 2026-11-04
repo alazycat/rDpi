@@ -1,4 +1,7 @@
-mod detector; mod parser;
-pub use detector::BgpDetector;
+mod detector;
+mod parser;
 use crate::protocols::Registry;
-pub fn register(registry: &mut Registry) { registry.register(Box::new(BgpDetector::new())); }
+pub use detector::BgpDetector;
+pub fn register(registry: &mut Registry) {
+    registry.register(Box::new(BgpDetector::new()));
+}

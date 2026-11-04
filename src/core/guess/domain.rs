@@ -3,8 +3,8 @@
 //! 基于 aho-corasick crate 实现的高效多模式域名匹配，
 //! 用于 DNS 域名 / TLS SNI / HTTP Host 到协议和应用的映射。
 
+use crate::core::types::{Application, DetectionResult, Protocol};
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
-use crate::core::types::{Application, Confidence, DetectionResult, Protocol};
 
 /// 域名匹配结果
 #[derive(Debug, Clone)]
@@ -53,43 +53,51 @@ impl DomainMatcher {
 pub fn domain_protocol_entries() -> Vec<(&'static str, Protocol, Option<Application>)> {
     vec![
         // Google 服务
-        ("google.com",          Protocol::Http, Some(Application::Google)),
-        ("youtube.com",         Protocol::Http, Some(Application::YouTube)),
-        ("youtu.be",            Protocol::Http, Some(Application::YouTube)),
-        ("ytimg.com",           Protocol::Http, Some(Application::YouTube)),
-        ("googleapis.com",      Protocol::Tls,  None),
+        ("google.com", Protocol::Http, Some(Application::Google)),
+        ("youtube.com", Protocol::Http, Some(Application::YouTube)),
+        ("youtu.be", Protocol::Http, Some(Application::YouTube)),
+        ("ytimg.com", Protocol::Http, Some(Application::YouTube)),
+        ("googleapis.com", Protocol::Tls, None),
         // Meta
-        ("facebook.com",        Protocol::Tls,  None),
-        ("fbcdn.net",           Protocol::Tls,  None),
-        ("instagram.com",       Protocol::Tls,  None),
-        ("whatsapp.net",        Protocol::Tls,  Some(Application::WhatsApp)),
-        ("whatsapp.com",        Protocol::Tls,  Some(Application::WhatsApp)),
+        ("facebook.com", Protocol::Tls, None),
+        ("fbcdn.net", Protocol::Tls, None),
+        ("instagram.com", Protocol::Tls, None),
+        ("whatsapp.net", Protocol::Tls, Some(Application::WhatsApp)),
+        ("whatsapp.com", Protocol::Tls, Some(Application::WhatsApp)),
         // Microsoft
-        ("microsoft.com",       Protocol::Tls,  None),
-        ("live.com",            Protocol::Tls,  None),
-        ("office.com",          Protocol::Tls,  None),
-        ("office365.com",       Protocol::Tls,  None),
+        ("microsoft.com", Protocol::Tls, None),
+        ("live.com", Protocol::Tls, None),
+        ("office.com", Protocol::Tls, None),
+        ("office365.com", Protocol::Tls, None),
         // 国内平台
-        ("qq.com",              Protocol::Tls,  Some(Application::QQ)),
-        ("weixin.qq.com",       Protocol::Tls,  Some(Application::WeChat)),
-        ("tencent.com",         Protocol::Tls,  None),
-        ("bilibili.com",        Protocol::Tls,  Some(Application::Bilibili)),
-        ("douyin.com",          Protocol::Tls,  Some(Application::Douyin)),
+        ("qq.com", Protocol::Tls, Some(Application::QQ)),
+        ("weixin.qq.com", Protocol::Tls, Some(Application::WeChat)),
+        ("tencent.com", Protocol::Tls, None),
+        ("bilibili.com", Protocol::Tls, Some(Application::Bilibili)),
+        ("douyin.com", Protocol::Tls, Some(Application::Douyin)),
         // IM
-        ("telegram.org",        Protocol::Tls,  Some(Application::Telegram)),
-        ("discord.com",         Protocol::Tls,  Some(Application::Discord)),
-        ("discordapp.com",      Protocol::Tls,  Some(Application::Discord)),
-        ("slack.com",           Protocol::Tls,  Some(Application::Slack)),
-        ("line.me",             Protocol::Tls,  Some(Application::Line)),
+        ("telegram.org", Protocol::Tls, Some(Application::Telegram)),
+        ("discord.com", Protocol::Tls, Some(Application::Discord)),
+        ("discordapp.com", Protocol::Tls, Some(Application::Discord)),
+        ("slack.com", Protocol::Tls, Some(Application::Slack)),
+        ("line.me", Protocol::Tls, Some(Application::Line)),
         // 流媒体
-        ("netflix.com",         Protocol::Tls,  Some(Application::Netflix)),
-        ("nflxvideo.net",       Protocol::Tls,  Some(Application::Netflix)),
-        ("hulu.com",            Protocol::Tls,  Some(Application::Hulu)),
-        ("disneyplus.com",      Protocol::Tls,  Some(Application::DisneyPlus)),
-        ("primevideo.com",      Protocol::Tls,  Some(Application::AmazonPrime)),
-        ("twitch.tv",           Protocol::Tls,  Some(Application::Twitch)),
+        ("netflix.com", Protocol::Tls, Some(Application::Netflix)),
+        ("nflxvideo.net", Protocol::Tls, Some(Application::Netflix)),
+        ("hulu.com", Protocol::Tls, Some(Application::Hulu)),
+        (
+            "disneyplus.com",
+            Protocol::Tls,
+            Some(Application::DisneyPlus),
+        ),
+        (
+            "primevideo.com",
+            Protocol::Tls,
+            Some(Application::AmazonPrime),
+        ),
+        ("twitch.tv", Protocol::Tls, Some(Application::Twitch)),
         // 通讯
-        ("zoom.us",             Protocol::Tls,  Some(Application::Zoom)),
+        ("zoom.us", Protocol::Tls, Some(Application::Zoom)),
     ]
 }
 

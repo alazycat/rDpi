@@ -15,8 +15,13 @@ fn test_detect_sip_invite() {
 #[test]
 fn test_detect_sip_methods() {
     let detector = SipDetector::new();
-    for method in &["INVITE", "REGISTER", "BYE", "ACK", "CANCEL", "OPTIONS", "MESSAGE"] {
-        let pkt = format!("{} sip:user@domain SIP/2.0\r\nVia: SIP/2.0/UDP 10.0.0.1\r\nCSeq: 1 {}\r\n", method, method);
+    for method in &[
+        "INVITE", "REGISTER", "BYE", "ACK", "CANCEL", "OPTIONS", "MESSAGE",
+    ] {
+        let pkt = format!(
+            "{} sip:user@domain SIP/2.0\r\nVia: SIP/2.0/UDP 10.0.0.1\r\nCSeq: 1 {}\r\n",
+            method, method
+        );
         let result = detector.detect(pkt.as_bytes());
         assert!(result.is_some(), "Should detect SIP {}", method);
     }

@@ -81,7 +81,7 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
 
         // HTTP/3 判断：UDP 443 + 标准版本
         let (protocol, confidence) = if ctx.is_http3_port && is_standard_version {
-            (Protocol::Http3, Confidence::DpiPartial)  // HTTP/3 需要端口+版本双重确认
+            (Protocol::Http3, Confidence::DpiPartial) // HTTP/3 需要端口+版本双重确认
         } else {
             (Protocol::Quic, Confidence::Dpi)
         };

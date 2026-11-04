@@ -6,14 +6,44 @@ use crate::core::types::RedisMetadata;
 
 /// Top 30 Redis commands by frequency
 const TOP_COMMANDS: &[&str] = &[
-    "GET", "SET", "DEL", "EXISTS", "EXPIRE",
-    "TTL", "INCR", "DECR", "INCRBY", "DECRBY",
-    "LPUSH", "RPUSH", "LPOP", "RPOP", "LRANGE",
-    "SADD", "SREM", "SMEMBERS", "SISMEMBER",
-    "HSET", "HGET", "HDEL", "HGETALL", "HKEYS",
-    "ZADD", "ZREM", "ZRANGE", "ZSCORE",
-    "KEYS", "SCAN", "SELECT", "PING", "INFO",
-    "FLUSHDB", "FLUSHALL", "AUTH", "MGET", "MSET",
+    "GET",
+    "SET",
+    "DEL",
+    "EXISTS",
+    "EXPIRE",
+    "TTL",
+    "INCR",
+    "DECR",
+    "INCRBY",
+    "DECRBY",
+    "LPUSH",
+    "RPUSH",
+    "LPOP",
+    "RPOP",
+    "LRANGE",
+    "SADD",
+    "SREM",
+    "SMEMBERS",
+    "SISMEMBER",
+    "HSET",
+    "HGET",
+    "HDEL",
+    "HGETALL",
+    "HKEYS",
+    "ZADD",
+    "ZREM",
+    "ZRANGE",
+    "ZSCORE",
+    "KEYS",
+    "SCAN",
+    "SELECT",
+    "PING",
+    "INFO",
+    "FLUSHDB",
+    "FLUSHALL",
+    "AUTH",
+    "MGET",
+    "MSET",
 ];
 
 /// Parse Redis RESP command
@@ -84,9 +114,7 @@ fn parse_array_command(data: &[u8]) -> Option<RedisMetadata> {
         })
     } else {
         // Unknown command, still detect as Redis
-        Some(RedisMetadata {
-            command: None,
-        })
+        Some(RedisMetadata { command: None })
     }
 }
 
@@ -109,9 +137,7 @@ fn parse_simple_string_command(data: &[u8]) -> Option<RedisMetadata> {
         })
     } else if content_upper == "OK" || content_upper == "PONG" || content_upper == "QUEUED" {
         // Response, not command - still detect as Redis
-        Some(RedisMetadata {
-            command: None,
-        })
+        Some(RedisMetadata { command: None })
     } else {
         None
     }

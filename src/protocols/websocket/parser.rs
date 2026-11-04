@@ -39,8 +39,12 @@ mod tests {
 
     #[test]
     fn test_websocket_regular_http() {
-        assert!(!is_websocket_upgrade(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"));
-        assert!(!is_websocket_upgrade(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n"));
+        assert!(!is_websocket_upgrade(
+            b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
+        ));
+        assert!(!is_websocket_upgrade(
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n"
+        ));
     }
 
     #[test]

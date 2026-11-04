@@ -21,7 +21,7 @@
 //! ```
 
 #[cfg(feature = "pcap")]
-use crate::{Detector, DetectionResult, Error};
+use crate::{DetectionResult, Detector, Error};
 #[cfg(feature = "pcap")]
 use pcap_file::pcap::PcapReader;
 #[cfg(feature = "pcap")]
@@ -105,7 +105,9 @@ impl Iterator for PcapIterator {
                             Err(e) => Some(Err(e)),
                         }
                     }
-                    Some(Err(e)) => Some(Err(Error::Parse(format!("Failed to read packet: {}", e)))),
+                    Some(Err(e)) => {
+                        Some(Err(Error::Parse(format!("Failed to read packet: {}", e))))
+                    }
                     None => None, // 文件结束
                 }
             }
@@ -122,13 +124,11 @@ impl Iterator for PcapIterator {
                                     Err(e) => Some(Err(e)),
                                 }
                             }
-                            Block::SimplePacket(spb) => {
-                                match self.detector.detect(&spb.data) {
-                                    Ok(Some(result)) => Some(Ok(Some((0, result)))),
-                                    Ok(None) => Some(Ok(None)),
-                                    Err(e) => Some(Err(e)),
-                                }
-                            }
+                            Block::SimplePacket(spb) => match self.detector.detect(&spb.data) {
+                                Ok(Some(result)) => Some(Ok(Some((0, result)))),
+                                Ok(None) => Some(Ok(None)),
+                                Err(e) => Some(Err(e)),
+                            },
                             _ => {
                                 // 跳过非数据包块，继续读取下一个
                                 self.next()
@@ -170,7 +170,7 @@ impl PcapProcessor {
         let path = path.as_ref();
 
         // 根据文件扩展名选择格式
-        if path.extension().map_or(false, |ext| ext == "pcapng") {
+        if path.extension().is_some_and(|ext| ext == "pcapng") {
             PcapIterator::new_ng(path, self.detector)
         } else {
             PcapIterator::new_legacy(path, self.detector)

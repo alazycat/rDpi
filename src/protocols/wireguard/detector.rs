@@ -116,7 +116,11 @@ mod tests {
         };
 
         // HTTP data should not match
-        assert!(detector.detect_with_context(b"GET / HTTP/1.1\r\n", &ctx).is_none());
+        assert!(
+            detector
+                .detect_with_context(b"GET / HTTP/1.1\r\n", &ctx)
+                .is_none()
+        );
         assert!(detector.detect_with_context(b"", &ctx).is_none());
     }
 

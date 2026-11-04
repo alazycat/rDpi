@@ -170,15 +170,27 @@ mod tests {
 
     #[test]
     fn test_risk_flag_default_severity() {
-        assert_eq!(RiskFlag::ClearTextCredentials.default_severity(), RiskSeverity::Critical);
-        assert_eq!(RiskFlag::HttpCrawlerBot.default_severity(), RiskSeverity::Low);
-        assert_eq!(RiskFlag::TlsMissingSni.default_severity(), RiskSeverity::Medium);
+        assert_eq!(
+            RiskFlag::ClearTextCredentials.default_severity(),
+            RiskSeverity::Critical
+        );
+        assert_eq!(
+            RiskFlag::HttpCrawlerBot.default_severity(),
+            RiskSeverity::Low
+        );
+        assert_eq!(
+            RiskFlag::TlsMissingSni.default_severity(),
+            RiskSeverity::Medium
+        );
     }
 
     #[test]
     fn test_risk_flag_name() {
         assert_eq!(RiskFlag::TlsMissingSni.name(), "tls_missing_sni");
-        assert_eq!(RiskFlag::ClearTextCredentials.name(), "clear_text_credentials");
+        assert_eq!(
+            RiskFlag::ClearTextCredentials.name(),
+            "clear_text_credentials"
+        );
         assert_eq!(RiskFlag::ProbingAttempt.name(), "probing_attempt");
     }
 }

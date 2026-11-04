@@ -7,8 +7,8 @@ pub mod types;
 
 pub use types::*;
 
-use crate::parser::ParsedPacket;
 use crate::core::flow::Flow;
+use crate::parser::ParsedPacket;
 
 /// 风险检测器 Trait
 ///
@@ -93,18 +93,24 @@ impl Default for RiskRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::TransportProto;
     use crate::core::flow::Flow;
     use crate::core::types::FlowKey;
-    use crate::core::TransportProto;
     use std::net::IpAddr;
 
     struct TestProcessor;
 
     #[cfg(feature = "risk")]
     impl RiskProcessor for TestProcessor {
-        fn name(&self) -> &'static str { "test" }
+        fn name(&self) -> &'static str {
+            "test"
+        }
         fn analyze_packet(&self, _parsed: &ParsedPacket, _flow: &Flow) -> Vec<RiskResult> {
-            vec![RiskResult::new(RiskFlag::TlsMissingSni, RiskSeverity::Medium, "test risk")]
+            vec![RiskResult::new(
+                RiskFlag::TlsMissingSni,
+                RiskSeverity::Medium,
+                "test risk",
+            )]
         }
     }
 

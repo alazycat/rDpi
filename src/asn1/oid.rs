@@ -89,10 +89,7 @@ fn decode_varint(bytes: &[u8]) -> Option<(u64, usize)> {
 /// assert_eq!(encoded, vec![0x2B, 0x06, 0x01]);
 /// ```
 pub fn encode_oid(oid: &str) -> Option<Vec<u8>> {
-    let components: Vec<u64> = oid
-        .split('.')
-        .filter_map(|s| s.parse().ok())
-        .collect();
+    let components: Vec<u64> = oid.split('.').filter_map(|s| s.parse().ok()).collect();
 
     if components.len() < 2 {
         return None;
@@ -168,7 +165,9 @@ mod tests {
     fn test_decode_oid_with_varint() {
         // OID 1.3.6.1.2.1.25.3.3.1.2.196 (CPU load on CPU 196)
         // 196 = 0xC4 = 128 + 68, encoded as 0x81 0x44
-        let data = [0x2B, 0x06, 0x01, 0x02, 0x01, 0x19, 0x03, 0x03, 0x01, 0x02, 0x81, 0x44];
+        let data = [
+            0x2B, 0x06, 0x01, 0x02, 0x01, 0x19, 0x03, 0x03, 0x01, 0x02, 0x81, 0x44,
+        ];
         let oid = decode_oid(&data).unwrap();
         assert_eq!(oid, "1.3.6.1.2.1.25.3.3.1.2.196");
     }
@@ -199,7 +198,10 @@ mod tests {
     #[test]
     fn test_encode_oid_system() {
         let encoded = encode_oid("1.3.6.1.2.1.1.1.0").unwrap();
-        assert_eq!(encoded, vec![0x2B, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x00]);
+        assert_eq!(
+            encoded,
+            vec![0x2B, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x00]
+        );
     }
 
     #[test]

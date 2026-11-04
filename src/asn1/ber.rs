@@ -2,8 +2,8 @@
 //!
 //! This module provides a BER decoder for parsing ASN.1-encoded data.
 
-use super::types::*;
 use super::oid::decode_oid;
+use super::types::*;
 
 /// BER reader that tracks position in the byte buffer
 pub struct BerReader<'a> {
@@ -159,9 +159,7 @@ impl<'a> BerReader<'a> {
                         }
                         Some(Asn1Value::Boolean(value_bytes[0] != 0))
                     }
-                    universal_tags::INTEGER => {
-                        decode_integer(value_bytes)
-                    }
+                    universal_tags::INTEGER => decode_integer(value_bytes),
                     universal_tags::BIT_STRING => {
                         if value_bytes.is_empty() {
                             return None;
@@ -182,37 +180,23 @@ impl<'a> BerReader<'a> {
                     universal_tags::OBJECT_IDENTIFIER => {
                         decode_oid(value_bytes).map(Asn1Value::Oid)
                     }
-                    universal_tags::UTF8_STRING => {
-                        String::from_utf8(value_bytes.to_vec())
-                            .ok()
-                            .map(Asn1Value::Utf8String)
-                    }
-                    universal_tags::SEQUENCE => {
-                        decode_sequence(&mut value_reader)
-                    }
-                    universal_tags::SET => {
-                        decode_set(&mut value_reader)
-                    }
-                    universal_tags::PRINTABLE_STRING => {
-                        String::from_utf8(value_bytes.to_vec())
-                            .ok()
-                            .map(Asn1Value::PrintableString)
-                    }
-                    universal_tags::IA5_STRING => {
-                        String::from_utf8(value_bytes.to_vec())
-                            .ok()
-                            .map(Asn1Value::Ia5String)
-                    }
-                    universal_tags::UTC_TIME => {
-                        String::from_utf8(value_bytes.to_vec())
-                            .ok()
-                            .map(Asn1Value::UtcTime)
-                    }
-                    universal_tags::GENERALIZED_TIME => {
-                        String::from_utf8(value_bytes.to_vec())
-                            .ok()
-                            .map(Asn1Value::GeneralizedTime)
-                    }
+                    universal_tags::UTF8_STRING => String::from_utf8(value_bytes.to_vec())
+                        .ok()
+                        .map(Asn1Value::Utf8String),
+                    universal_tags::SEQUENCE => decode_sequence(&mut value_reader),
+                    universal_tags::SET => decode_set(&mut value_reader),
+                    universal_tags::PRINTABLE_STRING => String::from_utf8(value_bytes.to_vec())
+                        .ok()
+                        .map(Asn1Value::PrintableString),
+                    universal_tags::IA5_STRING => String::from_utf8(value_bytes.to_vec())
+                        .ok()
+                        .map(Asn1Value::Ia5String),
+                    universal_tags::UTC_TIME => String::from_utf8(value_bytes.to_vec())
+                        .ok()
+                        .map(Asn1Value::UtcTime),
+                    universal_tags::GENERALIZED_TIME => String::from_utf8(value_bytes.to_vec())
+                        .ok()
+                        .map(Asn1Value::GeneralizedTime),
                     _ => {
                         // Reset to read raw value
                         self.pos = start_pos;
@@ -227,9 +211,7 @@ impl<'a> BerReader<'a> {
             Asn1Class::ContextSpecific => {
                 Some(Asn1Value::ContextSpecific(tag.number, value_bytes.to_vec()))
             }
-            Asn1Class::Private => {
-                Some(Asn1Value::Raw(tag, value_bytes.to_vec()))
-            }
+            Asn1Class::Private => Some(Asn1Value::Raw(tag, value_bytes.to_vec())),
         }
     }
 }
@@ -241,11 +223,7 @@ fn decode_integer(bytes: &[u8]) -> Option<Asn1Value> {
     }
 
     // Handle sign extension
-    let mut value: i64 = if (bytes[0] & 0x80) != 0 {
-        -1i64
-    } else {
-        0i64
-    };
+    let mut value: i64 = if (bytes[0] & 0x80) != 0 { -1i64 } else { 0i64 };
 
     for &byte in bytes {
         value = (value << 8) | (byte as i64);

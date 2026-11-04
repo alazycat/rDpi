@@ -53,28 +53,27 @@ pub mod application;
 pub mod asn1;
 pub mod core;
 pub mod parser;
-pub mod protocols;
 #[cfg(feature = "pcap")]
 pub mod pcap;
-#[cfg(feature = "rule")]
-pub mod rule;
+pub mod protocols;
 #[cfg(feature = "risk")]
 pub mod risk;
+#[cfg(feature = "rule")]
+pub mod rule;
 
 pub use core::types::*;
 pub use error::{Error, Result};
 
 use core::flow::{Flow, FlowTable};
-use core::guess::{GuessEngine, GuessContext};
 use core::guess::info::DomainInfo;
-use core::types::{Confidence, TransportProto};
+use core::guess::{GuessContext, GuessEngine};
 use protocols::Registry;
 use std::time::Duration;
 
-#[cfg(feature = "rule")]
-use rule::{Rule, RuleContext, RuleEngine};
 #[cfg(feature = "risk")]
 use risk::RiskRegistry;
+#[cfg(feature = "rule")]
+use rule::{Rule, RuleContext, RuleEngine};
 
 /// TCP 流 DPI 放弃阈值（包数）
 pub const DEFAULT_TCP_GIVEUP: u32 = 20;
@@ -179,7 +178,9 @@ impl Detector {
     /// 添加单条规则
     #[cfg(feature = "rule")]
     pub fn add_rule(&mut self, rule: Rule) {
-        self.rule_engine.get_or_insert_with(RuleEngine::new).add_rule(rule);
+        self.rule_engine
+            .get_or_insert_with(RuleEngine::new)
+            .add_rule(rule);
     }
 
     /// 从 JSON 加载规则
@@ -253,14 +254,20 @@ impl Detector {
         let mut result = if flow.protocol.is_none() {
             #[cfg(feature = "rule")]
             if let Some(ref engine) = self.rule_engine {
+                // R6 修复：flow.metadata 在规则分支中恒为 None（所有写 metadata 的
+                // 路径都同时写了 protocol，而规则分支仅在 protocol.is_none() 时进入）
+                // → sni_contains 规则原为死代码。回退到从当前包 payload 提取 SNI。
+                let sni = flow.metadata.as_ref().and_then(|m| match m {
+                    Metadata::Tls(tls) => tls.sni.clone(),
+                    Metadata::Quic(quic) => quic.sni.clone(),
+                    _ => None,
+                });
+                #[cfg(feature = "tls")]
+                let sni = sni.or_else(|| protocols::tls::extract_sni(&parsed.payload));
                 let rule_ctx = RuleContext {
                     src_port: parsed.src_port,
                     dst_port: parsed.dst_port,
-                    sni: flow.metadata.as_ref().and_then(|m| match m {
-                        Metadata::Tls(tls) => tls.sni.clone(),
-                        Metadata::Quic(quic) => quic.sni.clone(),
-                        _ => None,
-                    }),
+                    sni,
                     payload: parsed.payload.clone(),
                 };
                 if let Some(r) = engine.match_rule(&rule_ctx) {
@@ -288,7 +295,10 @@ impl Detector {
             } else {
                 // Giveup 阶段：DPI 达到阈值仍未识别，启用猜测引擎
                 let mut ctx = GuessContext::new(parsed.dst_port);
-                ctx.dst_ip = Some(parsed.src_ip); // 对端 IP
+                // R4 修复：两方向 IP 都交给猜测引擎——服务端可能在 dst
+                // （client→server 包）或 src（server→client 包）；匹配时 dst 优先。
+                ctx.dst_ip = Some(parsed.dst_ip);
+                ctx.src_ip = Some(parsed.src_ip);
                 // 从流元数据中收集域名信息
                 ctx.domain_info = DomainInfo {
                     sni: flow.metadata.as_ref().and_then(|m| match m {
@@ -314,8 +324,22 @@ impl Detector {
                 guess
             }
         } else {
+            // F3 修复：已定型 TLS 流在后续包收到 Certificate 记录时，
+            // 一次性补解析证书字段（写回 flow.metadata，下方回显自动携带）
+            #[cfg(feature = "tls")]
+            Self::enrich_tls_cert(flow, &parsed.payload);
+
             // 流已有协议，不重复检测，但需要返回当前协议信息
-            flow.protocol.map(|p| DetectionResult::new(p))
+            flow.protocol.map(|p| {
+                let mut r = DetectionResult::new(p);
+                // F7 修复：回显结果携带流已识别时的元数据。否则下方无条件写回
+                // flow.metadata = Some(r.metadata) 会把元数据抹成 Some(Metadata::None)，
+                // 导致依赖 flow.metadata 的 risk 处理器（tls/dns/http）从第二包起失效。
+                if let Some(ref m) = flow.metadata {
+                    r.metadata = m.clone();
+                }
+                r
+            })
         };
 
         // 更新流统计
@@ -343,6 +367,35 @@ impl Detector {
         Ok(result)
     }
 
+    /// F3：已定型 TLS 流收到 Certificate 记录时，补解析证书字段（每流至多一次）
+    ///
+    /// 修复前：证书解析只发生在流识别的那一个包（tls/mod.rs:66-71），而证书几乎
+    /// 总是在 ClientHello 之后的独立记录到达 → 证书字段恒 None（a2/a3 实锤）。
+    /// 修复后：回显路径对已定型 TLS 流做廉价预检（字段为空 + payload 形似
+    /// Certificate 记录），命中才做 ASN.1 解析并写回 flow.metadata；协议不重检
+    /// （ADR-0004 一次定型语义不变），字段填充后不再重复解析。
+    #[cfg(feature = "tls")]
+    fn enrich_tls_cert(flow: &mut Flow, payload: &[u8]) {
+        let needs_enrich = matches!(
+            flow.metadata,
+            Some(Metadata::Tls(ref tls)) if tls.cert_subject.is_none()
+        );
+        if !needs_enrich || flow.protocol != Some(Protocol::Tls) {
+            return;
+        }
+        if !protocols::tls::is_certificate_message(payload) {
+            return;
+        }
+        if let Some(cert) = protocols::tls::parse_certificate(payload) {
+            if let Some(Metadata::Tls(ref mut tls)) = flow.metadata {
+                tls.cert_subject = cert.subject;
+                tls.cert_issuer = cert.issuer;
+                tls.cert_valid_from = cert.not_before;
+                tls.cert_valid_to = cert.not_after;
+            }
+        }
+    }
+
     /// 获取流表（只读）
     pub fn flows(&self) -> impl Iterator<Item = (&FlowKey, &Flow)> {
         self.flow_table.iter()
@@ -366,10 +419,16 @@ impl Detector {
     pub fn expire_flows(&mut self) -> Vec<FlowKey> {
         #[cfg(feature = "risk")]
         {
-            // 在过期前对流运行 analyze_flow
-            let keys: Vec<FlowKey> = self.flow_table.iter()
-                .filter(|(_, f)| std::time::Instant::now().duration_since(f.stats.last_time)
-                    > Duration::from_secs(120))
+            // 在过期前对流运行 analyze_flow（R5 修复：过期窗口取 FlowTable 真实
+            // 超时配置，而非硬编码 120s——否则 with_config 自定义 timeout 时
+            // analyze 窗口与实际过期窗口错位）。
+            let timeout = self.flow_table.timeout();
+            let keys: Vec<FlowKey> = self
+                .flow_table
+                .iter()
+                .filter(|(_, f)| {
+                    std::time::Instant::now().duration_since(f.stats.last_time) > timeout
+                })
                 .map(|(k, _)| k.clone())
                 .collect();
             for key in &keys {

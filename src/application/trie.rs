@@ -60,7 +60,7 @@ impl TrieNode {
                     // Valid match only at label boundary:
                     // - Next char is '.' (subdomain), or
                     // - No more chars (exact match)
-                    if chars.peek().map_or(true, |&c| c == '.') {
+                    if chars.peek().is_none_or(|&c| c == '.') {
                         result = node.application;
                     }
                 }

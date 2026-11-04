@@ -1,4 +1,7 @@
-mod detector; mod parser;
-pub use detector::Dhcpv6Detector;
+mod detector;
+mod parser;
 use crate::protocols::Registry;
-pub fn register(registry: &mut Registry) { registry.register(Box::new(Dhcpv6Detector::new())); }
+pub use detector::Dhcpv6Detector;
+pub fn register(registry: &mut Registry) {
+    registry.register(Box::new(Dhcpv6Detector::new()));
+}

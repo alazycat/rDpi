@@ -6,6 +6,7 @@
 mod certificate;
 mod parser;
 
+pub use certificate::{CertInfo, is_certificate_message, parse_certificate};
 pub use parser::{
     ClientHelloInfo, extract_sni, extract_tls_version, is_client_hello, is_tls_record,
     parse_client_hello,
@@ -54,10 +55,17 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
             tls_meta.version = info.version.clone();
             tls_meta.cipher_suites = info.cipher_suites.clone();
             tls_meta.alpn = info.alpn.clone();
-            tls_meta.application = info.sni.as_ref()
+            tls_meta.application = info
+                .sni
+                .as_ref()
                 .and_then(|sni| crate::application::identify(sni));
             let ja4 = info.version.as_ref().map(|ver| {
-                crate::application::compute_ja4(ver, &info.cipher_suites, &info.extensions, &info.supported_groups)
+                crate::application::compute_ja4(
+                    ver,
+                    &info.cipher_suites,
+                    &info.extensions,
+                    &info.supported_groups,
+                )
             });
             tls_meta.ja4 = ja4;
         }

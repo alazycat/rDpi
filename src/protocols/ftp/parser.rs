@@ -4,11 +4,10 @@
 //! (e.g., "220 FTP server ready").
 
 const FTP_VERBS: &[&str] = &[
-    "USER", "PASS", "ACCT", "CWD", "CDUP", "SMNT", "QUIT", "REIN",
-    "PORT", "PASV", "TYPE", "STRU", "MODE", "RETR", "STOR", "STOU",
-    "APPE", "ALLO", "REST", "RNFR", "RNTO", "ABOR", "DELE", "RMD",
-    "MKD", "PWD", "LIST", "NLST", "SITE", "SYST", "STAT", "HELP",
-    "NOOP", "AUTH", "FEAT", "OPTS", "SIZE", "MDTM", "EPSV", "EPRT",
+    "USER", "PASS", "ACCT", "CWD", "CDUP", "SMNT", "QUIT", "REIN", "PORT", "PASV", "TYPE", "STRU",
+    "MODE", "RETR", "STOR", "STOU", "APPE", "ALLO", "REST", "RNFR", "RNTO", "ABOR", "DELE", "RMD",
+    "MKD", "PWD", "LIST", "NLST", "SITE", "SYST", "STAT", "HELP", "NOOP", "AUTH", "FEAT", "OPTS",
+    "SIZE", "MDTM", "EPSV", "EPRT",
 ];
 
 /// FTP client command
@@ -36,9 +35,12 @@ pub fn parse_ftp_command(payload: &[u8]) -> Option<FtpCommand> {
     if payload.is_empty() {
         return None;
     }
-    let end = payload.iter().position(|&b| b == b'\n')
+    let end = payload
+        .iter()
+        .position(|&b| b == b'\n')
         .unwrap_or(payload.len().saturating_sub(1));
-    let line = std::str::from_utf8(&payload[..=end]).ok()?
+    let line = std::str::from_utf8(&payload[..=end])
+        .ok()?
         .trim_end_matches('\r')
         .trim_end_matches('\n');
 
@@ -107,7 +109,10 @@ pub fn is_ftp_response_prefix(payload: &[u8]) -> bool {
 
 /// Quick check whether the first byte looks like an FTP command letter (A-Z).
 pub fn is_ftp_command_prefix(payload: &[u8]) -> bool {
-    payload.first().copied().is_some_and(|first| (b'A'..=b'Z').contains(&first))
+    payload
+        .first()
+        .copied()
+        .is_some_and(|first| (b'A'..=b'Z').contains(&first))
 }
 
 #[cfg(test)]

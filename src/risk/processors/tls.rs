@@ -3,22 +3,21 @@
 //! Detects TLS-related risks using TlsMetadata from protocol detection.
 
 use crate::core::flow::Flow;
-use crate::core::types::{Metadata, Protocol, TlsMetadata};
-use crate::risk::types::{RiskFlag, RiskResult, RiskSeverity};
+use crate::core::types::{Metadata, Protocol, TlsMetadata, TransportProto};
 use crate::parser::ParsedPacket;
 use crate::risk::RiskProcessor;
+use crate::risk::types::{RiskFlag, RiskResult, RiskSeverity};
 
 /// 已知弱密码套件 ID 列表
 const WEAK_CIPHER_SUITES: &[u16] = &[
     // NULL (无加密)
     0x0000, 0x0001, 0x0002, 0x003B, 0x003C, 0x003D, 0x0060, 0x0061, 0x0062,
     // EXPORT (40 位密钥)
-    0x0003, 0x0006, 0x0008, 0x0012, 0x0015, 0x001A, 0x001D, 0x0022, 0x0025,
-    // RC4
+    0x0003, 0x0006, 0x0008, 0x0012, 0x0015, 0x001A, 0x001D, 0x0022, 0x0025, // RC4
     0x0004, 0x0005, 0x0011, 0x0018, 0x001B, 0x0020, 0x0023, 0x0042, 0x0043,
     // DES / 3DES
-    0x0007, 0x0009, 0x000A, 0x0013, 0x0014, 0x0016, 0x0017, 0x0019, 0x001C,
-    0x001E, 0x001F, 0x0021, 0x0024, 0x008C, 0x008D,
+    0x0007, 0x0009, 0x000A, 0x0013, 0x0014, 0x0016, 0x0017, 0x0019, 0x001C, 0x001E, 0x001F, 0x0021,
+    0x0024, 0x008C, 0x008D,
 ];
 
 /// TLS 安全风险处理器
@@ -32,7 +31,11 @@ impl TlsRiskProcessor {
     fn get_tls<'a>(&self, flow: &'a Flow) -> Option<&'a TlsMetadata> {
         match &flow.metadata {
             Some(Metadata::Tls(tls)) => {
-                if flow.protocol == Some(Protocol::Tls) { Some(tls) } else { None }
+                if flow.protocol == Some(Protocol::Tls) {
+                    Some(tls)
+                } else {
+                    None
+                }
             }
             _ => None,
         }
@@ -68,8 +71,9 @@ impl RiskProcessor for TlsRiskProcessor {
         }
 
         // 2. TlsObsoleteVersion: TLS 1.0/1.1
+        // 注意：版本字符串由 tls/parser.rs:decode_tls_version 产出，格式为 "TLS 1.0"（带前缀）
         if let Some(ref ver) = tls.version {
-            if ver == "1.0" || ver == "1.1" {
+            if ver == "TLS 1.0" || ver == "TLS 1.1" {
                 results.push(RiskResult::new(
                     RiskFlag::TlsObsoleteVersion,
                     RiskSeverity::High,
@@ -79,9 +83,13 @@ impl RiskProcessor for TlsRiskProcessor {
         }
 
         // 3. TlsWeakCipher: 检查密码套件
-        let has_weak = tls.cipher_suites.iter().any(|c| WEAK_CIPHER_SUITES.contains(c));
+        let has_weak = tls
+            .cipher_suites
+            .iter()
+            .any(|c| WEAK_CIPHER_SUITES.contains(c));
         if has_weak {
-            let weak_list: Vec<String> = tls.cipher_suites
+            let weak_list: Vec<String> = tls
+                .cipher_suites
                 .iter()
                 .filter(|c| WEAK_CIPHER_SUITES.contains(c))
                 .map(|c| format!("0x{:04X}", c))
@@ -93,9 +101,20 @@ impl RiskProcessor for TlsRiskProcessor {
             ));
         }
 
-        // 4. TlsAlpnSniMismatch: ALPN 与 SNI 不匹配（简单检查）
-        // 如果 ALPN 存在且 SNI 存在但两者明显不匹配
-        // (这是一个简化的启发式检测)
+        // 4. TlsAlpnSniMismatch: ALPN 与连接上下文不一致（F2 修复：原为死旗标，
+        //    tls.rs 原 96-98 行只有占位注释）。启发式：ALPN 通告 "h3"（HTTP/3
+        //    仅存在于 QUIC/UDP 传输），但当前流承载于 TCP——通告的传输协议与
+        //    实际连接矛盾（伪装/异常客户端信号）。severity Medium 维持原定义。
+        if tls.alpn.as_deref() == Some("h3") && flow.key.transport != TransportProto::Udp {
+            results.push(RiskResult::new(
+                RiskFlag::TlsAlpnSniMismatch,
+                RiskSeverity::Medium,
+                format!(
+                    "ALPN advertises h3 (QUIC-only) over {:?} transport — inconsistent client advertisement",
+                    flow.key.transport
+                ),
+            ));
+        }
 
         results
     }
@@ -109,7 +128,7 @@ impl RiskProcessor for TlsRiskProcessor {
 mod tests {
     use super::*;
     use crate::core::flow::Flow;
-    use crate::core::types::{FlowKey, TransportProto, TlsMetadata};
+    use crate::core::types::{FlowKey, TlsMetadata, TransportProto};
 
     fn make_tls_flow(sni: Option<&str>, version: Option<&str>, cipher_suites: Vec<u16>) -> Flow {
         let mut flow = Flow::new(FlowKey {
@@ -139,8 +158,10 @@ mod tests {
         ParsedPacket {
             src_ip: "10.0.0.1".parse().unwrap(),
             dst_ip: "10.0.0.2".parse().unwrap(),
-            src_port: 54321, dst_port: 443,
-            transport: TransportProto::Tcp, payload: vec![],
+            src_port: 54321,
+            dst_port: 443,
+            transport: TransportProto::Tcp,
+            payload: vec![],
         }
     }
 
@@ -165,7 +186,8 @@ mod tests {
     #[test]
     fn test_tls_obsolete_version() {
         let proc = TlsRiskProcessor::new();
-        let flow = make_tls_flow(Some("x.com"), Some("1.0"), vec![]);
+        // 版本字符串使用解析器真实产出格式 "TLS 1.0"（tls/parser.rs:decode_tls_version）
+        let flow = make_tls_flow(Some("x.com"), Some("TLS 1.0"), vec![]);
         let parsed = make_parsed();
         let risks = proc.analyze_packet(&parsed, &flow);
         assert!(risks.iter().any(|r| r.flag == RiskFlag::TlsObsoleteVersion));
@@ -196,6 +218,43 @@ mod tests {
         let parsed = make_parsed();
         let risks = proc.analyze_packet(&parsed, &flow);
         assert!(!risks.iter().any(|r| r.flag == RiskFlag::TlsWeakCipher));
+    }
+
+    /// F2 修复：ALPN 通告 h3（QUIC-only）但流承载于 TCP → 触发 TlsAlpnSniMismatch
+    #[test]
+    fn test_tls_alpn_h3_over_tcp_mismatch() {
+        let proc = TlsRiskProcessor::new();
+        let mut flow = make_tls_flow(Some("x.com"), Some("1.3"), vec![0x1301]);
+        if let Some(Metadata::Tls(ref mut tls)) = flow.metadata {
+            tls.alpn = Some("h3".to_string());
+        }
+        let parsed = make_parsed();
+        let risks = proc.analyze_packet(&parsed, &flow);
+        assert!(
+            risks.iter().any(|r| r.flag == RiskFlag::TlsAlpnSniMismatch),
+            "F2: h3 advertised over TCP must trigger TlsAlpnSniMismatch"
+        );
+    }
+
+    /// F2：一致的 ALPN（h2 over TCP）与 UDP 上的 h3 均不触发
+    #[test]
+    fn test_tls_alpn_consistent_no_mismatch() {
+        let proc = TlsRiskProcessor::new();
+        // h2 over TCP：正常
+        let mut flow = make_tls_flow(Some("x.com"), Some("1.3"), vec![0x1301]);
+        if let Some(Metadata::Tls(ref mut tls)) = flow.metadata {
+            tls.alpn = Some("h2".to_string());
+        }
+        let parsed = make_parsed();
+        assert!(proc.analyze_packet(&parsed, &flow).is_empty());
+
+        // h3 over UDP（QUIC）：一致，不触发（注：QUIC 流通常不进入本处理器，此处钉住传输判定）
+        let mut udp_flow = make_tls_flow(Some("x.com"), Some("1.3"), vec![0x1301]);
+        udp_flow.key.transport = TransportProto::Udp;
+        if let Some(Metadata::Tls(ref mut tls)) = udp_flow.metadata {
+            tls.alpn = Some("h3".to_string());
+        }
+        assert!(proc.analyze_packet(&parsed, &udp_flow).is_empty());
     }
 
     #[test]

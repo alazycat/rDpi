@@ -28,10 +28,7 @@ impl ProtocolDetector for Http2Detector {
 
     fn detect(&self, payload: &[u8]) -> Option<DetectionResult> {
         if is_http2_preface(payload) {
-            Some(
-                DetectionResult::new(Protocol::Http2)
-                    .with_confidence(Confidence::Dpi),
-            )
+            Some(DetectionResult::new(Protocol::Http2).with_confidence(Confidence::Dpi))
         } else {
             None
         }
@@ -45,7 +42,9 @@ mod tests {
     #[test]
     fn test_http2_detector_preface() {
         let detector = Http2Detector::new();
-        let result = detector.detect(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n").unwrap();
+        let result = detector
+            .detect(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+            .unwrap();
         assert_eq!(result.protocol, Protocol::Http2);
     }
 

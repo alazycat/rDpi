@@ -1,4 +1,7 @@
-mod detector; mod parser;
-pub use detector::PptpDetector;
+mod detector;
+mod parser;
 use crate::protocols::Registry;
-pub fn register(registry: &mut Registry) { registry.register(Box::new(PptpDetector::new())); }
+pub use detector::PptpDetector;
+pub fn register(registry: &mut Registry) {
+    registry.register(Box::new(PptpDetector::new()));
+}

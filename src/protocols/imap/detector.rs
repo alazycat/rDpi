@@ -1,9 +1,13 @@
 //! IMAP protocol detector for rDpi
 
-use crate::core::types::{Confidence, DetectionResult, Protocol};
+#[cfg(test)]
+use crate::core::types::Confidence;
+use crate::core::types::{DetectionResult, Protocol};
 use crate::protocols::ProtocolDetector;
 
-use super::parser::{is_imap_command_prefix, is_imap_response_prefix, parse_imap_command, parse_imap_response};
+use super::parser::{
+    is_imap_command_prefix, is_imap_response_prefix, parse_imap_command, parse_imap_response,
+};
 
 /// IMAP protocol detector
 pub struct ImapDetector {
@@ -51,7 +55,11 @@ impl ProtocolDetector for ImapDetector {
         None
     }
 
-    fn detect_with_context(&self, payload: &[u8], ctx: &crate::core::types::DetectContext) -> Option<DetectionResult> {
+    fn detect_with_context(
+        &self,
+        payload: &[u8],
+        ctx: &crate::core::types::DetectContext,
+    ) -> Option<DetectionResult> {
         // Check for IMAPS (port 993)
         if ctx.src_port == 993 || ctx.dst_port == 993 {
             return Some(DetectionResult::new(Protocol::Imaps));

@@ -1,5 +1,7 @@
 mod detector;
 mod parser;
-pub use detector::WhoisDetector;
 use crate::protocols::Registry;
-pub fn register(registry: &mut Registry) { registry.register(Box::new(WhoisDetector::new())); }
+pub use detector::WhoisDetector;
+pub fn register(registry: &mut Registry) {
+    registry.register(Box::new(WhoisDetector::new()));
+}

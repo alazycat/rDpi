@@ -1,9 +1,13 @@
 //! POP3 protocol detector for rDpi
 
-use crate::core::types::{Confidence, DetectionResult, Protocol};
+#[cfg(test)]
+use crate::core::types::Confidence;
+use crate::core::types::{DetectionResult, Protocol};
 use crate::protocols::ProtocolDetector;
 
-use super::parser::{is_pop3_command_prefix, is_pop3_response_prefix, parse_pop3_command, parse_pop3_response};
+use super::parser::{
+    is_pop3_command_prefix, is_pop3_response_prefix, parse_pop3_command, parse_pop3_response,
+};
 
 /// POP3 protocol detector
 pub struct Pop3Detector {
@@ -51,7 +55,11 @@ impl ProtocolDetector for Pop3Detector {
         None
     }
 
-    fn detect_with_context(&self, payload: &[u8], ctx: &crate::core::types::DetectContext) -> Option<DetectionResult> {
+    fn detect_with_context(
+        &self,
+        payload: &[u8],
+        ctx: &crate::core::types::DetectContext,
+    ) -> Option<DetectionResult> {
         // Check for POP3S (port 995)
         if ctx.src_port == 995 || ctx.dst_port == 995 {
             return Some(DetectionResult::new(Protocol::Pop3s));

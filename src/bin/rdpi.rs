@@ -3,15 +3,19 @@
 //! 从 pcap 文件读取流量，识别协议，输出流统计和协议汇总。
 
 use clap::Parser;
-use rdpi::pcap::PcapProcessor;
 use rdpi::DetectionResult;
+use rdpi::pcap::PcapProcessor;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
 /// rDpi — Rust Deep Packet Inspection CLI
 #[derive(Parser)]
-#[command(name = "rdpi", version = "0.2.0", about = "Network traffic protocol identification tool")]
+#[command(
+    name = "rdpi",
+    version = env!("CARGO_PKG_VERSION"),
+    about = "Network traffic protocol identification tool"
+)]
 struct Cli {
     /// 输入的 pcap/pcapng 文件路径
     #[arg(short = 'i', long = "input", value_name = "FILE")]
@@ -77,17 +81,29 @@ fn print_detection(pkt_num: u64, det: &DetectionResult) {
     if meta_str.is_empty() {
         println!("[{:6}] {:?} [{:?}]", pkt_num, det.protocol, det.confidence);
     } else {
-        println!("[{:6}] {:?} ({}) [{:?}]", pkt_num, det.protocol, meta_str, det.confidence);
+        println!(
+            "[{:6}] {:?} ({}) [{:?}]",
+            pkt_num, det.protocol, meta_str, det.confidence
+        );
     }
 }
 
-fn print_text_summary(total: u64, detected: u64, counts: &HashMap<String, u64>, elapsed: std::time::Duration) {
+fn print_text_summary(
+    total: u64,
+    detected: u64,
+    counts: &HashMap<String, u64>,
+    elapsed: std::time::Duration,
+) {
     let secs = elapsed.as_secs_f64();
     let rate = if secs > 0.0 { total as f64 / secs } else { 0.0 };
 
     println!("\n=== rDpi Detection Summary ===");
     println!("  Total packets:   {}", total);
-    println!("  Detected:        {} ({:.1}%)", detected, (detected as f64 / total.max(1) as f64 * 100.0));
+    println!(
+        "  Detected:        {} ({:.1}%)",
+        detected,
+        (detected as f64 / total.max(1) as f64 * 100.0)
+    );
     println!("  Elapsed:         {:.2}s", secs);
     println!("  Throughput:      {:.0} pkt/s", rate);
 
@@ -102,18 +118,33 @@ fn print_text_summary(total: u64, detected: u64, counts: &HashMap<String, u64>, 
     }
 }
 
-fn print_json_summary(total: u64, detected: u64, counts: &HashMap<String, u64>, elapsed: std::time::Duration) {
-    print!("{{\n  \"total_packets\": {},\n  \"detected_packets\": {},\n", total, detected);
-    print!("  \"elapsed_seconds\": {:.4},\n  \"protocols\": {{", elapsed.as_secs_f64());
+fn print_json_summary(
+    total: u64,
+    detected: u64,
+    counts: &HashMap<String, u64>,
+    elapsed: std::time::Duration,
+) {
+    print!(
+        "{{\n  \"total_packets\": {},\n  \"detected_packets\": {},\n",
+        total, detected
+    );
+    print!(
+        "  \"elapsed_seconds\": {:.4},\n  \"protocols\": {{",
+        elapsed.as_secs_f64()
+    );
     let mut first = true;
     let mut sorted: Vec<_> = counts.iter().collect();
     sorted.sort_by(|a, b| b.1.cmp(a.1));
     for (proto, count) in &sorted {
-        if !first { println!(","); }
+        if !first {
+            println!(",");
+        }
         first = false;
         print!("    \"{}\": {}", proto, count);
     }
-    if !first { println!(); }
+    if !first {
+        println!();
+    }
     println!("  }}\n}}");
 }
 

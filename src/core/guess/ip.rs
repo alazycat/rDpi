@@ -2,8 +2,8 @@
 //!
 //! 通过已知服务 IP 段推断协议，适用于云服务和 CDN 流量。
 
-use std::net::{IpAddr, Ipv4Addr};
 use crate::core::types::{Application, Confidence, DetectionResult, Protocol};
+use std::net::{IpAddr, Ipv4Addr};
 
 /// IP 子网条目
 #[derive(Debug, Clone)]
@@ -41,12 +41,10 @@ impl IpMatcher {
 
     fn match_v4(&self, ip: Ipv4Addr) -> Option<DetectionResult> {
         let ip_bits = u32::from(ip);
-        let idx = self
-            .entries
-            .partition_point(|e| match e.network {
-                IpAddr::V4(net) => u32::from(net) <= ip_bits,
-                IpAddr::V6(_) => true,
-            });
+        let idx = self.entries.partition_point(|e| match e.network {
+            IpAddr::V4(net) => u32::from(net) <= ip_bits,
+            IpAddr::V6(_) => true,
+        });
 
         for i in (0..=idx.saturating_sub(1)).rev() {
             let entry = &self.entries[i];
@@ -57,8 +55,8 @@ impl IpMatcher {
                     !0u32 << (32 - entry.prefix_len)
                 };
                 if (u32::from(ip) & mask) == (u32::from(net) & mask) {
-                    let result = DetectionResult::new(entry.protocol)
-                        .with_confidence(Confidence::MatchByIp);
+                    let result =
+                        DetectionResult::new(entry.protocol).with_confidence(Confidence::MatchByIp);
                     return Some(result);
                 }
             }
@@ -89,7 +87,12 @@ pub fn builtin_subnets() -> Vec<IpSubnetEntry> {
         entry_v4("142.250.0.0", 15, Protocol::Http, Some(Application::Google)),
         entry_v4("172.217.0.0", 16, Protocol::Http, Some(Application::Google)),
         entry_v4("74.125.0.0", 16, Protocol::Http, Some(Application::Google)),
-        entry_v4("64.233.160.0", 19, Protocol::Http, Some(Application::Google)),
+        entry_v4(
+            "64.233.160.0",
+            19,
+            Protocol::Http,
+            Some(Application::Google),
+        ),
         entry_v4("8.8.8.0", 24, Protocol::Dns, None),
         entry_v4("8.8.4.0", 24, Protocol::Dns, None),
         // Cloudflare

@@ -172,9 +172,14 @@ mod tests {
     use super::*;
 
     /// Build a raw MQTT CONNECT packet bytes
-    fn build_mqtt_connect(protocol_name: &str, protocol_level: u8,
-                          clean_session: bool, keep_alive: u16,
-                          client_id: &str, will_topic: Option<&str>) -> Vec<u8> {
+    fn build_mqtt_connect(
+        protocol_name: &str,
+        protocol_level: u8,
+        clean_session: bool,
+        keep_alive: u16,
+        client_id: &str,
+        will_topic: Option<&str>,
+    ) -> Vec<u8> {
         let mut packet = Vec::new();
 
         // Fixed header: CONNECT type, remaining length placeholder

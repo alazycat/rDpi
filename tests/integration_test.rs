@@ -110,13 +110,30 @@ fn test_end_to_end_pop3_client_command() {
 
     let registry = Registry::default();
 
-    // POP3 client command
+    // POP3 client command on POP3 port — F8 fix requires port context to
+    // disambiguate shared FTP/POP3 verbs (USER/PASS/RETR/QUIT/...)
     let pop3_command = b"USER test@example.com\r\n";
-    let result = registry.detect(pop3_command);
+    let result = registry.detect_with_ports(pop3_command, 12345, 110);
 
     assert!(result.is_some());
     let result = result.unwrap();
     assert_eq!(result.protocol, Protocol::Pop3);
+}
+
+/// F8 正面钉住：同样的歧义命令在 FTP 端口上仍判定为 FTP
+#[test]
+#[cfg(feature = "mail")]
+fn test_end_to_end_ftp_user_command_on_ftp_port() {
+    use rdpi::protocols::Registry;
+
+    let registry = Registry::default();
+
+    let ftp_command = b"USER anonymous\r\n";
+    let result = registry.detect_with_ports(ftp_command, 12345, 21);
+
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert_eq!(result.protocol, Protocol::Ftp);
 }
 
 // ============================================================================
@@ -237,17 +254,17 @@ fn test_end_to_end_snmp_detection() {
 
     // SNMP v1 GetRequest for sysDescr.0
     let snmp_payload = vec![
-        0x30, 0x26,           // SEQUENCE, length 38
-        0x02, 0x01, 0x00,     // INTEGER: version 0 (v1)
+        0x30, 0x26, // SEQUENCE, length 38
+        0x02, 0x01, 0x00, // INTEGER: version 0 (v1)
         0x04, 0x06, 0x70, 0x75, 0x62, 0x6C, 0x69, 0x63, // OCTET STRING: "public"
-        0xA0, 0x19,           // GetRequest (context-specific 0, constructed)
-        0x02, 0x01, 0x01,     // request-id: 1
-        0x02, 0x01, 0x00,     // error-status: 0
-        0x02, 0x01, 0x00,     // error-index: 0
-        0x30, 0x0E,           // varbind-list SEQUENCE
-        0x30, 0x0C,           // varbind SEQUENCE
+        0xA0, 0x19, // GetRequest (context-specific 0, constructed)
+        0x02, 0x01, 0x01, // request-id: 1
+        0x02, 0x01, 0x00, // error-status: 0
+        0x02, 0x01, 0x00, // error-index: 0
+        0x30, 0x0E, // varbind-list SEQUENCE
+        0x30, 0x0C, // varbind SEQUENCE
         0x06, 0x08, 0x2B, 0x06, 0x01, 0x02, 0x01, 0x01, 0x01, 0x00, // OID: 1.3.6.1.2.1.1.1.0
-        0x05, 0x00,           // NULL
+        0x05, 0x00, // NULL
     ];
 
     let result = registry.detect(&snmp_payload);
@@ -270,13 +287,13 @@ fn test_end_to_end_modbus_detection() {
 
     // Modbus TCP Read Coils request
     let modbus_payload = vec![
-        0x00, 0x01,       // Transaction ID: 1
-        0x00, 0x00,       // Protocol ID: 0
-        0x00, 0x06,       // Length: 6 bytes following
-        0x01,             // Unit ID: 1
-        0x01,             // Function Code: Read Coils
-        0x00, 0x01,       // Address: 1
-        0x00, 0x08,       // Quantity: 8 coils
+        0x00, 0x01, // Transaction ID: 1
+        0x00, 0x00, // Protocol ID: 0
+        0x00, 0x06, // Length: 6 bytes following
+        0x01, // Unit ID: 1
+        0x01, // Function Code: Read Coils
+        0x00, 0x01, // Address: 1
+        0x00, 0x08, // Quantity: 8 coils
     ];
 
     let result = registry.detect(&modbus_payload);
@@ -397,7 +414,7 @@ fn test_end_to_end_wireguard_detection() {
 
     // WireGuard Handshake Initiation (type=1)
     let mut wg_payload = vec![
-        0x01,       // message_type = Initiation
+        0x01, // message_type = Initiation
         0x00, 0x00, 0x00, // reserved
         0x00, 0x00, 0x00, 0x00, // sender_index = 0 (first handshake)
     ];

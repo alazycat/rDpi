@@ -153,7 +153,12 @@ fn test_registry_default_detector_count() {
     // All detectors should be registered by default
     // (assuming all features are enabled)
     let expected_count = {
-        let mut count = 6; // TFTP + RSYNC + Whois + Syslog + Telnet + VNC (always registered)
+        // R7：TFTP + RSYNC + Whois + Syslog + Telnet + VNC 纳入 misc feature
+        let mut count = 0;
+        #[cfg(feature = "misc")]
+        {
+            count += 6; // TFTP + RSYNC + Whois + Syslog + Telnet + VNC
+        }
         #[cfg(feature = "tls")]
         {
             count += 1;
@@ -184,7 +189,7 @@ fn test_registry_default_detector_count() {
         }
         #[cfg(feature = "infra")]
         {
-            count += 6; // NTP + DHCP + BGP + Netflow + IKE + PTPv2
+            count += 8; // NTP + DHCP + BGP + Netflow + IKE + PTPv2 + DHCPv6 + VXLAN
         }
         #[cfg(feature = "snmp")]
         {
@@ -208,15 +213,15 @@ fn test_registry_default_detector_count() {
         }
         #[cfg(feature = "vpn")]
         {
-            count += 2; // WireGuard + OpenVPN
+            count += 4; // WireGuard + OpenVPN + L2TP + PPTP
         }
         #[cfg(feature = "voip")]
         {
-            count += 1; // STUN
+            count += 4; // STUN + TURN + MGCP + H.323
         }
         #[cfg(feature = "auth")]
         {
-            count += 2; // Kerberos + LDAP
+            count += 3; // Kerberos + LDAP + RADIUS
         }
         #[cfg(feature = "remote")]
         {
@@ -719,7 +724,8 @@ fn test_registry_detects_smtp_banner() {
     let registry = Registry::default();
     let payload = b"220 mail.example.com ESMTP Postfix\r\n";
 
-    let result = registry.detect(payload);
+    // F10：`220 ...` 问候码为 FTP/SMTP 共有语法，需端口上下文区分（无上下文默认 FTP，R11）
+    let result = registry.detect_with_ports(payload, 25, 12345);
     assert!(result.is_some());
 
     let detection = result.unwrap();
@@ -752,7 +758,8 @@ fn test_smtp_metadata_through_pipeline() {
     let registry = Registry::default();
     let payload = b"220 smtp.gmail.com ESMTP\r\n";
 
-    let result = registry.detect(payload);
+    // F10：需端口上下文让 FTP detector 让位（同上）
+    let result = registry.detect_with_ports(payload, 25, 12345);
     assert!(result.is_some());
 
     if let Metadata::Smtp(meta) = result.unwrap().metadata {
@@ -787,8 +794,9 @@ fn test_detection_priority_smtp_vs_http() {
     // SMTP EHLO starts with E, HTTP doesn't
     let registry = Registry::default();
 
+    // F10：`220 ...` 问候码为 FTP/SMTP 共有语法，需端口上下文区分（无上下文默认 FTP，R11）
     let smtp_banner = b"220 mail.example.com ESMTP\r\n";
-    let result = registry.detect(smtp_banner);
+    let result = registry.detect_with_ports(smtp_banner, 25, 12345);
     assert!(result.is_some());
     assert_eq!(result.unwrap().protocol, Protocol::Smtp);
 }
@@ -812,9 +820,15 @@ fn test_all_protocols_detected() {
     let ssh = b"SSH-2.0-OpenSSH_8.9\r\n";
     assert_eq!(registry.detect(ssh).unwrap().protocol, Protocol::Ssh);
 
-    // SMTP
+    // SMTP — F10：banner 需端口上下文让 FTP detector 让位
     let smtp = b"220 mail.example.com ESMTP\r\n";
-    assert_eq!(registry.detect(smtp).unwrap().protocol, Protocol::Smtp);
+    assert_eq!(
+        registry
+            .detect_with_ports(smtp, 25, 12345)
+            .unwrap()
+            .protocol,
+        Protocol::Smtp
+    );
 
     // HTTP
     let http = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
@@ -876,7 +890,9 @@ fn test_registry_detects_pop3_user_command() {
     let registry = Registry::default();
     let payload = b"USER test@example.com\r\n";
 
-    let result = registry.detect(payload);
+    // F8: USER/PASS/RETR 等为 FTP/POP3 共有命令，必须携带端口上下文才能区分
+    // （无上下文路径下 FTP 注册在前，默认判定为 FTP，见 ftp/detector.rs FTP_POP3_AMBIGUOUS_VERBS）
+    let result = registry.detect_with_ports(payload, 12345, 110);
     assert!(result.is_some());
 
     let detection = result.unwrap();
@@ -1315,7 +1331,12 @@ fn test_modbus_too_short() {
 // ============================================================================
 
 #[test]
-#[cfg(all(feature = "mail", feature = "infra", feature = "snmp", feature = "modbus"))]
+#[cfg(all(
+    feature = "mail",
+    feature = "infra",
+    feature = "snmp",
+    feature = "modbus"
+))]
 fn test_phase51_all_protocols_detected() {
     let registry = Registry::default();
 
@@ -1416,8 +1437,7 @@ fn test_mysql_detector_name() {
 fn make_pg_startup_message(user: &str, database: &str) -> Vec<u8> {
     let mut packet = vec![
         // Message length (4 bytes, big-endian) - will be updated
-        0x00, 0x00, 0x00, 0x00,
-        // Protocol version 3.0
+        0x00, 0x00, 0x00, 0x00, // Protocol version 3.0
         0x00, 0x03, 0x00, 0x00,
     ];
 
@@ -1479,9 +1499,7 @@ fn test_postgresql_detector_name() {
 fn make_redis_get_command(key: &str) -> Vec<u8> {
     let key_bytes = key.as_bytes();
     let mut packet = vec![
-        b'*', b'2', b'\r', b'\n',
-        b'$', b'3', b'\r', b'\n',
-        b'G', b'E', b'T', b'\r', b'\n',
+        b'*', b'2', b'\r', b'\n', b'$', b'3', b'\r', b'\n', b'G', b'E', b'T', b'\r', b'\n',
     ];
     // Key length
     let key_len = format!("${}\r\n", key_bytes.len());

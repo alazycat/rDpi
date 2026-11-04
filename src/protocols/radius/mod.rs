@@ -1,4 +1,7 @@
-mod detector; mod parser;
-pub use detector::RadiusDetector;
+mod detector;
+mod parser;
 use crate::protocols::Registry;
-pub fn register(registry: &mut Registry) { registry.register(Box::new(RadiusDetector::new())); }
+pub use detector::RadiusDetector;
+pub fn register(registry: &mut Registry) {
+    registry.register(Box::new(RadiusDetector::new()));
+}

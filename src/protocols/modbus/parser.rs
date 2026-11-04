@@ -73,21 +73,13 @@ pub fn parse_modbus_frame(data: &[u8]) -> Option<ModbusMetadata> {
 fn parse_pdu(function_code: u8, data: &[u8]) -> Option<(bool, ModbusData)> {
     match function_code {
         // Read functions - distinguish request/response by data length
-        0x01 | 0x02 | 0x03 | 0x04 => {
-            parse_read_function(function_code, data)
-        }
+        0x01 | 0x02 | 0x03 | 0x04 => parse_read_function(function_code, data),
         // Write single
-        0x05 | 0x06 => {
-            parse_write_single(function_code, data)
-        }
+        0x05 | 0x06 => parse_write_single(function_code, data),
         // Write multiple
-        0x0F | 0x10 => {
-            parse_write_multiple(function_code, data)
-        }
+        0x0F | 0x10 => parse_write_multiple(function_code, data),
         // Read/Write multiple registers
-        0x17 => {
-            parse_read_write_multiple(data)
-        }
+        0x17 => parse_read_write_multiple(data),
         // Unsupported function code
         _ => None,
     }
@@ -110,7 +102,13 @@ fn parse_read_function(_function_code: u8, data: &[u8]) -> Option<(bool, ModbusD
             return None;
         }
         let values = data[1..1 + byte_count].to_vec();
-        Some((true, ModbusData::ReadResponse { byte_count: data[0], data: values }))
+        Some((
+            true,
+            ModbusData::ReadResponse {
+                byte_count: data[0],
+                data: values,
+            },
+        ))
     } else {
         None
     }
@@ -152,7 +150,10 @@ fn parse_write_multiple(_function_code: u8, data: &[u8]) -> Option<(bool, Modbus
 
     if data.len() == 4 {
         // Response
-        Some((true, ModbusData::WriteMultipleResponse { address, quantity }))
+        Some((
+            true,
+            ModbusData::WriteMultipleResponse { address, quantity },
+        ))
     } else if data.len() >= 5 {
         // Request
         let byte_count = data[4] as usize;
@@ -160,7 +161,14 @@ fn parse_write_multiple(_function_code: u8, data: &[u8]) -> Option<(bool, Modbus
             return None;
         }
         let values = data[5..5 + byte_count].to_vec();
-        Some((false, ModbusData::WriteMultipleRequest { address, quantity, values }))
+        Some((
+            false,
+            ModbusData::WriteMultipleRequest {
+                address,
+                quantity,
+                values,
+            },
+        ))
     } else {
         None
     }
@@ -189,12 +197,15 @@ fn parse_read_write_multiple(data: &[u8]) -> Option<(bool, ModbusData)> {
         }
 
         let write_values = data[9..9 + write_byte_count].to_vec();
-        Some((false, ModbusData::ReadWriteRequest {
-            read_addr,
-            read_qty,
-            write_addr,
-            write_values,
-        }))
+        Some((
+            false,
+            ModbusData::ReadWriteRequest {
+                read_addr,
+                read_qty,
+                write_addr,
+                write_values,
+            },
+        ))
     } else if data.len() >= 1 {
         // Likely response
         let byte_count = data[0] as usize;
@@ -202,7 +213,13 @@ fn parse_read_write_multiple(data: &[u8]) -> Option<(bool, ModbusData)> {
             return None;
         }
         let data_vals = data[1..1 + byte_count].to_vec();
-        Some((true, ModbusData::ReadWriteResponse { byte_count: data[0], data: data_vals }))
+        Some((
+            true,
+            ModbusData::ReadWriteResponse {
+                byte_count: data[0],
+                data: data_vals,
+            },
+        ))
     } else {
         None
     }
@@ -212,10 +229,7 @@ fn parse_read_write_multiple(data: &[u8]) -> Option<(bool, ModbusData)> {
 pub fn detect_modbus(data: &[u8]) -> Option<DetectionResult> {
     let metadata = parse_modbus_frame(data)?;
 
-    Some(
-        DetectionResult::new(Protocol::Modbus)
-            .with_metadata(Metadata::Modbus(metadata))
-    )
+    Some(DetectionResult::new(Protocol::Modbus).with_metadata(Metadata::Modbus(metadata)))
 }
 
 #[cfg(test)]
@@ -225,13 +239,13 @@ mod tests {
     /// Create a Read Coils request (FC 01)
     fn create_read_coils_request() -> Vec<u8> {
         vec![
-            0x00, 0x01,       // Transaction ID: 1
-            0x00, 0x00,       // Protocol ID: 0
-            0x00, 0x06,       // Length: 6 bytes following
-            0x01,             // Unit ID: 1
-            0x01,             // Function Code: Read Coils
-            0x00, 0x01,       // Address: 1
-            0x00, 0x08,       // Quantity: 8 coils
+            0x00, 0x01, // Transaction ID: 1
+            0x00, 0x00, // Protocol ID: 0
+            0x00, 0x06, // Length: 6 bytes following
+            0x01, // Unit ID: 1
+            0x01, // Function Code: Read Coils
+            0x00, 0x01, // Address: 1
+            0x00, 0x08, // Quantity: 8 coils
         ]
     }
 
@@ -266,13 +280,13 @@ mod tests {
     /// Create a Read Coils response
     fn create_read_coils_response() -> Vec<u8> {
         vec![
-            0x00, 0x01,       // Transaction ID: 1
-            0x00, 0x00,       // Protocol ID: 0
-            0x00, 0x04,       // Length: 4 bytes
-            0x01,             // Unit ID: 1
-            0x01,             // Function Code: Read Coils
-            0x01,             // Byte Count: 1
-            0x55,             // Data: 0x55 (bits: 01010101)
+            0x00, 0x01, // Transaction ID: 1
+            0x00, 0x00, // Protocol ID: 0
+            0x00, 0x04, // Length: 4 bytes
+            0x01, // Unit ID: 1
+            0x01, // Function Code: Read Coils
+            0x01, // Byte Count: 1
+            0x55, // Data: 0x55 (bits: 01010101)
         ]
     }
 
@@ -296,12 +310,12 @@ mod tests {
     /// Create an exception response
     fn create_exception_response() -> Vec<u8> {
         vec![
-            0x00, 0x01,       // Transaction ID: 1
-            0x00, 0x00,       // Protocol ID: 0
-            0x00, 0x03,       // Length: 3 bytes
-            0x01,             // Unit ID: 1
-            0x81,             // Function Code: 01 | 0x80 (exception)
-            0x02,             // Exception Code: ILLEGAL DATA ADDRESS
+            0x00, 0x01, // Transaction ID: 1
+            0x00, 0x00, // Protocol ID: 0
+            0x00, 0x03, // Length: 3 bytes
+            0x01, // Unit ID: 1
+            0x81, // Function Code: 01 | 0x80 (exception)
+            0x02, // Exception Code: ILLEGAL DATA ADDRESS
         ]
     }
 
@@ -326,13 +340,13 @@ mod tests {
     /// Create a Write Single Coil request (FC 05)
     fn create_write_single_coil_request() -> Vec<u8> {
         vec![
-            0x00, 0x02,       // Transaction ID: 2
-            0x00, 0x00,       // Protocol ID: 0
-            0x00, 0x06,       // Length: 6 bytes
-            0x01,             // Unit ID: 1
-            0x05,             // Function Code: Write Single Coil
-            0x00, 0x01,       // Address: 1
-            0xFF, 0x00,       // Value: ON (0xFF00)
+            0x00, 0x02, // Transaction ID: 2
+            0x00, 0x00, // Protocol ID: 0
+            0x00, 0x06, // Length: 6 bytes
+            0x01, // Unit ID: 1
+            0x05, // Function Code: Write Single Coil
+            0x00, 0x01, // Address: 1
+            0xFF, 0x00, // Value: ON (0xFF00)
         ]
     }
 
@@ -355,16 +369,16 @@ mod tests {
     /// Create a Write Multiple Registers request (FC 16)
     fn create_write_multiple_registers_request() -> Vec<u8> {
         vec![
-            0x00, 0x03,       // Transaction ID: 3
-            0x00, 0x00,       // Protocol ID: 0
-            0x00, 0x0B,       // Length: 11 bytes (unit_id + PDU)
-            0x01,             // Unit ID: 1
-            0x10,             // Function Code: Write Multiple Registers
-            0x00, 0x01,       // Address: 1
-            0x00, 0x02,       // Quantity: 2 registers
-            0x04,             // Byte Count: 4 bytes
-            0x00, 0x01,       // Value 1
-            0x00, 0x02,       // Value 2
+            0x00, 0x03, // Transaction ID: 3
+            0x00, 0x00, // Protocol ID: 0
+            0x00, 0x0B, // Length: 11 bytes (unit_id + PDU)
+            0x01, // Unit ID: 1
+            0x10, // Function Code: Write Multiple Registers
+            0x00, 0x01, // Address: 1
+            0x00, 0x02, // Quantity: 2 registers
+            0x04, // Byte Count: 4 bytes
+            0x00, 0x01, // Value 1
+            0x00, 0x02, // Value 2
         ]
     }
 
@@ -376,7 +390,11 @@ mod tests {
         assert_eq!(metadata.function_code, 16);
 
         match metadata.data {
-            ModbusData::WriteMultipleRequest { address, quantity, values } => {
+            ModbusData::WriteMultipleRequest {
+                address,
+                quantity,
+                values,
+            } => {
                 assert_eq!(address, 1);
                 assert_eq!(quantity, 2);
                 assert_eq!(values, vec![0x00, 0x01, 0x00, 0x02]);
@@ -388,13 +406,13 @@ mod tests {
     /// Create a Write Multiple Registers response
     fn create_write_multiple_registers_response() -> Vec<u8> {
         vec![
-            0x00, 0x03,       // Transaction ID: 3
-            0x00, 0x00,       // Protocol ID: 0
-            0x00, 0x06,       // Length: 6 bytes
-            0x01,             // Unit ID: 1
-            0x10,             // Function Code: Write Multiple Registers
-            0x00, 0x01,       // Address: 1
-            0x00, 0x02,       // Quantity: 2
+            0x00, 0x03, // Transaction ID: 3
+            0x00, 0x00, // Protocol ID: 0
+            0x00, 0x06, // Length: 6 bytes
+            0x01, // Unit ID: 1
+            0x10, // Function Code: Write Multiple Registers
+            0x00, 0x01, // Address: 1
+            0x00, 0x02, // Quantity: 2
         ]
     }
 
@@ -430,11 +448,7 @@ mod tests {
     #[test]
     fn test_parse_unsupported_function_code() {
         let data = vec![
-            0x00, 0x01,
-            0x00, 0x00,
-            0x00, 0x02,
-            0x01,
-            0x07,             // Function Code 7 (unsupported)
+            0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01, 0x07, // Function Code 7 (unsupported)
         ];
         assert!(parse_modbus_frame(&data).is_none());
     }

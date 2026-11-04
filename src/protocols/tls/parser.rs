@@ -107,13 +107,7 @@ pub fn parse_client_hello(data: &[u8]) -> Option<ClientHelloInfo> {
 /// 解析 ClientHello 所有字段，提取 SNI、supported_version、密码套件、扩展列表和 Supported Groups
 fn parse_client_hello_fields(
     data: &[u8],
-) -> Option<(
-    Option<String>,
-    Option<String>,
-    Vec<u16>,
-    Vec<u16>,
-    Vec<u16>,
-)> {
+) -> Option<(Option<String>, Option<String>, Vec<u16>, Vec<u16>, Vec<u16>)> {
     // TLS record header: 5 bytes
     // Handshake header: 4 bytes
     // Client Version: 2 bytes
@@ -218,7 +212,13 @@ fn parse_client_hello_fields(
         offset += ext_len;
     }
 
-    Some((sni, supported_version, cipher_suites, extensions, supported_groups))
+    Some((
+        sni,
+        supported_version,
+        cipher_suites,
+        extensions,
+        supported_groups,
+    ))
 }
 
 /// 解析 SNI 扩展

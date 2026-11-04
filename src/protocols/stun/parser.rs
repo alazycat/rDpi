@@ -68,9 +68,16 @@ fn parse_xor_mapped_address(data: &[u8]) -> Option<String> {
                         for b in addr_bytes.iter_mut() {
                             *b ^= 0x21; // simplified XOR: first byte of cookie repeated
                         }
-                        return Some(format!("{}:{}",
-                            std::net::Ipv4Addr::new(addr_bytes[0], addr_bytes[1], addr_bytes[2], addr_bytes[3]),
-                            port));
+                        return Some(format!(
+                            "{}:{}",
+                            std::net::Ipv4Addr::new(
+                                addr_bytes[0],
+                                addr_bytes[1],
+                                addr_bytes[2],
+                                addr_bytes[3]
+                            ),
+                            port
+                        ));
                     }
                 }
                 0x02 => {
@@ -101,7 +108,9 @@ mod tests {
         // message_length placeholder
         header[4..8].copy_from_slice(&STUN_MAGIC_COOKIE);
         // transaction_id
-        for i in 0..12 { header[8 + i] = i as u8; }
+        for i in 0..12 {
+            header[8 + i] = i as u8;
+        }
 
         let mut body = Vec::new();
         if let Some((atype, avalue)) = attr {
@@ -166,6 +175,9 @@ mod tests {
     fn test_stun_transaction_id() {
         let data = build_stun(0x0001, None);
         let meta = parse_stun(&data).unwrap();
-        assert_eq!(meta.transaction_id, [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        assert_eq!(
+            meta.transaction_id,
+            [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        );
     }
 }

@@ -1,4 +1,7 @@
-mod detector; mod parser;
-pub use detector::L2tpDetector;
+mod detector;
+mod parser;
 use crate::protocols::Registry;
-pub fn register(registry: &mut Registry) { registry.register(Box::new(L2tpDetector::new())); }
+pub use detector::L2tpDetector;
+pub fn register(registry: &mut Registry) {
+    registry.register(Box::new(L2tpDetector::new()));
+}

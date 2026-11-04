@@ -10,13 +10,15 @@ use crate::asn1::ber::BerReader;
 pub struct CertInfo {
     pub subject: Option<String>,
     pub issuer: Option<String>,
-    pub not_before: Option<u64>,  // Unix timestamp
-    pub not_after: Option<u64>,   // Unix timestamp
+    pub not_before: Option<u64>, // Unix timestamp
+    pub not_after: Option<u64>,  // Unix timestamp
 }
 
 /// Check if a TLS record contains a Certificate handshake message (type 0x0B)
 pub fn is_certificate_message(data: &[u8]) -> bool {
-    if data.len() < 6 { return false; }
+    if data.len() < 6 {
+        return false;
+    }
     // TLS Record: ContentType(1) + Version(2) + Length(2)
     // Handshake: HandshakeType(1) + Length(3)
     data[0] == 0x16 && data[5] == 0x0B // Handshake + Certificate
@@ -24,23 +26,35 @@ pub fn is_certificate_message(data: &[u8]) -> bool {
 
 /// Parse TLS Certificate message and extract first certificate's metadata
 pub fn parse_certificate(data: &[u8]) -> Option<CertInfo> {
-    if !is_certificate_message(data) { return None; }
+    if !is_certificate_message(data) {
+        return None;
+    }
 
     // Skip TLS record header (5 bytes) + Handshake header (4 bytes)
     // Handshake header: type(1) + length(3)
     let mut offset: usize = 5 + 4;
 
     // Certificate list length (3 bytes)
-    if offset + 3 > data.len() { return None; }
-    let cert_list_len = u32::from_be_bytes([0, data[offset], data[offset + 1], data[offset + 2]]) as usize;
+    if offset + 3 > data.len() {
+        return None;
+    }
+    let cert_list_len =
+        u32::from_be_bytes([0, data[offset], data[offset + 1], data[offset + 2]]) as usize;
     offset += 3;
-    if offset + cert_list_len > data.len() { return None; }
+    if offset + cert_list_len > data.len() {
+        return None;
+    }
 
     // First certificate: length (3 bytes) + data
-    if offset + 3 > data.len() { return None; }
-    let cert_len = u32::from_be_bytes([0, data[offset], data[offset + 1], data[offset + 2]]) as usize;
+    if offset + 3 > data.len() {
+        return None;
+    }
+    let cert_len =
+        u32::from_be_bytes([0, data[offset], data[offset + 1], data[offset + 2]]) as usize;
     offset += 3;
-    if offset + cert_len > data.len() { return None; }
+    if offset + cert_len > data.len() {
+        return None;
+    }
 
     let cert_data = &data[offset..offset + cert_len];
     parse_x509_certificate(cert_data)
@@ -118,12 +132,14 @@ fn extract_dn(reader: &mut BerReader) -> Option<String> {
                     if let Some((val_tag, val_data)) = attr_reader.decode_tlv() {
                         if val_tag.class == crate::asn1::types::Asn1Class::Universal {
                             match val_tag.number {
-                                0x0C | 0x13 => { // UTF8String (0x0C) or PrintableString (0x13)
+                                0x0C | 0x13 => {
+                                    // UTF8String (0x0C) or PrintableString (0x13)
                                     if let Ok(s) = std::str::from_utf8(val_data) {
                                         parts.push(s.to_string());
                                     }
                                 }
-                                0x14 => { // T61String / TeletexString
+                                0x14 => {
+                                    // T61String / TeletexString
                                     if let Ok(s) = std::str::from_utf8(val_data) {
                                         parts.push(s.to_string());
                                     }
@@ -139,7 +155,11 @@ fn extract_dn(reader: &mut BerReader) -> Option<String> {
         }
     }
 
-    if parts.is_empty() { None } else { Some(parts.join(", ")) }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(", "))
+    }
 }
 
 /// Extract validity (notBefore, notAfter) as Unix timestamps
@@ -163,7 +183,7 @@ fn parse_time(reader: &mut BerReader) -> Option<u64> {
     }
 
     match tag.number {
-        0x17 => parse_utc_time(value),      // UTCTime
+        0x17 => parse_utc_time(value),         // UTCTime
         0x18 => parse_generalized_time(value), // GeneralizedTime
         _ => None,
     }
@@ -173,7 +193,9 @@ fn parse_time(reader: &mut BerReader) -> Option<u64> {
 fn parse_utc_time(data: &[u8]) -> Option<u64> {
     let s = std::str::from_utf8(data).ok()?;
     // UTCTime: YYMMDDHHMMSSZ
-    if s.len() < 13 || !s.ends_with('Z') { return None; }
+    if s.len() < 13 || !s.ends_with('Z') {
+        return None;
+    }
     let year: u64 = 2000 + s[0..2].parse::<u64>().ok()?;
     let month: u64 = s[2..4].parse().ok()?;
     let day: u64 = s[4..6].parse().ok()?;
@@ -186,7 +208,9 @@ fn parse_utc_time(data: &[u8]) -> Option<u64> {
 /// Parse GeneralizedTime (YYYYMMDDHHMMSSZ) to Unix timestamp
 fn parse_generalized_time(data: &[u8]) -> Option<u64> {
     let s = std::str::from_utf8(data).ok()?;
-    if s.len() < 15 || !s.ends_with('Z') { return None; }
+    if s.len() < 15 || !s.ends_with('Z') {
+        return None;
+    }
     let year: u64 = s[0..4].parse().ok()?;
     let month: u64 = s[4..6].parse().ok()?;
     let day: u64 = s[6..8].parse().ok()?;
@@ -198,22 +222,32 @@ fn parse_generalized_time(data: &[u8]) -> Option<u64> {
 
 /// Simple Unix timestamp calculation (not timezone-aware)
 fn timestamp(year: u64, month: u64, day: u64, hour: u64, min: u64, sec: u64) -> Option<u64> {
-    if year < 1970 || month < 1 || month > 12 || day < 1 || day > 31 { return None; }
-    if hour > 23 || min > 59 || sec > 59 { return None; }
+    if year < 1970 || month < 1 || month > 12 || day < 1 || day > 31 {
+        return None;
+    }
+    if hour > 23 || min > 59 || sec > 59 {
+        return None;
+    }
 
     // Days from 1970-01-01
     let days_since_epoch = || -> u64 {
         let mut y = 1970u64;
         let mut days = 0u64;
         while y < year {
-            days += if (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0) { 366 } else { 365 };
+            days += if (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0) {
+                366
+            } else {
+                365
+            };
             y += 1;
         }
         let month_days = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
         let is_leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
         for m in 1..month {
             days += month_days[m as usize];
-            if m == 2 && is_leap { days += 1; }
+            if m == 2 && is_leap {
+                days += 1;
+            }
         }
         days + day - 1
     };
@@ -242,7 +276,9 @@ mod tests {
         // Wrap in TLS Certificate message
         let mut msg = Vec::new();
         // TLS Record: Handshake(0x16), TLS 1.2(0x0303), length
-        msg.push(0x16); msg.push(0x03); msg.push(0x03);
+        msg.push(0x16);
+        msg.push(0x03);
+        msg.push(0x03);
         msg.extend_from_slice(&((cert.len() + 7) as u16).to_be_bytes()); // record length
         // Handshake: Certificate(0x0B), 3-byte length
         msg.push(0x0B);
@@ -257,7 +293,8 @@ mod tests {
 
     fn build_tbs_cert(subject_cn: &str, issuer_cn: &str, _days_valid: u64) -> Vec<u8> {
         let mut tbs = Vec::new();
-        tbs.push(0x30); tbs.push(0x00); // placeholder SEQUENCE
+        tbs.push(0x30);
+        tbs.push(0x00); // placeholder SEQUENCE
         let inner = build_tbs_inner(subject_cn, issuer_cn);
         tbs.extend_from_slice(&inner);
         tbs[1] = (tbs.len() - 2) as u8;
@@ -271,7 +308,10 @@ mod tests {
         // serialNumber INTEGER 1
         inner.extend_from_slice(&[0x02, 0x01, 0x01]);
         // signature SEQUENCE { OID 1.2.840.113549.1.1.11 }
-        inner.extend_from_slice(&[0x30, 0x0D, 0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B, 0x05, 0x00]);
+        inner.extend_from_slice(&[
+            0x30, 0x0D, 0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B, 0x05,
+            0x00,
+        ]);
         // issuer SEQUENCE
         append_dn(&mut inner, issuer_cn);
         // validity SEQUENCE

@@ -9,15 +9,26 @@ const TAG_TGS_REQ: u8 = 0x6c; // APPLICATION 12
 const TAG_TGS_REP: u8 = 0x6d; // APPLICATION 13
 
 pub fn parse_kerberos(data: &[u8]) -> Option<KerberosMetadata> {
-    if data.len() < 10 { return None; }
+    if data.len() < 10 {
+        return None;
+    }
     let msg_type = match data[0] {
-        TAG_AS_REQ => 10, TAG_AS_REP => 11, TAG_TGS_REQ => 12, TAG_TGS_REP => 13,
+        TAG_AS_REQ => 10,
+        TAG_AS_REP => 11,
+        TAG_TGS_REQ => 12,
+        TAG_TGS_REP => 13,
         _ => return None,
     };
     // Check for ASN.1 INTEGER encoding of pvno=5 within reasonable range
-    if data.len() < 8 { return None; }
-    let has_pvno5 = (2..=6).any(|i| i + 1 < data.len() && data[i] == 0x02 && data[i + 1] == 0x01 && data[i + 2] == 0x05);
-    if !has_pvno5 { return None; }
+    if data.len() < 8 {
+        return None;
+    }
+    let has_pvno5 = (2..=6).any(|i| {
+        i + 1 < data.len() && data[i] == 0x02 && data[i + 1] == 0x01 && data[i + 2] == 0x05
+    });
+    if !has_pvno5 {
+        return None;
+    }
     // Try to extract realm from ASN.1 structure
     let realm = extract_realm(data);
     Some(KerberosMetadata { msg_type, realm })
@@ -31,7 +42,9 @@ fn extract_realm(data: &[u8]) -> Option<String> {
             let len = data[i + 1] as usize;
             if i + 2 + len <= data.len() && len >= 2 && len <= 128 {
                 if let Ok(s) = std::str::from_utf8(&data[i + 2..i + 2 + len]) {
-                    if s.contains('.') { return Some(s.to_string()); }
+                    if s.contains('.') {
+                        return Some(s.to_string());
+                    }
                 }
             }
         }
@@ -60,10 +73,32 @@ mod tests {
         p.extend_from_slice(&seq);
         p
     }
-    #[test] fn test_as_req() { let m=parse_kerberos(&build_krb(TAG_AS_REQ,false)).unwrap(); assert_eq!(m.msg_type,10); }
-    #[test] fn test_as_rep() { let m=parse_kerberos(&build_krb(TAG_AS_REP,false)).unwrap(); assert_eq!(m.msg_type,11); }
-    #[test] fn test_tgs_req() { let m=parse_kerberos(&build_krb(TAG_TGS_REQ,false)).unwrap(); assert_eq!(m.msg_type,12); }
-    #[test] fn test_invalid_tag() { assert!(parse_kerberos(&[0x00;10]).is_none()); }
-    #[test] fn test_too_short() { assert!(parse_kerberos(&[0u8;9]).is_none()); }
-    #[test] fn test_realm_extraction() { let m=parse_kerberos(&build_krb(TAG_AS_REQ,true)).unwrap(); assert_eq!(m.realm,Some("EXAMPLE.COM".to_string())); }
+    #[test]
+    fn test_as_req() {
+        let m = parse_kerberos(&build_krb(TAG_AS_REQ, false)).unwrap();
+        assert_eq!(m.msg_type, 10);
+    }
+    #[test]
+    fn test_as_rep() {
+        let m = parse_kerberos(&build_krb(TAG_AS_REP, false)).unwrap();
+        assert_eq!(m.msg_type, 11);
+    }
+    #[test]
+    fn test_tgs_req() {
+        let m = parse_kerberos(&build_krb(TAG_TGS_REQ, false)).unwrap();
+        assert_eq!(m.msg_type, 12);
+    }
+    #[test]
+    fn test_invalid_tag() {
+        assert!(parse_kerberos(&[0x00; 10]).is_none());
+    }
+    #[test]
+    fn test_too_short() {
+        assert!(parse_kerberos(&[0u8; 9]).is_none());
+    }
+    #[test]
+    fn test_realm_extraction() {
+        let m = parse_kerberos(&build_krb(TAG_AS_REQ, true)).unwrap();
+        assert_eq!(m.realm, Some("EXAMPLE.COM".to_string()));
+    }
 }

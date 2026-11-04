@@ -3,6 +3,10 @@
 //! 支持 JSON 配置的规则匹配，运行在内置 DPI 检测器之前。
 //! 触发条件：端口、SNI 子串、payload 子串。
 //!
+//! SNI 语义（R6）：`sni_contains` 匹配当前包 payload 中的 TLS ClientHello SNI
+//! （需同时启用 `rule` + `tls` feature；QUIC SNI 不在覆盖范围内）。
+//! 规则先于 DPI 判定，命中即返回，优先级高于内置 DPI。
+//!
 //! # Feature
 //!
 //! 需要在 `Cargo.toml` 中启用 `rule` 功能：
@@ -137,9 +141,7 @@ pub struct RuleEngine {
 impl RuleEngine {
     /// 创建空规则引擎
     pub fn new() -> Self {
-        Self {
-            rules: Vec::new(),
-        }
+        Self { rules: Vec::new() }
     }
 
     /// 从 JSON 字符串加载规则
@@ -148,8 +150,8 @@ impl RuleEngine {
     ///
     /// 返回 `Err` 当 JSON 格式无法解析时。
     pub fn from_json(json: &str) -> Result<Self, String> {
-        let parsed: parser::RuleFile = serde_json::from_str(json)
-            .map_err(|e| format!("Invalid rule JSON: {}", e))?;
+        let parsed: parser::RuleFile =
+            serde_json::from_str(json).map_err(|e| format!("Invalid rule JSON: {}", e))?;
         let rules = parsed.into_rules();
         Ok(Self { rules })
     }
@@ -193,8 +195,8 @@ impl RuleEngine {
         }
 
         best.map(|(_, rule)| {
-            let mut result = DetectionResult::new(rule.protocol)
-                .with_confidence(Confidence::CustomRule);
+            let mut result =
+                DetectionResult::new(rule.protocol).with_confidence(Confidence::CustomRule);
             if let Some(ref meta) = rule.metadata {
                 result = result.with_metadata(meta.clone());
             }

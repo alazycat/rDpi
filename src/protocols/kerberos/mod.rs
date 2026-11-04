@@ -1,4 +1,7 @@
-mod detector; mod parser;
-pub use detector::KerberosDetector;
+mod detector;
+mod parser;
 use crate::protocols::Registry;
-pub fn register(registry: &mut Registry) { registry.register(Box::new(KerberosDetector::new())); }
+pub use detector::KerberosDetector;
+pub fn register(registry: &mut Registry) {
+    registry.register(Box::new(KerberosDetector::new()));
+}

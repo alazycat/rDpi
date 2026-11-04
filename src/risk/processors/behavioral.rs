@@ -3,9 +3,9 @@
 //! Detects network behavior-based risks using flow analysis.
 
 use crate::core::flow::Flow;
-use crate::risk::types::{RiskFlag, RiskResult, RiskSeverity};
 use crate::parser::ParsedPacket;
 use crate::risk::RiskProcessor;
+use crate::risk::types::{RiskFlag, RiskResult, RiskSeverity};
 
 /// 二进制数据检测: 不可打印字符比例阈值
 const BINARY_RATIO_THRESHOLD: f64 = 0.3;
@@ -30,7 +30,10 @@ fn is_binary_payload(data: &[u8]) -> bool {
     if data.is_empty() {
         return false;
     }
-    let non_printable = data.iter().filter(|&&b| b < 32 && b != b'\t' && b != b'\n' && b != b'\r').count();
+    let non_printable = data
+        .iter()
+        .filter(|&&b| b < 32 && b != b'\t' && b != b'\n' && b != b'\r')
+        .count();
     (non_printable as f64 / data.len() as f64) > BINARY_RATIO_THRESHOLD
 }
 
@@ -41,7 +44,10 @@ fn has_obfuscation_patterns(data: &[u8]) -> bool {
     }
     // 特征1: 高熵头部 + 低熵内容 或反之
     let first_20 = &data[..20.min(data.len())];
-    let printable = first_20.iter().filter(|&&b| b.is_ascii_graphic() || b == b' ').count();
+    let printable = first_20
+        .iter()
+        .filter(|&&b| b.is_ascii_graphic() || b == b' ')
+        .count();
     let printable_ratio = printable as f64 / first_20.len() as f64;
 
     // 特征2: 非 HTTP 端口上的 HTTP-like 数据
@@ -75,9 +81,13 @@ impl RiskProcessor for BehavioralRiskProcessor {
                 results.push(RiskResult::new(
                     RiskFlag::BinaryDataTransfer,
                     RiskSeverity::Medium,
-                    format!("Binary data transfer in {} protocol ({} bytes)",
-                        flow.protocol.map(|p| format!("{:?}", p)).unwrap_or_default(),
-                        parsed.payload.len()),
+                    format!(
+                        "Binary data transfer in {} protocol ({} bytes)",
+                        flow.protocol
+                            .map(|p| format!("{:?}", p))
+                            .unwrap_or_default(),
+                        parsed.payload.len()
+                    ),
                 ));
             }
         }
@@ -87,7 +97,10 @@ impl RiskProcessor for BehavioralRiskProcessor {
             results.push(RiskResult::new(
                 RiskFlag::ObfuscatedTraffic,
                 RiskSeverity::High,
-                format!("Obfuscated traffic pattern detected ({} bytes)", parsed.payload.len()),
+                format!(
+                    "Obfuscated traffic pattern detected ({} bytes)",
+                    parsed.payload.len()
+                ),
             ));
         }
 
@@ -98,29 +111,31 @@ impl RiskProcessor for BehavioralRiskProcessor {
         let mut results = Vec::new();
 
         // 3. UnidirectionalTraffic: 流量单向
-        let is_unidirectional = flow.stats.packets <= 3
-            && flow.protocol.is_none()
-            && flow.packets_seen > 0;
+        let is_unidirectional =
+            flow.stats.packets <= 3 && flow.protocol.is_none() && flow.packets_seen > 0;
 
         if is_unidirectional {
             results.push(RiskResult::new(
                 RiskFlag::UnidirectionalTraffic,
                 RiskSeverity::Medium,
-                format!("Unidirectional traffic: {} packets, no response", flow.packets_seen),
+                format!(
+                    "Unidirectional traffic: {} packets, no response",
+                    flow.packets_seen
+                ),
             ));
         }
 
         // 4. ProbingAttempt: 探测尝试
-        let is_probe = flow.stats.packets <= 2
-            && flow.protocol.is_none()
-            && flow.packets_seen > 0;
+        let is_probe = flow.stats.packets <= 2 && flow.protocol.is_none() && flow.packets_seen > 0;
 
         if is_probe {
             results.push(RiskResult::new(
                 RiskFlag::ProbingAttempt,
                 RiskSeverity::High,
-                format!("Probing attempt: {} packet(s) to port {}",
-                    flow.packets_seen, flow.key.dst_port),
+                format!(
+                    "Probing attempt: {} packet(s) to port {}",
+                    flow.packets_seen, flow.key.dst_port
+                ),
             ));
         }
 
@@ -133,12 +148,15 @@ impl RiskProcessor for BehavioralRiskProcessor {
 
 fn is_encrypted_protocol(p: Option<crate::core::types::Protocol>) -> bool {
     match p {
-        Some(crate::core::types::Protocol::Tls
+        Some(
+            crate::core::types::Protocol::Tls
             | crate::core::types::Protocol::Quic
-            | crate::core::types::Protocol::Http3) => true,
+            | crate::core::types::Protocol::Http3,
+        ) => true,
         #[cfg(feature = "vpn")]
-        Some(crate::core::types::Protocol::WireGuard
-            | crate::core::types::Protocol::OpenVpn) => true,
+        Some(crate::core::types::Protocol::WireGuard | crate::core::types::Protocol::OpenVpn) => {
+            true
+        }
         _ => false,
     }
 }
@@ -153,7 +171,8 @@ mod tests {
         Flow::new(FlowKey {
             src_ip: "10.0.0.1".parse().unwrap(),
             dst_ip: "10.0.0.2".parse().unwrap(),
-            src_port: 54321, dst_port: 80,
+            src_port: 54321,
+            dst_port: 80,
             transport: TransportProto::Tcp,
         })
     }
@@ -162,8 +181,10 @@ mod tests {
         ParsedPacket {
             src_ip: "10.0.0.1".parse().unwrap(),
             dst_ip: "10.0.0.2".parse().unwrap(),
-            src_port: 54321, dst_port: 80,
-            transport: TransportProto::Tcp, payload,
+            src_port: 54321,
+            dst_port: 80,
+            transport: TransportProto::Tcp,
+            payload,
         }
     }
 
@@ -173,7 +194,9 @@ mod tests {
         // Binary payload with many non-printable bytes
         let header = b"HTTP/1.1 header ";
         let mut payload = vec![0u8; 200];
-        for i in 0..5 { payload[i*16..(i+1)*16].copy_from_slice(header); }
+        for i in 0..5 {
+            payload[i * 16..(i + 1) * 16].copy_from_slice(header);
+        }
         let (p, f) = (make_parsed(payload), make_flow());
         let risks = proc.analyze_packet(&p, &f);
         assert!(risks.iter().any(|r| r.flag == RiskFlag::BinaryDataTransfer));
@@ -184,10 +207,16 @@ mod tests {
         let proc = BehavioralRiskProcessor::new();
         // Mixed printable/non-printable: first 20 bytes have ~50% ratio
         let mut payload = vec![0u8; 100];
-        for i in 0..8 { payload[i] = b'A'; }  // 8 printable in first 20
-        for i in 8..20 { payload[i] = 0x00; }  // 12 non-printable in first 20
+        for i in 0..8 {
+            payload[i] = b'A';
+        } // 8 printable in first 20
+        for i in 8..20 {
+            payload[i] = 0x00;
+        } // 12 non-printable in first 20
         // ratio = 8/20 = 0.4 which is between 0.3 and 0.7
-        for i in 50..100 { payload[i] = 0xFF; } // uniform pattern
+        for i in 50..100 {
+            payload[i] = 0xFF;
+        } // uniform pattern
         let (p, f) = (make_parsed(payload), make_flow());
         let risks = proc.analyze_packet(&p, &f);
         assert!(risks.iter().any(|r| r.flag == RiskFlag::ObfuscatedTraffic));
@@ -201,7 +230,11 @@ mod tests {
         flow.stats.packets = 1;
         // protocol is None (not identified)
         let risks = proc.analyze_flow(&flow);
-        assert!(risks.iter().any(|r| r.flag == RiskFlag::UnidirectionalTraffic));
+        assert!(
+            risks
+                .iter()
+                .any(|r| r.flag == RiskFlag::UnidirectionalTraffic)
+        );
     }
 
     #[test]
@@ -223,9 +256,12 @@ mod tests {
         flow.protocol = Some(crate::core::types::Protocol::Http);
         let risks = proc.analyze_flow(&flow);
         assert!(!risks.iter().any(|r| r.flag == RiskFlag::ProbingAttempt));
-        assert!(!risks.iter().any(|r| r.flag == RiskFlag::UnidirectionalTraffic));
+        assert!(
+            !risks
+                .iter()
+                .any(|r| r.flag == RiskFlag::UnidirectionalTraffic)
+        );
     }
-
 
     #[test]
     fn test_clean_text_no_binary() {

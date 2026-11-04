@@ -2,10 +2,10 @@
 //!
 //! 测试端口回退、IP 子网匹配、域名匹配引擎和 Giveup 机制的集成。
 
-use rdpi::core::guess::{GuessEngine, GuessContext};
-use rdpi::core::guess::info::DomainInfo;
-use rdpi::core::types::*;
 use rdpi::Detector;
+use rdpi::core::guess::info::DomainInfo;
+use rdpi::core::guess::{GuessContext, GuessEngine};
+use rdpi::core::types::*;
 
 // ============================================================================
 // 辅助：构造 UDP 包（手工字节数组）
@@ -132,8 +132,10 @@ fn build_tls_client_hello(sni: &str) -> Vec<u8> {
 
 /// 不可被任何 DPI 检测器识别的 payload
 fn garbage_payload() -> Vec<u8> {
-    vec![0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe,
-         0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe]
+    vec![
+        0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe, 0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba,
+        0xbe,
+    ]
 }
 
 // ============================================================================

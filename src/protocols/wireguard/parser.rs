@@ -14,10 +14,10 @@
 use crate::core::types::WireGuardMetadata;
 
 /// Minimum type values for each WireGuard message type
-const MIN_LEN_INITIATION: usize = 148;   // Handshake Initiation
-const MIN_LEN_RESPONSE: usize = 128;     // Handshake Response
-const MIN_LEN_COOKIE: usize = 64;        // Cookie Reply
-const MIN_LEN_TRANSPORT: usize = 32;     // Transport Data
+const MIN_LEN_INITIATION: usize = 148; // Handshake Initiation
+const MIN_LEN_RESPONSE: usize = 128; // Handshake Response
+const MIN_LEN_COOKIE: usize = 64; // Cookie Reply
+const MIN_LEN_TRANSPORT: usize = 32; // Transport Data
 
 /// Parse WireGuard handshake message
 ///

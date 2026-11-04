@@ -35,22 +35,24 @@ fn build_udp_packet(src_port: u16, dst_port: u16, payload: &[u8]) -> Vec<u8> {
 }
 
 fn build_tls_client_hello() -> Vec<u8> {
-    use etherparse::*;
     let mut payload = Vec::new();
     // TLS 1.2 ClientHello
     payload.push(0x16); // ContentType: Handshake
-    payload.push(0x03); payload.push(0x03); // Version: TLS 1.2
+    payload.push(0x03);
+    payload.push(0x03); // Version: TLS 1.2
     let record_len: u16 = 100;
     payload.extend_from_slice(&record_len.to_be_bytes());
     payload.push(0x01); // Handshake: ClientHello
     let hs_len: u32 = 96;
     payload.extend_from_slice(&hs_len.to_be_bytes()[1..]);
-    payload.push(0x03); payload.push(0x03); // TLS 1.2
+    payload.push(0x03);
+    payload.push(0x03); // TLS 1.2
     payload.extend_from_slice(&[0x00; 32]); // Random
     payload.push(0x00); // Session ID length
     payload.extend_from_slice(&[0x00, 0x02]);
     payload.extend_from_slice(&[0x00, 0x2f]); // TLS_RSA_AES_128_CBC_SHA
-    payload.push(0x01); payload.push(0x00); // Compression
+    payload.push(0x01);
+    payload.push(0x00); // Compression
     let sni = b"example.com";
     let sni_ext_len = sni.len() as u16 + 9;
     payload.extend_from_slice(&sni_ext_len.to_be_bytes());
@@ -72,10 +74,12 @@ fn build_tls_client_hello() -> Vec<u8> {
     pkt.extend_from_slice(&[0x08, 0x00]);
 
     // IPv4 header
-    pkt.push(0x45); pkt.push(0x00);
+    pkt.push(0x45);
+    pkt.push(0x00);
     pkt.extend_from_slice(&((total_len - 14) as u16).to_be_bytes());
     pkt.extend_from_slice(&[0x00, 0x01, 0x00, 0x00]);
-    pkt.push(0x40); pkt.push(0x06);
+    pkt.push(0x40);
+    pkt.push(0x06);
     pkt.extend_from_slice(&[0x00, 0x00]);
     pkt.extend_from_slice(&[10, 0, 0, 1]);
     pkt.extend_from_slice(&[10, 0, 0, 2]);
@@ -85,7 +89,8 @@ fn build_tls_client_hello() -> Vec<u8> {
     pkt.extend_from_slice(&443u16.to_be_bytes());
     pkt.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
     pkt.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
-    pkt.push(0x50); pkt.push(0x00);
+    pkt.push(0x50);
+    pkt.push(0x00);
     pkt.extend_from_slice(&[0xff, 0xff, 0x00, 0x00, 0x00, 0x00]);
 
     pkt.extend_from_slice(&payload);
@@ -100,8 +105,7 @@ fn build_dns_query_packet() -> Vec<u8> {
         0x00, 0x01, // Questions: 1
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Answer/Authority/Additional: 0
         // Query: example.com
-        0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e',
-        0x03, b'c', b'o', b'm',
+        0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x03, b'c', b'o', b'm',
         0x00, // End of domain
         0x00, 0x01, // Type: A
         0x00, 0x01, // Class: IN
@@ -217,6 +221,9 @@ fn test_regression_detection_throughput() {
 
     let per_op = elapsed / iterations;
     // 每次检测 < 50μs（Debug 模式基准，Release 更快）
-    assert!(per_op < Duration::from_micros(50),
-        "Detection too slow: {:?} per operation", per_op);
+    assert!(
+        per_op < Duration::from_micros(50),
+        "Detection too slow: {:?} per operation",
+        per_op
+    );
 }

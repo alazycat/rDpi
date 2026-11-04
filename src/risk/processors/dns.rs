@@ -4,9 +4,9 @@
 
 use crate::core::flow::Flow;
 use crate::core::types::Protocol;
-use crate::risk::types::{RiskFlag, RiskResult, RiskSeverity};
 use crate::parser::ParsedPacket;
 use crate::risk::RiskProcessor;
+use crate::risk::types::{RiskFlag, RiskResult, RiskSeverity};
 
 /// DNS 异常风险处理器
 pub struct DnsRiskProcessor;
@@ -69,14 +69,16 @@ mod tests {
         let mut flow = Flow::new(FlowKey {
             src_ip: "10.0.0.1".parse().unwrap(),
             dst_ip: "10.0.0.2".parse().unwrap(),
-            src_port: 12345, dst_port: 53,
+            src_port: 12345,
+            dst_port: 53,
             transport: TransportProto::Udp,
         });
         flow.protocol = Some(Protocol::Dns);
         let parsed = ParsedPacket {
             src_ip: "10.0.0.1".parse().unwrap(),
             dst_ip: "10.0.0.2".parse().unwrap(),
-            src_port: 12345, dst_port: 53,
+            src_port: 12345,
+            dst_port: 53,
             transport: TransportProto::Udp,
             payload: vec![0u8; payload_size],
         };
@@ -87,13 +89,15 @@ mod tests {
         let flow = Flow::new(FlowKey {
             src_ip: "10.0.0.1".parse().unwrap(),
             dst_ip: "10.0.0.2".parse().unwrap(),
-            src_port: 12345, dst_port: 80,
+            src_port: 12345,
+            dst_port: 80,
             transport: TransportProto::Tcp,
         });
         let parsed = ParsedPacket {
             src_ip: "10.0.0.1".parse().unwrap(),
             dst_ip: "10.0.0.2".parse().unwrap(),
-            src_port: 12345, dst_port: 80,
+            src_port: 12345,
+            dst_port: 80,
             transport: TransportProto::Tcp,
             payload: vec![0u8; 1024],
         };

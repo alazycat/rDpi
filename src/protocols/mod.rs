@@ -4,100 +4,107 @@
 
 use crate::core::types::*;
 
-#[cfg(feature = "dns")]
-pub mod dns;
-#[cfg(feature = "http")]
-pub mod http;
-#[cfg(feature = "mail")]
-pub mod pop3;
-#[cfg(feature = "mail")]
-pub mod imap;
-#[cfg(feature = "quic")]
-pub mod quic;
-#[cfg(feature = "smtp")]
-pub mod smtp;
-#[cfg(feature = "ssh")]
-pub mod ssh;
-#[cfg(feature = "tls")]
-pub mod tls;
 #[cfg(feature = "infra")]
-pub mod ntp;
+pub mod bgp;
 #[cfg(feature = "infra")]
 pub mod dhcp;
-#[cfg(feature = "snmp")]
-pub mod snmp;
-#[cfg(feature = "modbus")]
-pub mod modbus;
-#[cfg(feature = "database")]
-pub mod mysql;
-#[cfg(feature = "database")]
-pub mod postgresql;
-#[cfg(feature = "database")]
-pub mod redis;
-#[cfg(feature = "database")]
-pub mod mongodb;
+#[cfg(feature = "dns")]
+pub mod dns;
 #[cfg(feature = "proto3")]
 pub mod ftp;
-#[cfg(feature = "proto3")]
-pub mod sip;
-#[cfg(feature = "proto3")]
-pub mod rtp;
+#[cfg(feature = "http")]
+pub mod http;
 #[cfg(feature = "proto3")]
 pub mod http2;
-#[cfg(feature = "proto3")]
-pub mod websocket;
-#[cfg(feature = "iot")]
-pub mod mqtt;
-#[cfg(feature = "vpn")]
-pub mod wireguard;
-#[cfg(feature = "vpn")]
-pub mod openvpn;
-#[cfg(feature = "voip")]
-pub mod stun;
+#[cfg(feature = "mail")]
+pub mod imap;
 #[cfg(feature = "auth")]
 pub mod kerberos;
 #[cfg(feature = "auth")]
 pub mod ldap;
+#[cfg(feature = "modbus")]
+pub mod modbus;
+#[cfg(feature = "database")]
+pub mod mongodb;
+#[cfg(feature = "iot")]
+pub mod mqtt;
+#[cfg(feature = "database")]
+pub mod mysql;
+#[cfg(feature = "infra")]
+pub mod ntp;
+#[cfg(feature = "vpn")]
+pub mod openvpn;
+#[cfg(feature = "mail")]
+pub mod pop3;
+#[cfg(feature = "database")]
+pub mod postgresql;
+#[cfg(feature = "quic")]
+pub mod quic;
 #[cfg(feature = "remote")]
 pub mod rdp;
-#[cfg(feature = "infra")]
-pub mod bgp;
+#[cfg(feature = "database")]
+pub mod redis;
+#[cfg(feature = "proto3")]
+pub mod rtp;
+#[cfg(feature = "proto3")]
+pub mod sip;
+#[cfg(feature = "smtp")]
+pub mod smtp;
+#[cfg(feature = "snmp")]
+pub mod snmp;
+#[cfg(feature = "ssh")]
+pub mod ssh;
+#[cfg(feature = "voip")]
+pub mod stun;
+#[cfg(feature = "tls")]
+pub mod tls;
+#[cfg(feature = "proto3")]
+pub mod websocket;
+#[cfg(feature = "vpn")]
+pub mod wireguard;
 // Phase 11A — 简单协议
-pub mod tftp;
+#[cfg(feature = "infra")]
+pub mod ike;
+#[cfg(feature = "infra")]
+pub mod netflow;
+#[cfg(feature = "storage")]
+pub mod nfs;
+#[cfg(feature = "infra")]
+pub mod ptpv2;
+// R7：misc feature —— TFTP/Rsync/Whois/Syslog/Telnet/VNC 纳入 feature 矩阵
+#[cfg(feature = "misc")]
 pub mod rsync;
-pub mod whois;
-pub mod syslog;
 #[cfg(feature = "proto3")]
 pub mod rtmp;
 #[cfg(feature = "proto3")]
 pub mod socks;
-#[cfg(feature = "infra")]
-pub mod netflow;
-#[cfg(feature = "infra")]
-pub mod ike;
-#[cfg(feature = "infra")]
-pub mod ptpv2;
-#[cfg(feature = "storage")]
-pub mod nfs;
+#[cfg(feature = "misc")]
+pub mod syslog;
+#[cfg(feature = "misc")]
+pub mod tftp;
+#[cfg(feature = "misc")]
+pub mod whois;
 // Phase 12A — 企业协议
-pub mod telnet;
-pub mod vnc;
 #[cfg(feature = "infra")]
 pub mod dhcpv6;
-#[cfg(feature = "infra")]
-pub mod vxlan;
+#[cfg(feature = "voip")]
+pub mod h323;
 #[cfg(feature = "vpn")]
 pub mod l2tp;
+#[cfg(feature = "voip")]
+pub mod mgcp;
 #[cfg(feature = "vpn")]
 pub mod pptp;
 #[cfg(feature = "auth")]
 pub mod radius;
+#[cfg(feature = "misc")]
+pub mod telnet;
 #[cfg(feature = "voip")]
 pub mod turn;
-#[cfg(feature = "voip")]
-pub mod mgcp;
-#[cfg(feature = "voip")]
-pub mod h323;
+#[cfg(feature = "misc")]
+pub mod vnc;
+#[cfg(feature = "infra")]
+pub mod vxlan;
 
 /// 协议检测器 Trait
 pub trait ProtocolDetector: Send + Sync {
@@ -235,7 +242,10 @@ pub fn register_defaults(_registry: &mut Registry) {
     #[cfg(feature = "dns")]
     dns::register(_registry);
     // Phase 12A — 企业协议（低特异性）
+    // R7：misc feature —— 注册相对顺序保持不变（R11 影响面）
+    #[cfg(feature = "misc")]
     telnet::register(_registry);
+    #[cfg(feature = "misc")]
     vnc::register(_registry);
     #[cfg(feature = "infra")]
     {
@@ -256,10 +266,13 @@ pub fn register_defaults(_registry: &mut Registry) {
         h323::register(_registry);
     }
     // Phase 11A — 简单协议（最低特异性，DNS/HTTP 之后检测）
-    syslog::register(_registry);
-    tftp::register(_registry);
-    rsync::register(_registry);
-    whois::register(_registry);
+    #[cfg(feature = "misc")]
+    {
+        syslog::register(_registry);
+        tftp::register(_registry);
+        rsync::register(_registry);
+        whois::register(_registry);
+    }
     #[cfg(feature = "infra")]
     {
         netflow::register(_registry);

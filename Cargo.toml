@@ -8,10 +8,8 @@ repository = "https://github.com/yourname/rdpi"
 keywords = ["dpi", "packet", "network", "protocol", "detection"]
 
 [dependencies]
-etherparse = "0.15"
 thiserror = "1.0"
 aho-corasick = "1.1"
-rustls = "0.23"
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
 pcap-file = { version = "2.0", optional = true }
@@ -42,6 +40,7 @@ auth = []      # Kerberos, LDAP
 remote = []    # RDP
 risk = ["serde", "serde_json"]
 storage = []   # NFS
+misc = []      # TFTP, Rsync, Whois, Syslog, Telnet, VNC（R7：纳入 feature 矩阵）
 
 [dev-dependencies]
 pcap-file = "2.0"

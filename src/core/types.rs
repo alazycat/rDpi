@@ -93,9 +93,14 @@ pub enum Protocol {
     #[cfg(feature = "infra")]
     Bgp,
     // Phase 11A — 简单协议
+    // R7：misc feature —— TFTP/Rsync/Whois/Syslog 纳入 feature 矩阵
+    #[cfg(feature = "misc")]
     Tftp,
+    #[cfg(feature = "misc")]
     Rsync,
+    #[cfg(feature = "misc")]
     Whois,
+    #[cfg(feature = "misc")]
     Syslog,
     #[cfg(feature = "proto3")]
     Rtmp,
@@ -110,7 +115,10 @@ pub enum Protocol {
     #[cfg(feature = "infra")]
     Nfs,
     // Phase 12A — 企业协议
+    // R7：misc feature —— Telnet/Vnc 纳入 feature 矩阵
+    #[cfg(feature = "misc")]
     Telnet,
+    #[cfg(feature = "misc")]
     Vnc,
     #[cfg(feature = "infra")]
     Dhcpv6,
@@ -613,15 +621,19 @@ impl Protocol {
             Protocol::WireGuard | Protocol::OpenVpn => ProtocolCategory::Vpn,
 
             // Mail
-            Protocol::Smtp | Protocol::Pop3 | Protocol::Pop3s
-                | Protocol::Imap | Protocol::Imaps => ProtocolCategory::Mail,
+            Protocol::Smtp
+            | Protocol::Pop3
+            | Protocol::Pop3s
+            | Protocol::Imap
+            | Protocol::Imaps => ProtocolCategory::Mail,
 
             // DNS
             Protocol::Dns => ProtocolCategory::Dns,
 
             // Database
-            Protocol::Mysql | Protocol::Postgresql | Protocol::Redis
-                | Protocol::Mongodb => ProtocolCategory::Database,
+            Protocol::Mysql | Protocol::Postgresql | Protocol::Redis | Protocol::Mongodb => {
+                ProtocolCategory::Database
+            }
 
             // RemoteAccess
             Protocol::Ssh => ProtocolCategory::RemoteAccess,
@@ -662,6 +674,8 @@ impl Protocol {
             Protocol::Bgp => ProtocolCategory::Routing,
 
             // Phase 12A — 企业协议
+            // R7：misc feature
+            #[cfg(feature = "misc")]
             Protocol::Telnet | Protocol::Vnc => ProtocolCategory::RemoteAccess,
             #[cfg(feature = "infra")]
             Protocol::Dhcpv6 | Protocol::Vxlan => ProtocolCategory::Infrastructure,
@@ -672,7 +686,9 @@ impl Protocol {
             #[cfg(feature = "voip")]
             Protocol::Turn | Protocol::Mgcp | Protocol::H323 => ProtocolCategory::Voip,
             // Phase 11A — 简单协议
+            #[cfg(feature = "misc")]
             Protocol::Tftp | Protocol::Rsync | Protocol::Whois => ProtocolCategory::FileTransfer,
+            #[cfg(feature = "misc")]
             Protocol::Syslog => ProtocolCategory::NetworkManagement,
             #[cfg(feature = "proto3")]
             Protocol::Rtmp => ProtocolCategory::Web,
@@ -694,14 +710,25 @@ impl Protocol {
     /// 获取协议的风险评级
     pub fn breed(self) -> ProtocolBreed {
         match self {
-            Protocol::Dns | Protocol::Http | Protocol::Smtp
-                | Protocol::Pop3 | Protocol::Pop3s | Protocol::Imap
-                | Protocol::Imaps | Protocol::Ntp | Protocol::Dhcp
-                | Protocol::Tls | Protocol::Quic | Protocol::Http3
-                | Protocol::Ssh => ProtocolBreed::Safe,
-            Protocol::Mysql | Protocol::Postgresql | Protocol::Redis
-                | Protocol::Mongodb
-                | Protocol::Snmp | Protocol::Modbus => ProtocolBreed::Acceptable,
+            Protocol::Dns
+            | Protocol::Http
+            | Protocol::Smtp
+            | Protocol::Pop3
+            | Protocol::Pop3s
+            | Protocol::Imap
+            | Protocol::Imaps
+            | Protocol::Ntp
+            | Protocol::Dhcp
+            | Protocol::Tls
+            | Protocol::Quic
+            | Protocol::Http3
+            | Protocol::Ssh => ProtocolBreed::Safe,
+            Protocol::Mysql
+            | Protocol::Postgresql
+            | Protocol::Redis
+            | Protocol::Mongodb
+            | Protocol::Snmp
+            | Protocol::Modbus => ProtocolBreed::Acceptable,
             #[cfg(feature = "proto3")]
             Protocol::Ftp => ProtocolBreed::Fun,
             #[cfg(feature = "iot")]
@@ -719,10 +746,15 @@ impl Protocol {
             #[cfg(feature = "infra")]
             Protocol::Bgp => ProtocolBreed::Safe,
             #[cfg(feature = "proto3")]
-            Protocol::Sip | Protocol::Rtp | Protocol::Rtcp
-                | Protocol::Http2 | Protocol::WebSocket => ProtocolBreed::Safe,
+            Protocol::Sip
+            | Protocol::Rtp
+            | Protocol::Rtcp
+            | Protocol::Http2
+            | Protocol::WebSocket => ProtocolBreed::Safe,
             // Phase 12A
+            #[cfg(feature = "misc")]
             Protocol::Telnet => ProtocolBreed::Fun,
+            #[cfg(feature = "misc")]
             Protocol::Vnc => ProtocolBreed::Acceptable,
             #[cfg(feature = "infra")]
             Protocol::Dhcpv6 | Protocol::Vxlan => ProtocolBreed::Safe,
@@ -733,16 +765,21 @@ impl Protocol {
             #[cfg(feature = "voip")]
             Protocol::Turn | Protocol::Mgcp | Protocol::H323 => ProtocolBreed::Safe,
             // Phase 11A
+            #[cfg(feature = "misc")]
             Protocol::Tftp | Protocol::Rsync | Protocol::Whois => ProtocolBreed::Safe,
+            #[cfg(feature = "misc")]
             Protocol::Syslog => ProtocolBreed::Safe,
             #[cfg(feature = "proto3")]
             Protocol::Rtmp => ProtocolBreed::Acceptable,
             #[cfg(feature = "proto3")]
             Protocol::Socks => ProtocolBreed::Unsafe,
             #[cfg(feature = "infra")]
-            Protocol::Netflow | Protocol::Ike | Protocol::Ptpv2 | Protocol::Nfs => ProtocolBreed::Safe,
-            Protocol::Tcp | Protocol::Udp | Protocol::Icmp
-                | Protocol::Other(_) => ProtocolBreed::Unrated,
+            Protocol::Netflow | Protocol::Ike | Protocol::Ptpv2 | Protocol::Nfs => {
+                ProtocolBreed::Safe
+            }
+            Protocol::Tcp | Protocol::Udp | Protocol::Icmp | Protocol::Other(_) => {
+                ProtocolBreed::Unrated
+            }
         }
     }
 
@@ -1105,42 +1142,53 @@ impl Application {
     /// 获取应用对应的主协议
     pub fn master_protocol(self) -> Protocol {
         match self {
-            Application::YouTube | Application::Netflix | Application::Bilibili
-                | Application::Douyin | Application::Iqiyi
-                | Application::TencentVideo | Application::Youku
-                | Application::Hulu | Application::DisneyPlus
-                | Application::AmazonPrime
-                | Application::HBO
-                | Application::DAZN
-                | Application::Vimeo
-                | Application::Dailymotion
-                | Application::Spotify
-                | Application::AppleTVPlus
-                | Application::ParamountPlus => Protocol::Http,
+            Application::YouTube
+            | Application::Netflix
+            | Application::Bilibili
+            | Application::Douyin
+            | Application::Iqiyi
+            | Application::TencentVideo
+            | Application::Youku
+            | Application::Hulu
+            | Application::DisneyPlus
+            | Application::AmazonPrime
+            | Application::HBO
+            | Application::DAZN
+            | Application::Vimeo
+            | Application::Dailymotion
+            | Application::Spotify
+            | Application::AppleTVPlus
+            | Application::ParamountPlus => Protocol::Http,
 
-            Application::WeChat | Application::Telegram | Application::WhatsApp
-                | Application::Discord | Application::QQ | Application::Slack
-                | Application::Line | Application::Signal
-                | Application::Zoom | Application::Twitch
-                | Application::Google
-                | Application::Instagram
-                | Application::Snapchat
-                | Application::Facebook
-                | Application::Messenger
-                | Application::Twitter
-                | Application::LinkedIn
-                | Application::Pinterest
-                | Application::Reddit
-                | Application::Microsoft
-                | Application::AmazonAWS
-                | Application::Azure
-                | Application::GitHub
-                | Application::GitLab
-                | Application::Dropbox
-                | Application::Box
-                | Application::Teams
-                | Application::Webex
-                | Application::Skype => Protocol::Tls,
+            Application::WeChat
+            | Application::Telegram
+            | Application::WhatsApp
+            | Application::Discord
+            | Application::QQ
+            | Application::Slack
+            | Application::Line
+            | Application::Signal
+            | Application::Zoom
+            | Application::Twitch
+            | Application::Google
+            | Application::Instagram
+            | Application::Snapchat
+            | Application::Facebook
+            | Application::Messenger
+            | Application::Twitter
+            | Application::LinkedIn
+            | Application::Pinterest
+            | Application::Reddit
+            | Application::Microsoft
+            | Application::AmazonAWS
+            | Application::Azure
+            | Application::GitHub
+            | Application::GitLab
+            | Application::Dropbox
+            | Application::Box
+            | Application::Teams
+            | Application::Webex
+            | Application::Skype => Protocol::Tls,
         }
     }
 }

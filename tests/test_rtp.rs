@@ -43,5 +43,9 @@ fn test_detect_rtcp_bye() {
 #[test]
 fn test_rtp_rejects_non_rtp() {
     let detector = RtpDetector::new();
-    assert!(detector.detect(b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00").is_none());
+    assert!(
+        detector
+            .detect(b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00")
+            .is_none()
+    );
 }

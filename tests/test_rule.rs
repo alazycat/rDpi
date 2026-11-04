@@ -1,8 +1,8 @@
 #![cfg(feature = "rule")]
 
+use rdpi::Detector;
 use rdpi::core::types::{Confidence, Protocol};
 use rdpi::rule::*;
-use rdpi::Detector;
 
 /// 构造简单的 UDP 包
 fn build_udp_packet(src_port: u16, dst_port: u16, payload: &[u8]) -> Vec<u8> {

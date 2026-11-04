@@ -88,7 +88,11 @@ mod tests {
     use super::*;
 
     /// Create a PostgreSQL startup message for testing
-    fn create_startup_message(user: Option<&str>, database: Option<&str>, app_name: Option<&str>) -> Vec<u8> {
+    fn create_startup_message(
+        user: Option<&str>,
+        database: Option<&str>,
+        app_name: Option<&str>,
+    ) -> Vec<u8> {
         let mut msg = Vec::new();
 
         // Protocol version 3.0
@@ -139,11 +143,7 @@ mod tests {
 
     #[test]
     fn test_parse_pg_startup_with_app_name() {
-        let msg = create_startup_message(
-            Some("admin"),
-            Some("mydb"),
-            Some("psql")
-        );
+        let msg = create_startup_message(Some("admin"), Some("mydb"), Some("psql"));
         let meta = parse_pg_startup(&msg).unwrap();
 
         assert_eq!(meta.user, Some("admin".to_string()));
@@ -163,9 +163,9 @@ mod tests {
     #[test]
     fn test_parse_pg_startup_invalid_version() {
         let msg = vec![
-            0x00, 0x00, 0x00, 0x10,  // Length
-            0x00, 0x02, 0x00, 0x00,  // Protocol v2.0 (old)
-            0x00,  // terminator
+            0x00, 0x00, 0x00, 0x10, // Length
+            0x00, 0x02, 0x00, 0x00, // Protocol v2.0 (old)
+            0x00, // terminator
         ];
         assert!(parse_pg_startup(&msg).is_none());
     }
@@ -182,8 +182,8 @@ mod tests {
         // SSL request uses special protocol number 1234.5678 (0x04d2162e)
         // This should NOT be detected as a regular startup
         let msg = vec![
-            0x00, 0x00, 0x00, 0x08,  // Length: 8
-            0x04, 0xd2, 0x16, 0x2e,  // SSL request magic number
+            0x00, 0x00, 0x00, 0x08, // Length: 8
+            0x04, 0xd2, 0x16, 0x2e, // SSL request magic number
         ];
         assert!(parse_pg_startup(&msg).is_none());
     }

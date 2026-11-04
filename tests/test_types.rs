@@ -211,7 +211,10 @@ fn test_protocol_category() {
     assert_eq!(Protocol::Mysql.category(), ProtocolCategory::Database);
     assert_eq!(Protocol::Ssh.category(), ProtocolCategory::RemoteAccess);
     assert_eq!(Protocol::Ntp.category(), ProtocolCategory::Infrastructure);
-    assert_eq!(Protocol::Snmp.category(), ProtocolCategory::NetworkManagement);
+    assert_eq!(
+        Protocol::Snmp.category(),
+        ProtocolCategory::NetworkManagement
+    );
     assert_eq!(Protocol::Modbus.category(), ProtocolCategory::Industrial);
     #[cfg(feature = "proto3")]
     assert_eq!(Protocol::Ftp.category(), ProtocolCategory::FileTransfer);
@@ -248,7 +251,10 @@ fn test_new_application_variants() {
     // 流媒体新变体
     assert_eq!(Application::HBO.category(), ApplicationCategory::Streaming);
     assert_eq!(Application::DAZN.category(), ApplicationCategory::Streaming);
-    assert_eq!(Application::Spotify.category(), ApplicationCategory::Streaming);
+    assert_eq!(
+        Application::Spotify.category(),
+        ApplicationCategory::Streaming
+    );
     // 社交
     assert_eq!(Application::Facebook.category(), ApplicationCategory::Im);
     assert_eq!(Application::Twitter.category(), ApplicationCategory::Im);
@@ -290,27 +296,45 @@ fn test_detection_result_app_protocol_from_tls() {
         cert_valid_from: None,
         cert_valid_to: None,
     });
-    let result = DetectionResult::new(Protocol::Tls)
-        .with_metadata(metadata);
+    let result = DetectionResult::new(Protocol::Tls).with_metadata(metadata);
     assert_eq!(result.app_protocol, Some(Application::YouTube));
 }
 
 #[test]
 fn test_protocol_category_exhaustive() {
     let protocols = vec![
-        Protocol::Tcp, Protocol::Udp, Protocol::Icmp,
-        Protocol::Dns, Protocol::Http, Protocol::Tls,
-        Protocol::Ssh, Protocol::Smtp, Protocol::Quic,
-        Protocol::Http3, Protocol::Pop3, Protocol::Pop3s,
-        Protocol::Imap, Protocol::Imaps, Protocol::Ntp,
-        Protocol::Dhcp, Protocol::Snmp, Protocol::Modbus,
-        Protocol::Mysql, Protocol::Postgresql, Protocol::Redis,
+        Protocol::Tcp,
+        Protocol::Udp,
+        Protocol::Icmp,
+        Protocol::Dns,
+        Protocol::Http,
+        Protocol::Tls,
+        Protocol::Ssh,
+        Protocol::Smtp,
+        Protocol::Quic,
+        Protocol::Http3,
+        Protocol::Pop3,
+        Protocol::Pop3s,
+        Protocol::Imap,
+        Protocol::Imaps,
+        Protocol::Ntp,
+        Protocol::Dhcp,
+        Protocol::Snmp,
+        Protocol::Modbus,
+        Protocol::Mysql,
+        Protocol::Postgresql,
+        Protocol::Redis,
         #[cfg(feature = "proto3")]
         Protocol::Ftp,
     ];
 
     for p in protocols {
         let cat = p.category();
-        assert_ne!(cat, ProtocolCategory::Other, "Known protocol {:?} should not map to Other", p);
+        assert_ne!(
+            cat,
+            ProtocolCategory::Other,
+            "Known protocol {:?} should not map to Other",
+            p
+        );
     }
 }

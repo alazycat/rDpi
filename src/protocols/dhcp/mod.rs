@@ -31,8 +31,8 @@ mod parser;
 
 pub use parser::{DhcpHeader, detect_dhcp, parse_dhcp_packet};
 
-use crate::protocols::Registry;
 use crate::protocols::ProtocolDetector;
+use crate::protocols::Registry;
 
 /// DHCP protocol detector
 pub struct DhcpDetector {

@@ -76,7 +76,9 @@ mod tests {
     #[test]
     fn test_detect_rtcp() {
         let detector = RtpDetector::new();
-        let result = detector.detect(&make_rtp_packet(200, 1, 0x12345678)).unwrap();
+        let result = detector
+            .detect(&make_rtp_packet(200, 1, 0x12345678))
+            .unwrap();
         assert_eq!(result.protocol, Protocol::Rtcp);
     }
 

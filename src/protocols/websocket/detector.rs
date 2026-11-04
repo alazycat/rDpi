@@ -50,7 +50,11 @@ mod tests {
     #[test]
     fn test_websocket_detector_regular_http() {
         let detector = WebSocketDetector::new();
-        assert!(detector.detect(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").is_none());
+        assert!(
+            detector
+                .detect(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+                .is_none()
+        );
     }
 
     #[test]

@@ -29,7 +29,19 @@ pub fn is_pop3_response_prefix(byte: u8) -> bool {
 pub fn is_pop3_command_prefix(byte: u8) -> bool {
     matches!(
         byte,
-        b'U' | b'P' | b'S' | b'L' | b'R' | b'D' | b'Q' | b'N' | b'T' | b'A' | b'C' | b'W' | b'H' | b'K'
+        b'U' | b'P'
+            | b'S'
+            | b'L'
+            | b'R'
+            | b'D'
+            | b'Q'
+            | b'N'
+            | b'T'
+            | b'A'
+            | b'C'
+            | b'W'
+            | b'H'
+            | b'K'
     )
 }
 

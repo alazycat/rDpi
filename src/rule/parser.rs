@@ -1,5 +1,5 @@
-use crate::core::types::*;
 use super::{Rule, RuleCondition};
+use crate::core::types::*;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
