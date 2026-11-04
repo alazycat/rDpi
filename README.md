@@ -22,7 +22,7 @@ Rust Deep Packet Inspection library - 轻量级、高性能的深度包检测库
 
 ```toml
 [dependencies]
-rdpi = "0.4.1"
+rdpi = "0.4.2"
 ```
 
 ## 使用示例
@@ -78,7 +78,7 @@ fn main() -> rdpi::error::Result<()> {
 
 ```toml
 [dependencies]
-rdpi = { version = "0.4.1", default-features = false, features = ["http", "tls", "ssh"] }
+rdpi = { version = "0.4.2", default-features = false, features = ["http", "tls", "ssh"] }
 ```
 
 ## 支持的协议
@@ -114,7 +114,7 @@ rdpi = { version = "0.4.1", default-features = false, features = ["http", "tls",
 
 ## 开发状态
 
-### 已完成（截至 v0.4.1）
+### 已完成（截至 v0.4.2）
 
 - [x] Phase 1-3: 核心基础设施 + DNS/HTTP/TLS/SSH/SMTP 检测
 - [x] Phase 4: QUIC 协议检测

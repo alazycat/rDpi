@@ -273,6 +273,8 @@ impl Detector {
         };
 
         // 检测协议（如果流还没有协议）
+        // mut 仅在 risk feature 下使用（回写 r.risks）
+        #[cfg_attr(not(feature = "risk"), allow(unused_mut))]
         let mut result = if flow.protocol.is_none() {
             #[cfg(feature = "rule")]
             if let Some(ref engine) = self.rule_engine {
