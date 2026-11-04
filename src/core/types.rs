@@ -285,11 +285,14 @@ pub struct SmtpMetadata {
 
 /// QUIC 元数据
 ///
-/// 注意：SNI 提取需要 Initial Key 派生，目前未实现。
+/// SNI/ALPN 来自 Initial 包解密（RFC 9001 §5，CRYPTO 帧 → TLS ClientHello），
+/// 解密失败或非客户端 Initial 时为 None。
 #[derive(Debug, Clone)]
 pub struct QuicMetadata {
-    /// Server Name Indication (SNI) - 需要 Initial Key 派生
+    /// Server Name Indication (SNI)
     pub sni: Option<String>,
+    /// ALPN 协议协商（如 "h3"）
+    pub alpn: Option<String>,
     /// QUIC 版本 (如 "00000001" for v1)
     pub version: Option<String>,
     /// 目的连接 ID

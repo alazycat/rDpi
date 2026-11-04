@@ -77,6 +77,12 @@
 - **验证**：`cargo clippy --all-features --all-targets` **0 警告**（--message-format=short 落盘复核）；默认 + all-features 全量回归 **0 失败**（22 套件全 ok）；`cargo fmt` 已跑。
 - **残留（a3 修复时新发现，2026-11-04）**：默认 features 下 `cargo test` 编译 integration_test 报 1 条 dead_code——[integration_test.rs:307](file:///d:/rust_code/rDpi/tests/integration_test.rs#L307) `build_tcp_packet` 仅被 iot/database 等 feature-gated 测试使用，默认 features 下 unused（R12 清债当时只扫了 `--all-features`）。信息级，暂不修。
 
+## R13【信息】QUIC Initial 解密的能力边界与性能注意（2026-11-04，QUIC 补全功能开发）
+
+- **背景**：quic feature 下 QuicDetector 对 Initial 包做全手写解密（[src/protocols/quic/crypto.rs](file:///d:/rust_code/rDpi/src/protocols/quic/crypto.rs)，AES-128-GCM + HKDF-SHA256，零新增依赖；RFC 9001 A.1/A.2 官方向量验证）。解出 ClientHello 后填 QuicMetadata.sni/alpn（alpn 为本次新增字段）。
+- **能力边界**：① 仅解密 **Initial** 包（0-RTT/Handshake/1-RTT 密钥不可推导，永不解密）；② token 有值的 Retry 后 Initial（server 端）因 salt 取 client 侧无法解密，静默降级为仅头部信息；③ 解密失败不产生任何标记，`sni=None` 即为降级信号；④ QUIC SNI 仍**不覆盖** rule 引擎 `sni_contains`（R6 修复范围仅 TLS，见 rule/mod.rs 注释）。
+- **性能注意**：GHASH 为无查表逐位实现（`gf128_mul`），每字节 8 次迭代——正确性优先于吞吐；每 Initial 包限解 4 个 pn 候选（pn_len=4 时仅 1 个）。高频场景若成瓶颈，优化路径为查表 GHASH（256B/64KB 表），接口不变。
+
 ## R10【低】Git 历史存在 9 个内容相同的重复提交
 
 - **分类**：[代码明确实现]

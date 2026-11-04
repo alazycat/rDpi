@@ -147,6 +147,7 @@ fn test_quic_metadata_with_application() {
 
     let metadata = QuicMetadata {
         sni: None,
+        alpn: None,
         version: Some("00000001".to_string()),
         destination_connection_id: Some(vec![0x01, 0x02]),
         application: None, // 预留，目前为 None

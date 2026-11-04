@@ -42,7 +42,7 @@
 | 默认 dns | dns |
 | 默认 http | http |
 | 默认 tls | tls（含 certificate.rs 证书解析） |
-| quic | quic（仅 parser，无 detector.rs 目录结构） |
+| quic | quic（crypto.rs Initial 解密 + parser.rs，无 detector.rs 目录结构） |
 | ssh | ssh |
 | smtp | smtp |
 | mail | pop3, imap |
@@ -60,6 +60,13 @@
 | **无 feature gate** | **tftp, rsync, whois, syslog（mod.rs:66-69）；telnet, vnc（mod.rs:83-84）** —— 始终编译并注册（mod.rs:259-262, 238-239） |
 
 注：quic/snmp/modbus/ntp/dhcp 目录无 detector.rs，通过 `register()` 暴露的 detector 完成检测，与 http/tls 的三分文件模式不同（**[根据代码推断]**：各 mod.rs 内含 detector 实现，未逐一核对行号）。
+
+### quic 模块（2026-11-04 扩展：Initial 解密）
+
+- **crypto.rs**：全手写密码学（零新增依赖）——AES-128 核心（仅加密方向，FIPS-197 向量）、GCM/GHASH（NIST SP 800-38D 向量）、HMAC-SHA256/HKDF（RFC 4231/5869 向量）、QUIC Initial 密钥派生 + 头保护移除 + 载荷 AEAD 解密（RFC 9001 §A.1 向量）；支持 QUIC v1/v2/draft-29/draft-28 四套 salt。
+- **parser.rs**：`decrypt_initial`（解密受保护载荷）、`parse_crypto_frames`（提取 CRYPTO 帧拼接）、`decrypt_client_hello`（feature=tls，CRYPTO 载荷套假 record 头复用 `tls::parse_client_hello`）。
+- **mod.rs**：detect/detect_with_context 接线解密富化——解出 ClientHello 后填 QuicMetadata.sni/alpn，SNI 走 `application::identify` 识别应用；解密失败静默降级为仅头部信息。QuicMetadata 新增 `alpn` 字段（types.rs）。
+- 测试：crypto.rs 内单测（各 RFC 官方向量）+ tests/test_quic.rs 端到端（RFC 9001 A.2 1200 字节样本 → SNI "example.com"/ALPN "alpn"，篡改 1 字节降级）。
 
 ## 5. application 模块
 

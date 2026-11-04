@@ -419,7 +419,7 @@ impl Detector {
         // （iter_tls_records 自校验记录头，非 TLS 载荷零命中直接返回）
         if let Some(cert) = protocols::tls::iter_tls_records(payload)
             .find(|r| protocols::tls::is_certificate_message(r))
-            .and_then(|r| protocols::tls::parse_certificate(r))
+            .and_then(protocols::tls::parse_certificate)
             && let Some(Metadata::Tls(ref mut tls)) = flow.metadata
         {
             tls.cert_subject = cert.subject;

@@ -77,13 +77,13 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
             }
 
             // Try Certificate message for cert fields (even if ClientHello was found)
-            if tls_meta.cert_subject.is_none() {
-                if let Some(cert_info) = certificate::parse_certificate(record) {
-                    tls_meta.cert_subject = cert_info.subject;
-                    tls_meta.cert_issuer = cert_info.issuer;
-                    tls_meta.cert_valid_from = cert_info.not_before;
-                    tls_meta.cert_valid_to = cert_info.not_after;
-                }
+            if tls_meta.cert_subject.is_none()
+                && let Some(cert_info) = certificate::parse_certificate(record)
+            {
+                tls_meta.cert_subject = cert_info.subject;
+                tls_meta.cert_issuer = cert_info.issuer;
+                tls_meta.cert_valid_from = cert_info.not_before;
+                tls_meta.cert_valid_to = cert_info.not_after;
             }
         }
 

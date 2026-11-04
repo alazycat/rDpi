@@ -12,6 +12,8 @@
 //! Initial packet detection: (first_byte & 0xF0) == 0xC0
 //! This checks for Long Header (bit 7=1), Fixed Bit (bit 6=1), and Initial type (bits 5-4=00)
 
+use super::crypto;
+
 /// QUIC version constants (32-bit, big-endian on wire)
 pub const QUIC_VERSION_1: u32 = 0x00000001;
 pub const QUIC_VERSION_2: u32 = 0x6b3343cf;
@@ -132,7 +134,15 @@ pub fn parse_varint(data: &[u8]) -> Option<(u64, usize)> {
 /// - Packet Number + Payload
 ///
 /// Note: This parser only extracts header information, not the encrypted payload.
+/// Use [`decrypt_initial`] for payload decryption.
 pub fn parse_quic_initial(data: &[u8]) -> Option<QuicInitialInfo> {
+    parse_initial_header(data).map(|(info, _, _)| info)
+}
+
+/// 解析 Initial 包头部，返回头部信息与 packet number 字段偏移
+///
+/// packet number 字段紧随 Token 之后，偏移即受保护载荷的起点。
+fn parse_initial_header(data: &[u8]) -> Option<(QuicInitialInfo, usize, u64)> {
     if !is_quic_initial(data) {
         return None;
     }
@@ -194,8 +204,16 @@ pub fn parse_quic_initial(data: &[u8]) -> Option<QuicInitialInfo> {
     }
 
     let token = data[offset..offset + token_len_usize].to_vec();
+    offset += token_len_usize;
 
-    Some(QuicInitialInfo {
+    // Length 字段（varint）：Packet Number + Payload 的总长度（RFC 9000 §17.2）
+    if offset >= data.len() {
+        return None;
+    }
+    let (packet_len, varint_len) = parse_varint(&data[offset..])?;
+    offset += varint_len;
+
+    let info = QuicInitialInfo {
         version,
         dcid_len,
         dcid,
@@ -203,7 +221,10 @@ pub fn parse_quic_initial(data: &[u8]) -> Option<QuicInitialInfo> {
         scid,
         token_len,
         token,
-    })
+    };
+
+    // offset 此刻即 packet number 字段偏移；携带 Length 供解密确定包边界
+    Some((info, offset, packet_len))
 }
 
 /// Convert QUIC version number to human-readable string
@@ -216,6 +237,85 @@ pub fn version_to_string(version: u32) -> Option<String> {
         0 => None, // Version negotiation packet
         v => Some(format!("QUIC 0x{:08x}", v)),
     }
+}
+
+/// 解密 QUIC Initial 包，返回明文帧数据（RFC 9001 §5）
+///
+/// 派生客户端 Initial 密钥（"client in"），移除头保护并做 AES-128-GCM 认证解密。
+/// 服务端 Initial 或标签校验失败返回 None（调用方降级为仅头部信息）。
+///
+/// 注意：仅对 Initial 包调用（每流至多数个包），内部有少量堆分配（约 1-2 KiB）。
+pub fn decrypt_initial(data: &[u8]) -> Option<Vec<u8>> {
+    let (info, pn_offset, packet_len) = parse_initial_header(data)?;
+    // 包边界：Length 覆盖 Packet Number + Payload；越界/异常长度按实际数据截断
+    let packet_len = usize::try_from(packet_len).ok()?;
+    let end = (pn_offset + packet_len).min(data.len());
+    crypto::decrypt_initial_payload(&data[..end], pn_offset, info.version, &info.dcid)
+}
+
+/// 从解密后的 QUIC 帧数据中提取 CRYPTO 帧（帧类型 0x06）载荷
+///
+/// 遍历识别 PADDING(0x00)/PING(0x01)/CRYPTO(0x06) 三种帧；遇到其他帧（如 ACK）
+/// 保守停止扫描。客户端 Initial 载荷即为这三种帧的组合，CRYPTO 载荷是裸 TLS
+/// 握手消息（无 5 字节 record 头）。
+pub fn parse_crypto_frames(plaintext: &[u8]) -> Option<Vec<u8>> {
+    let mut offset = 0;
+    let mut crypto = Vec::new();
+    while offset < plaintext.len() {
+        let (frame_type, n) = parse_varint(&plaintext[offset..])?;
+        match frame_type {
+            0x00 | 0x01 => {
+                // PADDING / PING：无载荷
+                offset += n;
+            }
+            0x06 => {
+                // CRYPTO：offset(varint) + length(varint) + data
+                offset += n;
+                let (_crypto_offset, n1) = parse_varint(&plaintext[offset..])?;
+                offset += n1;
+                let (length, n2) = parse_varint(&plaintext[offset..])?;
+                offset += n2;
+                let length = usize::try_from(length).ok()?;
+                if offset + length > plaintext.len() {
+                    return None;
+                }
+                crypto.extend_from_slice(&plaintext[offset..offset + length]);
+                offset += length;
+            }
+            _ => break,
+        }
+    }
+    if crypto.is_empty() {
+        None
+    } else {
+        Some(crypto)
+    }
+}
+
+/// 解密 QUIC v1 Initial 包并提取其中的 TLS ClientHello（需要 tls feature）
+///
+/// CRYPTO 帧载荷是裸握手消息；套上一个合成的 TLS record 头后复用现有
+/// `tls::parse_client_hello`（SNI/ALPN/版本全套提取），ClientHello 跨包截断时
+/// 返回 None（尽力而为，不做跨包重组）。
+#[cfg(feature = "tls")]
+pub fn decrypt_client_hello(data: &[u8]) -> Option<crate::protocols::tls::ClientHelloInfo> {
+    let plaintext = decrypt_initial(data)?;
+    let crypto = parse_crypto_frames(&plaintext)?;
+
+    // 裸握手消息：type(1B) + length(3B)，ClientHello type = 0x01
+    if crypto.len() < 4 || crypto[0] != 0x01 {
+        return None;
+    }
+    // 合成 record 头：Handshake + legacy_version + length（握手消息长度可表达于 u16）
+    let hs_len = crypto.len();
+    if hs_len > 0xffff {
+        return None;
+    }
+    let mut record = Vec::with_capacity(5 + hs_len);
+    record.extend_from_slice(&[0x16, 0x03, 0x03, (hs_len >> 8) as u8, (hs_len & 0xff) as u8]);
+    record.extend_from_slice(&crypto);
+
+    crate::protocols::tls::parse_client_hello(&record)
 }
 
 #[cfg(test)]
@@ -341,6 +441,73 @@ mod tests {
         data.push(0x02); // Packet Number Length: 2 bytes (encoded in first byte bits 1-0)
         data.extend_from_slice(&[0x00, 0x01]); // Minimal payload placeholder
         data
+    }
+
+    fn hex(s: &str) -> Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    fn to_hex(b: &[u8]) -> String {
+        b.iter().map(|x| format!("{:02x}", x)).collect()
+    }
+
+    /// RFC 9001 附录 A.2 官方样例：客户端 Initial 包中的 CRYPTO 帧
+    /// （含完整 ClientHello，SNI = "example.com"，ALPN = "alpn"，共 245 字节）
+    const A2_CLIENT_CRYPTO_FRAME: &str = concat!(
+        "060040f1010000ed0303ebf8fa56f12939b9584a3896472ec40bb863cfd3e868",
+        "04fe3a47f06a2b69484c00000413011302010000c000000010000e00000b6578",
+        "616d706c652e636f6dff01000100000a00080006001d00170018001000070005",
+        "04616c706e000500050100000000003300260024001d00209370b2c9caa47fba",
+        "baf4559fedba753de171fa71f50f1ce15d43e994ec74d748002b000302030400",
+        "0d0010000e0403050306030203080408050806002d00020101001c0002400100",
+        "3900320408ffffffffffffffff05048000ffff07048000ffff08011001048000",
+        "75300901100f088394c8f03e51570806048000ffff",
+    );
+
+    /// 用 RFC 9001 A.2 样例材料构造完整受保护 Initial 包
+    ///
+    /// 帧后补零至 1182 字节载荷（对齐官方样例 Length=0x449e、pn=2），
+    /// 复现出的包与 RFC 9001 A.2 的输入完全一致。
+    fn make_a2_sample_packet() -> Vec<u8> {
+        let dcid = hex("8394c8f03e515708");
+        let frame = hex(A2_CLIENT_CRYPTO_FRAME);
+        assert_eq!(frame.len(), 245);
+        // 官方样例：Length = 0x449e = 1182 = pn(4) + 载荷 + tag(16)
+        let pad_len = 1182 - 4 - 16 - frame.len();
+        let frames = [frame, vec![0u8; pad_len]].concat();
+        crypto::build_initial_packet(QUIC_VERSION_1, &dcid, 2, &frames)
+    }
+
+    #[test]
+    fn test_decrypt_rfc9001_a2_sample() {
+        let packet = make_a2_sample_packet();
+
+        // 解密即完整验证：头保护移除错误 → AAD 错误 → tag 校验失败
+        let plaintext = decrypt_initial(&packet).expect("RFC 9001 A.2 样例应能成功解密");
+
+        // 官方样例载荷 = CRYPTO 帧 + 零填充；验证 CRYPTO 帧提取
+        let crypto = parse_crypto_frames(&plaintext).expect("应提取出 CRYPTO 帧载荷");
+        assert_eq!(crypto.len(), 241);
+        assert_eq!(&to_hex(&crypto)[..16], "010000ed0303ebf8"); // ClientHello 开头
+
+        // 端到端：解密 → CRYPTO 帧 → TLS ClientHello → SNI/ALPN
+        #[cfg(feature = "tls")]
+        {
+            let ch = decrypt_client_hello(&packet).expect("应解析出 ClientHello");
+            assert_eq!(ch.sni.as_deref(), Some("example.com"));
+            assert_eq!(ch.alpn.as_deref(), Some("alpn"));
+        }
+    }
+
+    /// 打印 A.2 样例受保护包的 hex（用于生成 tests/test_quic.rs 集成测试夹具）
+    #[test]
+    fn test_print_a2_fixture() {
+        let packet = make_a2_sample_packet();
+        println!("A2_FIXTURE_LEN={}", packet.len());
+        println!("A2_FIXTURE={}", to_hex(&packet));
     }
 
     #[test]
