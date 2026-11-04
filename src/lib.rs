@@ -401,9 +401,11 @@ impl Detector {
     ///
     /// 修复前：证书解析只发生在流识别的那一个包（tls/mod.rs:66-71），而证书几乎
     /// 总是在 ClientHello 之后的独立记录到达 → 证书字段恒 None（a2/a3 实锤）。
-    /// 修复后：回显路径对已定型 TLS 流做廉价预检（字段为空 + payload 形似
-    /// Certificate 记录），命中才做 ASN.1 解析并写回 flow.metadata；协议不重检
+    /// 修复后：回显路径对已定型 TLS 流做廉价预检（字段为空 + 段内任一记录形似
+    /// Certificate），命中才做 ASN.1 解析并写回 flow.metadata；协议不重检
     /// （ADR-0004 一次定型语义不变），字段填充后不再重复解析。
+    /// a3 修复（2026-11-04）：Certificate 不要求在段首——连体记录场景
+    /// （ServerHello+Certificate 合并段等）经 iter_tls_records 逐记录定位。
     #[cfg(feature = "tls")]
     fn enrich_tls_cert(flow: &mut Flow, payload: &[u8]) {
         let needs_enrich = matches!(
@@ -413,10 +415,11 @@ impl Detector {
         if !needs_enrich || flow.protocol != Some(Protocol::Tls) {
             return;
         }
-        if !protocols::tls::is_certificate_message(payload) {
-            return;
-        }
-        if let Some(cert) = protocols::tls::parse_certificate(payload)
+        // a3 修复：连体记录场景下 Certificate 可能不在段首——遍历段内记录定位
+        // （iter_tls_records 自校验记录头，非 TLS 载荷零命中直接返回）
+        if let Some(cert) = protocols::tls::iter_tls_records(payload)
+            .find(|r| protocols::tls::is_certificate_message(r))
+            .and_then(|r| protocols::tls::parse_certificate(r))
             && let Some(Metadata::Tls(ref mut tls)) = flow.metadata
         {
             tls.cert_subject = cert.subject;

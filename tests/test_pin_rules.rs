@@ -213,6 +213,23 @@ fn build_tls_certificate_record(subject_cn: &str) -> Vec<u8> {
 
 const NOISE: &[u8] = &[0x00u8; 8]; // 无协议特征 payload
 
+/// 构造最简合法 TLS ServerHello 记录（TLS 1.2 形态，无扩展）
+fn build_server_hello_record() -> Vec<u8> {
+    let mut hs = Vec::new();
+    hs.extend_from_slice(&[0x03, 0x03]); // server version TLS 1.2
+    hs.extend_from_slice(&[0u8; 32]); // random
+    hs.push(0x00); // session id len = 0
+    hs.extend_from_slice(&[0x13, 0x01]); // cipher suite
+    hs.extend_from_slice(&[0x01, 0x00]); // compression methods: len 1, null
+
+    let mut rec = vec![0x16, 0x03, 0x03];
+    rec.extend_from_slice(&((4 + hs.len()) as u16).to_be_bytes());
+    rec.push(0x02); // handshake type ServerHello
+    rec.extend_from_slice(&(hs.len() as u32).to_be_bytes()[1..]);
+    rec.extend_from_slice(&hs);
+    rec
+}
+
 // ============================================================================
 // B 类：关键不变量（预期全绿）
 // ============================================================================
@@ -485,13 +502,15 @@ fn a2_certificate_in_later_packet_is_ignored() {
     );
 }
 
-/// A3 (P8): 连体 ClientHello+Certificate 单包 → SNI 可解析，证书仍不可解析（现状）
-/// 证据：certificate.rs:26-27 is_certificate_message 检查 data[5]，连体时该字节是 ClientHello(0x01)。
+/// A3 (P8): 连体 ClientHello+Certificate 单包 → SNI 与证书字段同包可得（a3 修复，2026-11-04）
+/// 修复前：detect 只看段首记录，is_certificate_message 检查 data[5]（此处为 ClientHello 0x01）→ 证书字段恒 None。
+/// 修复后：tls/mod.rs detect 经 iter_tls_records 逐记录解析。
 #[test]
-fn a3_combined_clienthello_certificate_cert_not_parsed() {
+fn a3_combined_clienthello_certificate_both_parsed() {
     let mut d = Detector::new();
+    // 连体：ClientHello + 可真实解析的 Certificate 记录（同一段）
     let mut payload = build_client_hello(Some("combined.example.com"), [0x03, 0x03], false);
-    payload.extend_from_slice(&build_certificate_record_payload());
+    payload.extend_from_slice(&build_tls_certificate_record("combined.example.com"));
     let pkt = build_tcp_packet_ip([10, 0, 0, 1], [10, 0, 0, 2], 54321, 443, &payload);
     let r = d
         .detect(&pkt)
@@ -500,13 +519,70 @@ fn a3_combined_clienthello_certificate_cert_not_parsed() {
     match r.metadata {
         Metadata::Tls(m) => {
             assert_eq!(m.sni.as_deref(), Some("combined.example.com"));
-            assert!(
-                m.cert_subject.is_none(),
-                "P8: cert in same packet after ClientHello is not parsed"
+            assert_eq!(
+                m.cert_subject.as_deref(),
+                Some("combined.example.com"),
+                "a3 fixed: cert in same packet after ClientHello is parsed"
             );
         }
         other => panic!("expected TLS metadata, got {:?}", other),
     }
+}
+
+/// A3b (P8): 连体 ServerHello+Certificate 作新流首包（服务器→客户端方向）→ 此前整流
+/// 识别失败（detect 返回 None，只能靠 giveup 端口猜测）；修复后经记录扫描直接识别为
+/// TLS 并携带证书字段（a3 修复，2026-11-04）。
+/// 证据：tls/mod.rs detect 逐记录循环；FlowKey 含方向（对向包新建流，见 a2 注释）。
+#[test]
+fn a3b_serverhello_certificate_coalesced_new_flow_detected() {
+    let mut d = Detector::new();
+    let mut payload = build_server_hello_record();
+    payload.extend_from_slice(&build_tls_certificate_record("api.example.com"));
+    let pkt = build_tcp_packet_ip([10, 0, 0, 2], [10, 0, 0, 1], 443, 54321, &payload);
+    let r = d
+        .detect(&pkt)
+        .unwrap()
+        .expect("ServerHello+Cert coalesced flow must be detected");
+    assert_eq!(r.protocol, Protocol::Tls);
+    assert!(
+        matches!(&r.metadata, Metadata::Tls(m)
+            if m.sni.is_none()
+                && m.cert_subject.as_deref() == Some("api.example.com")),
+        // ServerHello 不走 parse_client_hello（handshake type 0x02），SNI/version 均不填，
+        // 识别与元数据完全由 Certificate 记录驱动
+        "a3 fixed: coalesced ServerHello+Certificate detected with cert fields"
+    );
+}
+
+/// A3c (P8): 已定型 TLS 流的回显包携带连体 ServerHello+Certificate → enrich_tls_cert
+/// 经段内记录扫描定位 Certificate 并富化（SNI 保持）（a3 修复，2026-11-04）。
+/// 修复前：回显路径 is_certificate_message 只看 data[5]（ServerHello 0x02）→ 不富化。
+#[test]
+fn a3c_echo_enriches_cert_from_coalesced_segment() {
+    let mut d = Detector::new();
+    // 包1：ClientHello 定型流（SNI），同方向
+    let ch = build_tcp_packet_ip(
+        [10, 0, 0, 1],
+        [10, 0, 0, 2],
+        54321,
+        443,
+        &build_client_hello(Some("api.example.com"), [0x03, 0x03], false),
+    );
+    let r1 = d.detect(&ch).unwrap().expect("ClientHello detected");
+    assert_eq!(r1.protocol, Protocol::Tls);
+
+    // 包2：同方向连体 ServerHello+Certificate 段
+    let mut payload = build_server_hello_record();
+    payload.extend_from_slice(&build_tls_certificate_record("api.example.com"));
+    let seg = build_tcp_packet_ip([10, 0, 0, 1], [10, 0, 0, 2], 54321, 443, &payload);
+    let r2 = d.detect(&seg).unwrap().expect("echo result");
+    assert_eq!(r2.protocol, Protocol::Tls, "flow stays TLS");
+    assert!(
+        matches!(&r2.metadata, Metadata::Tls(m)
+            if m.sni.as_deref() == Some("api.example.com")
+                && m.cert_subject.as_deref() == Some("api.example.com")),
+        "a3 fixed: echo enriches cert from coalesced segment while preserving SNI"
+    );
 }
 
 /// A4 (R4)：猜测引擎 IP 匹配支持双向（已修复，2026-11-04）

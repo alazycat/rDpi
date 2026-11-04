@@ -407,6 +407,56 @@ pub fn extract_alpn(data: &[u8]) -> Option<String> {
     parse_client_hello_extensions_for_alpn(data).flatten()
 }
 
+/// TLS 记录迭代器：切分单个 TCP 段内串联的多条记录（a3 连体场景）
+///
+/// TLS 允许把多条记录写入同一个 TCP 段（如服务器把 ServerHello + Certificate
+/// 合并发送）。每条记录按 5 字节头自带的 Length 字段切分；记录头自校验
+/// （ContentType ∈ {0x14..=0x17}、版本高字节 0x03），校验失败或剩余不足
+/// 一个头即停止。尾记录被 TCP 截断时按现有字节返回（上层解析器因长度
+/// 不符自然失败）。迭代全程零分配。
+pub struct TlsRecords<'a> {
+    data: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> Iterator for TlsRecords<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let rest = self.data.get(self.offset..)?;
+        if rest.len() < 5 {
+            return None;
+        }
+        // 自校验：ContentType ∈ {CCS(0x14), Alert(0x15), Handshake(0x16), AppData(0x17)}，
+        // 版本高字节固定 0x03（SSLv3 及以上）；防止把非 TLS 尾巴当记录继续走
+        if !(matches!(rest[0], 0x14..=0x17) && rest[1] == 0x03) {
+            return None;
+        }
+        let len = u16::from_be_bytes([rest[3], rest[4]]) as usize;
+        let end = (self.offset + 5 + len).min(self.data.len());
+        let record = &self.data[self.offset..end];
+        self.offset = end;
+        Some(record)
+    }
+}
+
+/// 遍历单个 TCP 段内串联的多条 TLS 记录（零分配）
+///
+/// # Examples
+///
+/// ```
+/// use rdpi::protocols::tls::iter_tls_records;
+///
+/// // 两条记录连体：Handshake + Alert（各 5 字节头，payload 均为 2 字节）
+/// let seg = [0x16, 0x03, 0x03, 0x00, 0x02, 0xAA, 0xBB,
+///            0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00];
+/// let records: Vec<usize> = iter_tls_records(&seg).map(|r| r.len()).collect();
+/// assert_eq!(records, vec![7, 7]);
+/// ```
+pub fn iter_tls_records(data: &[u8]) -> TlsRecords<'_> {
+    TlsRecords { data, offset: 0 }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -445,6 +495,58 @@ mod tests {
         assert_eq!(decode_tls_version(0x03, 0x03), Some("TLS 1.2".to_string()));
         assert_eq!(decode_tls_version(0x03, 0x04), Some("TLS 1.3".to_string()));
         assert_eq!(decode_tls_version(0x03, 0x00), None);
+    }
+
+    /// 构造一条最小 TLS 记录（content_type + version 0x0303 + len + payload）
+    fn build_record(content_type: u8, payload: &[u8]) -> Vec<u8> {
+        let mut rec = vec![content_type, 0x03, 0x03];
+        rec.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+        rec.extend_from_slice(payload);
+        rec
+    }
+
+    #[test]
+    fn test_iter_tls_records_single() {
+        let rec = build_record(0x16, &[0xAA; 10]);
+        let got: Vec<&[u8]> = iter_tls_records(&rec).collect();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0], &rec[..]);
+    }
+
+    #[test]
+    fn test_iter_tls_records_coalesced() {
+        // 连体：Handshake + Alert + AppData 三条记录
+        let mut seg = build_record(0x16, &[0x01]);
+        seg.extend_from_slice(&build_record(0x15, &[0x02]));
+        seg.extend_from_slice(&build_record(0x17, &[0x03; 4]));
+        let types: Vec<u8> = iter_tls_records(&seg).map(|r| r[0]).collect();
+        assert_eq!(types, vec![0x16, 0x15, 0x17]);
+    }
+
+    #[test]
+    fn test_iter_tls_records_truncated_tail() {
+        // 尾记录被 TCP 截断：按现有字节返回，长度自洽的记录仍可解析
+        let mut seg = build_record(0x16, &[0xAA; 4]);
+        seg.extend_from_slice(&build_record(0x17, &[0xBB; 8])[..9]); // 截断至 5+4
+        let got: Vec<&[u8]> = iter_tls_records(&seg).collect();
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[1].len(), 9);
+    }
+
+    #[test]
+    fn test_iter_tls_records_garbage_tail_stops() {
+        // 首记录合法（5+2=7 字节），尾巴是非 TLS 垃圾 → 迭代在垃圾处停止，不误切
+        let mut seg = build_record(0x16, &[0x01, 0x02]);
+        seg.extend_from_slice(&[0x99, 0x00, 0x01, 0x02, 0x03]); // content_type 非法
+        let got: Vec<&[u8]> = iter_tls_records(&seg).collect();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0], &seg[..7]);
+    }
+
+    #[test]
+    fn test_iter_tls_records_empty_and_short() {
+        assert_eq!(iter_tls_records(&[]).count(), 0);
+        assert_eq!(iter_tls_records(&[0x16, 0x03]).count(), 0);
     }
 
     /// Construct a minimal ClientHello for testing

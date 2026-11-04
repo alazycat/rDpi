@@ -75,6 +75,7 @@
 - **勘误**：此前多轮"clippy 0 警告"的验证结论**不成立**——验证用的 PowerShell `Select-String "^warning"` 模式被 cargo 输出的 ANSI 色码（`ESC[1m…mwarning:`）绕过，从未真正匹配过。教训：CLI 输出校验须用 `--message-format=short` 或落盘后按内容行匹配。
 - **修复**：① `cargo clippy --fix --all-features --all-targets`（自动机修，72 处）；② 手工 12 处：redis `find_crlf` 改 `windows(2).position`、tls `parse_client_hello_fields` 提取 `ClientHelloFields` 类型别名、lib.rs 提取 `RiskCallback` 别名、nfs 删除从未被引用的测试辅助 `rpc_reply`、behavioral 3 处 `for` 索引循环改 `slice::fill`、mongodb 5 个测试辅助函数 `isMaster` → `is_master` 重命名（含 detector.rs）。
 - **验证**：`cargo clippy --all-features --all-targets` **0 警告**（--message-format=short 落盘复核）；默认 + all-features 全量回归 **0 失败**（22 套件全 ok）；`cargo fmt` 已跑。
+- **残留（a3 修复时新发现，2026-11-04）**：默认 features 下 `cargo test` 编译 integration_test 报 1 条 dead_code——[integration_test.rs:307](file:///d:/rust_code/rDpi/tests/integration_test.rs#L307) `build_tcp_packet` 仅被 iot/database 等 feature-gated 测试使用，默认 features 下 unused（R12 清债当时只扫了 `--all-features`）。信息级，暂不修。
 
 ## R10【低】Git 历史存在 9 个内容相同的重复提交
 
@@ -109,7 +110,7 @@
 | P5 | Confidence::DpiCache/DpiPartial 赋值点 | 未执行（信息级，R4 期间确认 match_domain 用 DpiPartial；仍待做） |
 | P6 | 证书字段多包流是否恒 None | ✅ 钉死：恒 None（a2）→ **✅ F3 已修复（2026-11-04）**：回显路径 enrich_tls_cert 一次性富化，a2 翻转为回归；F7 元数据被抹问题亦已修复 |
 | P7 | TlsObsoleteVersion 对真实 "TLS 1.0" 是否触发 | ✅ 钉死：不触发（a1/a1_risk），F1 成立 |
-| P8 | 连体 ClientHello+Certificate 能否解析证书 | ✅ 钉死：SNI 可解析、证书不可解析（a3） |
+| P8 | 连体 ClientHello+Certificate 能否解析证书 | ✅ 钉死：SNI 可解析、证书不可解析（a3）→ **✅ a3 已修复（2026-11-04）**：iter_tls_records 逐记录解析，a3/a3b/a3c 三个回归钉住（ClientHello 连体、ServerHello+Certificate 连体新流、回显富化） |
 | P9 | flow.risks 是否逐包无界累计 | ✅ 实测：F7 修复前每包只有 1 条（元数据被抹）；**F7 修复后（2026-11-04）逐包累计**（a6 实测 missing_sni==3），无去重 |
 | P10 | version=None 时 JA4 为 None | ✅ 确认（a5） |
 

@@ -9,7 +9,7 @@ mod parser;
 pub use certificate::{CertInfo, is_certificate_message, parse_certificate};
 pub use parser::{
     ClientHelloInfo, extract_sni, extract_tls_version, is_client_hello, is_tls_record,
-    parse_client_hello,
+    iter_tls_records, parse_client_hello,
 };
 
 use crate::protocols::Registry;
@@ -47,35 +47,44 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
 
         use crate::core::types::{Confidence, DetectionResult, Metadata, Protocol, TlsMetadata};
 
-        // Try ClientHello first (for SNI, version, JA4), then Certificate (for cert fields)
         let mut tls_meta = TlsMetadata::default();
 
-        if let Some(ref info) = parse_client_hello(payload) {
-            tls_meta.sni = info.sni.clone();
-            tls_meta.version = info.version.clone();
-            tls_meta.cipher_suites = info.cipher_suites.clone();
-            tls_meta.alpn = info.alpn.clone();
-            tls_meta.application = info
-                .sni
-                .as_ref()
-                .and_then(|sni| crate::application::identify(sni));
-            let ja4 = info.version.as_ref().map(|ver| {
-                crate::application::compute_ja4(
-                    ver,
-                    &info.cipher_suites,
-                    &info.extensions,
-                    &info.supported_groups,
-                )
-            });
-            tls_meta.ja4 = ja4;
-        }
+        // a3 修复：单个 TCP 段可能串联多条记录（如服务器把 ServerHello +
+        // Certificate 合并发送，或 ClientHello 后紧跟 Certificate），逐记录
+        // 解析而非只看段首。ClientHello/Certificate 各取首个命中。
+        for record in iter_tls_records(payload) {
+            // ClientHello（SNI, version, JA4, ALPN）；非 ClientHello 记录
+            // （ServerHello/Finished 等）在 is_client_hello 的 data[5] 检查处
+            // 快速失败，AppData 记录在 content_type 检查处失败
+            if let Some(ref info) = parse_client_hello(record) {
+                tls_meta.sni = info.sni.clone();
+                tls_meta.version = info.version.clone();
+                tls_meta.cipher_suites = info.cipher_suites.clone();
+                tls_meta.alpn = info.alpn.clone();
+                tls_meta.application = info
+                    .sni
+                    .as_ref()
+                    .and_then(|sni| crate::application::identify(sni));
+                let ja4 = info.version.as_ref().map(|ver| {
+                    crate::application::compute_ja4(
+                        ver,
+                        &info.cipher_suites,
+                        &info.extensions,
+                        &info.supported_groups,
+                    )
+                });
+                tls_meta.ja4 = ja4;
+            }
 
-        // Try Certificate message for cert fields (even if ClientHello was found)
-        if let Some(cert_info) = certificate::parse_certificate(payload) {
-            tls_meta.cert_subject = cert_info.subject;
-            tls_meta.cert_issuer = cert_info.issuer;
-            tls_meta.cert_valid_from = cert_info.not_before;
-            tls_meta.cert_valid_to = cert_info.not_after;
+            // Try Certificate message for cert fields (even if ClientHello was found)
+            if tls_meta.cert_subject.is_none() {
+                if let Some(cert_info) = certificate::parse_certificate(record) {
+                    tls_meta.cert_subject = cert_info.subject;
+                    tls_meta.cert_issuer = cert_info.issuer;
+                    tls_meta.cert_valid_from = cert_info.not_before;
+                    tls_meta.cert_valid_to = cert_info.not_after;
+                }
+            }
         }
 
         // Return None if nothing matched (neither ClientHello nor Certificate)

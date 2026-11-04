@@ -101,7 +101,7 @@ Detector::detect(packet)                                   lib.rs:221
 - **证据链**：tls/mod.rs:66-71 只在"该流尚未识别时的那一个包"里运行；证书通常在后续包 → a2 钉死证书字段恒 None。
 - **修复**：[lib.rs:327-331,371-398](file:///d:/rust_code/rDpi/src/lib.rs#L327-L331) 回显路径新增 `enrich_tls_cert`——已定型 TLS 流对后续包做廉价预检（cert_subject 为空 + `is_certificate_message` 6 字节检查），命中才做 ASN.1 解析并写回 flow.metadata；字段填充后不再重复解析。协议不重检（ADR-0004 一次定型语义不变）；detect 热路径分配语义不变（预检失败零分配）。
 - **验证**：探针 a2 翻转为回归（真实 DER 证书记录构造器入 test_pin_rules.rs；断言回显包 cert_subject 填充且 SNI 保持）。默认 229 / all-features 563+72 全绿。
-- **残留**：a3 连体 ClientHello+Certificate 场景仍未覆盖（is_certificate_message 检查 data[5] 为 ClientHello 类型）——属低频场景，不在本次范围。
+- **残留**：a3 连体 ClientHello+Certificate 场景——**✅ 已修复（2026-11-04，用户批准"开始开发连体 ClientHello+Certificate"）**：parser.rs 新增 `iter_tls_records`（零分配记录迭代器，记录头自校验 content_type 0x14-0x17 / version 高字节 0x03），tls/mod.rs detect 改为逐记录解析，lib.rs enrich_tls_cert 改为段内记录定位。修复前 ServerHello+Certificate 连体段作新流首包时**整流识别失败**（detect 返回 None）；修复后识别+证书字段同包可得。回归：a3（ClientHello 连体）/a3b（ServerHello 连体新流）/a3c（回显富化）三测试 + iter_tls_records 6 单测。
 
 ### F4【低】SNI 解析只取第一个 ServerName，且类型不符即放弃
 
