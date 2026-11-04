@@ -54,29 +54,31 @@ impl ProtocolDetector for FtpDetector {
         let first = payload[0];
 
         // Path 1: Server response — starts with digit + space separator
-        if first.is_ascii_digit() && is_ftp_response_prefix(payload) {
-            if let Some(resp) = parse_ftp_response(payload) {
-                let meta = Metadata::Ftp(FtpMetadata {
-                    is_client: false,
-                    verb: None,
-                    argument: None,
-                    response_code: Some(resp.code),
-                });
-                return Some(DetectionResult::new(Protocol::Ftp).with_metadata(meta));
-            }
+        if first.is_ascii_digit()
+            && is_ftp_response_prefix(payload)
+            && let Some(resp) = parse_ftp_response(payload)
+        {
+            let meta = Metadata::Ftp(FtpMetadata {
+                is_client: false,
+                verb: None,
+                argument: None,
+                response_code: Some(resp.code),
+            });
+            return Some(DetectionResult::new(Protocol::Ftp).with_metadata(meta));
         }
 
         // Path 2: Client command — uppercase letter prefix
-        if first.is_ascii_uppercase() && is_ftp_command_prefix(payload) {
-            if let Some(cmd) = parse_ftp_command(payload) {
-                let meta = Metadata::Ftp(FtpMetadata {
-                    is_client: true,
-                    verb: Some(cmd.verb),
-                    argument: cmd.argument,
-                    response_code: None,
-                });
-                return Some(DetectionResult::new(Protocol::Ftp).with_metadata(meta));
-            }
+        if first.is_ascii_uppercase()
+            && is_ftp_command_prefix(payload)
+            && let Some(cmd) = parse_ftp_command(payload)
+        {
+            let meta = Metadata::Ftp(FtpMetadata {
+                is_client: true,
+                verb: Some(cmd.verb),
+                argument: cmd.argument,
+                response_code: None,
+            });
+            return Some(DetectionResult::new(Protocol::Ftp).with_metadata(meta));
         }
 
         None
@@ -90,12 +92,11 @@ impl ProtocolDetector for FtpDetector {
 
         if let Metadata::Ftp(ref meta) = result.metadata {
             if meta.is_client {
-                if let Some(ref verb) = meta.verb {
-                    if FTP_POP3_AMBIGUOUS_VERBS.contains(&verb.as_str())
-                        && (is_pop3_port(ctx.src_port) || is_pop3_port(ctx.dst_port))
-                    {
-                        return None;
-                    }
+                if let Some(ref verb) = meta.verb
+                    && FTP_POP3_AMBIGUOUS_VERBS.contains(&verb.as_str())
+                    && (is_pop3_port(ctx.src_port) || is_pop3_port(ctx.dst_port))
+                {
+                    return None;
                 }
             } else if meta.response_code.is_some()
                 && (is_smtp_port(ctx.src_port) || is_smtp_port(ctx.dst_port))

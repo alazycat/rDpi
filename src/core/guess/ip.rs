@@ -108,7 +108,6 @@ pub fn builtin_subnets() -> Vec<IpSubnetEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::Ipv4Addr;
 
     fn test_matcher() -> IpMatcher {
         IpMatcher::new(builtin_subnets())

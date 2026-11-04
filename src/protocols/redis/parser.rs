@@ -179,12 +179,7 @@ fn parse_bulk_string_command(data: &[u8]) -> Option<RedisMetadata> {
 
 /// Find CRLF position in data
 fn find_crlf(data: &[u8]) -> Option<usize> {
-    for i in 0..data.len() - 1 {
-        if data[i] == '\r' as u8 && data[i + 1] == '\n' as u8 {
-            return Some(i);
-        }
-    }
-    None
+    data.windows(2).position(|w| w == b"\r\n")
 }
 
 #[cfg(test)]

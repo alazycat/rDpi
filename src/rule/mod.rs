@@ -66,15 +66,15 @@ impl RuleCondition {
     ///
     /// 所有配置的条件字段都必须满足才视为匹配（AND 语义）。
     pub fn matches(&self, ctx: &RuleContext) -> bool {
-        if let Some(port) = self.dst_port {
-            if ctx.dst_port != port {
-                return false;
-            }
+        if let Some(port) = self.dst_port
+            && ctx.dst_port != port
+        {
+            return false;
         }
-        if let Some(port) = self.src_port {
-            if ctx.src_port != port {
-                return false;
-            }
+        if let Some(port) = self.src_port
+            && ctx.src_port != port
+        {
+            return false;
         }
         if let Some(ref sni) = self.sni_contains {
             match ctx.sni {
@@ -86,10 +86,10 @@ impl RuleCondition {
                 None => return false,
             }
         }
-        if let Some(ref pat) = self.payload_contains {
-            if !ctx.payload.windows(pat.len()).any(|w| w == pat.as_bytes()) {
-                return false;
-            }
+        if let Some(ref pat) = self.payload_contains
+            && !ctx.payload.windows(pat.len()).any(|w| w == pat.as_bytes())
+        {
+            return false;
         }
         true
     }

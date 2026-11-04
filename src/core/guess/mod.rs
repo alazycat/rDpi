@@ -42,8 +42,8 @@ impl GuessEngine {
             .domain_info
             .sni
             .as_deref()
-            .or_else(|| ctx.domain_info.http_host.as_deref())
-            .or_else(|| ctx.domain_info.dns_query.as_deref())?;
+            .or(ctx.domain_info.http_host.as_deref())
+            .or(ctx.domain_info.dns_query.as_deref())?;
 
         matcher
             .match_domain(domain)

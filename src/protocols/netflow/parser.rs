@@ -1,6 +1,13 @@
 pub fn is_netflow_v5(data: &[u8]) -> bool {
     data.len() >= 4 && data[0] == 0x00 && data[1] == 0x05
 }
+pub fn detect(data: &[u8]) -> bool {
+    is_netflow_v5(data)
+}
+#[cfg(test)]
+pub fn valid_sample() -> Vec<u8> {
+    vec![0x00, 0x05, 0x00, 0x01]
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -16,11 +23,4 @@ mod tests {
     fn test_short() {
         assert!(!is_netflow_v5(&[0x00]));
     }
-}
-pub fn detect(data: &[u8]) -> bool {
-    is_netflow_v5(data)
-}
-#[cfg(test)]
-pub fn valid_sample() -> Vec<u8> {
-    vec![0x00, 0x05, 0x00, 0x01]
 }

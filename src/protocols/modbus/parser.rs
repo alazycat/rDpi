@@ -73,7 +73,7 @@ pub fn parse_modbus_frame(data: &[u8]) -> Option<ModbusMetadata> {
 fn parse_pdu(function_code: u8, data: &[u8]) -> Option<(bool, ModbusData)> {
     match function_code {
         // Read functions - distinguish request/response by data length
-        0x01 | 0x02 | 0x03 | 0x04 => parse_read_function(function_code, data),
+        0x01..=0x04 => parse_read_function(function_code, data),
         // Write single
         0x05 | 0x06 => parse_write_single(function_code, data),
         // Write multiple
@@ -95,7 +95,7 @@ fn parse_read_function(_function_code: u8, data: &[u8]) -> Option<(bool, ModbusD
         let address = u16::from_be_bytes([data[0], data[1]]);
         let quantity = u16::from_be_bytes([data[2], data[3]]);
         Some((false, ModbusData::ReadRequest { address, quantity }))
-    } else if data.len() >= 1 {
+    } else if !data.is_empty() {
         // Response
         let byte_count = data[0] as usize;
         if data.len() < 1 + byte_count {
@@ -179,7 +179,7 @@ fn parse_read_write_multiple(data: &[u8]) -> Option<(bool, ModbusData)> {
     // Request: read_addr (2) + read_qty (2) + write_addr (2) + write_qty (2) + write_byte_count (1) + write_values (N)
     // Response: byte_count (1) + read_data (N)
 
-    if data.len() < 1 {
+    if data.is_empty() {
         return None;
     }
 
@@ -206,7 +206,7 @@ fn parse_read_write_multiple(data: &[u8]) -> Option<(bool, ModbusData)> {
                 write_values,
             },
         ))
-    } else if data.len() >= 1 {
+    } else if !data.is_empty() {
         // Likely response
         let byte_count = data[0] as usize;
         if data.len() < 1 + byte_count {

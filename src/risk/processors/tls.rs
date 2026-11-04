@@ -72,14 +72,14 @@ impl RiskProcessor for TlsRiskProcessor {
 
         // 2. TlsObsoleteVersion: TLS 1.0/1.1
         // 注意：版本字符串由 tls/parser.rs:decode_tls_version 产出，格式为 "TLS 1.0"（带前缀）
-        if let Some(ref ver) = tls.version {
-            if ver == "TLS 1.0" || ver == "TLS 1.1" {
-                results.push(RiskResult::new(
-                    RiskFlag::TlsObsoleteVersion,
-                    RiskSeverity::High,
-                    format!("Obsolete TLS version {}. Use TLS 1.2 or later.", ver),
-                ));
-            }
+        if let Some(ref ver) = tls.version
+            && (ver == "TLS 1.0" || ver == "TLS 1.1")
+        {
+            results.push(RiskResult::new(
+                RiskFlag::TlsObsoleteVersion,
+                RiskSeverity::High,
+                format!("Obsolete TLS version {}. Use TLS 1.2 or later.", ver),
+            ));
         }
 
         // 3. TlsWeakCipher: 检查密码套件

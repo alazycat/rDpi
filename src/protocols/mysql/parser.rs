@@ -78,11 +78,7 @@ fn extract_auth_plugin(data: &[u8], after_version: usize) -> Option<String> {
     let auth_data_len = data[auth_len_offset] as usize;
 
     // auth_plugin_data_part_2 length = auth_data_len - 8 (part 1)
-    let auth_part2_len = if auth_data_len > 8 {
-        auth_data_len - 8
-    } else {
-        0
-    };
+    let auth_part2_len = auth_data_len.saturating_sub(8);
 
     // auth_plugin_name starts after fixed fields + auth_part2
     let plugin_offset = after_version + fixed_size + auth_part2_len;

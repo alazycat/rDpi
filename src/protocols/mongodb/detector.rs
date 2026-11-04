@@ -47,7 +47,7 @@ mod tests {
     use super::*;
     use crate::core::types::ProtocolCategory;
 
-    fn build_isMaster_bson(version: &str) -> Vec<u8> {
+    fn build_is_master_bson(version: &str) -> Vec<u8> {
         let mut bson = Vec::new();
         // isMaster: boolean true
         bson.push(0x08);
@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn test_mongodb_detector_handshake() {
         let detector = MongodbDetector::new();
-        let bson = build_isMaster_bson("6.0.0");
+        let bson = build_is_master_bson("6.0.0");
         let packet = build_op_msg_packet(&bson);
 
         let result = detector.detect(&packet).unwrap();

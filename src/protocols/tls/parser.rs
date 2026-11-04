@@ -104,10 +104,11 @@ pub fn parse_client_hello(data: &[u8]) -> Option<ClientHelloInfo> {
     })
 }
 
+/// ClientHello 字段解析结果：(SNI, 支持的版本, 密码套件, 扩展类型列表, 支持组)
+type ClientHelloFields = (Option<String>, Option<String>, Vec<u16>, Vec<u16>, Vec<u16>);
+
 /// 解析 ClientHello 所有字段，提取 SNI、supported_version、密码套件、扩展列表和 Supported Groups
-fn parse_client_hello_fields(
-    data: &[u8],
-) -> Option<(Option<String>, Option<String>, Vec<u16>, Vec<u16>, Vec<u16>)> {
+fn parse_client_hello_fields(data: &[u8]) -> Option<ClientHelloFields> {
     // TLS record header: 5 bytes
     // Handshake header: 4 bytes
     // Client Version: 2 bytes
@@ -309,7 +310,7 @@ fn parse_supported_groups_extension(data: &[u8]) -> Vec<u16> {
         return Vec::new();
     }
     let groups_len = u16_from_be(&data[0..2]) as usize;
-    if groups_len + 2 > data.len() || groups_len % 2 != 0 {
+    if groups_len + 2 > data.len() || !groups_len.is_multiple_of(2) {
         return Vec::new();
     }
     let mut groups = Vec::with_capacity(groups_len / 2);

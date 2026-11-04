@@ -52,7 +52,7 @@ fn serialize_u16(items: &[u16]) -> Vec<u8> {
 /// 计算 SHA-256 并截取指定数量的十六进制字符
 fn trunc_hash_hex(data: &[u8], chars: usize) -> String {
     let hash = Sha256::digest(data);
-    hex::encode(&hash)[..chars.min(64)].to_string()
+    hex::encode(hash)[..chars.min(64)].to_string()
 }
 
 #[cfg(test)]

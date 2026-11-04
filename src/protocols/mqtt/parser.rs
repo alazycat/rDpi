@@ -201,7 +201,7 @@ mod tests {
         if clean_session {
             flags |= 0x02; // Clean Session
         }
-        if let Some(_) = will_topic {
+        if will_topic.is_some() {
             flags |= 0x04; // Will Flag
             flags |= 0x08; // Will QoS = 1
         }

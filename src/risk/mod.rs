@@ -100,7 +100,6 @@ mod tests {
     use crate::core::TransportProto;
     use crate::core::flow::Flow;
     use crate::core::types::FlowKey;
-    use std::net::IpAddr;
 
     struct TestProcessor;
 

@@ -53,10 +53,10 @@ fn main() -> Result<()> {
     let dns_packet = build_dns_packet();
     if let Some(result) = detector.detect(&dns_packet)? {
         println!("Protocol: {:?}", result.protocol);
-        if let Metadata::Dns(dns) = &result.metadata {
-            if let Some(domain) = &dns.query_domain {
-                println!("Query Domain: {}", domain);
-            }
+        if let Metadata::Dns(dns) = &result.metadata
+            && let Some(domain) = &dns.query_domain
+        {
+            println!("Query Domain: {}", domain);
         }
     }
 

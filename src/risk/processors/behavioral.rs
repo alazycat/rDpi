@@ -207,16 +207,10 @@ mod tests {
         let proc = BehavioralRiskProcessor::new();
         // Mixed printable/non-printable: first 20 bytes have ~50% ratio
         let mut payload = vec![0u8; 100];
-        for i in 0..8 {
-            payload[i] = b'A';
-        } // 8 printable in first 20
-        for i in 8..20 {
-            payload[i] = 0x00;
-        } // 12 non-printable in first 20
+        payload[0..8].fill(b'A'); // 8 printable in first 20
+        payload[8..20].fill(0x00); // 12 non-printable in first 20
         // ratio = 8/20 = 0.4 which is between 0.3 and 0.7
-        for i in 50..100 {
-            payload[i] = 0xFF;
-        } // uniform pattern
+        payload[50..100].fill(0xFF); // uniform pattern
         let (p, f) = (make_parsed(payload), make_flow());
         let risks = proc.analyze_packet(&p, &f);
         assert!(risks.iter().any(|r| r.flag == RiskFlag::ObfuscatedTraffic));

@@ -11,7 +11,7 @@ pub fn is_tftp(data: &[u8]) -> bool {
     let opcode = u16::from_be_bytes([data[0], data[1]]);
     match opcode {
         1 | 2 => is_rw_request(data),
-        3 | 4 | 5 => true,
+        3..=5 => true,
         _ => false,
     }
 }

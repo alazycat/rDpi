@@ -4,6 +4,13 @@ pub fn is_socks(data: &[u8]) -> bool {
     }
     data[0] == 0x04 || data[0] == 0x05
 }
+pub fn detect(data: &[u8]) -> bool {
+    is_socks(data)
+}
+#[cfg(test)]
+pub fn valid_sample() -> Vec<u8> {
+    vec![0x05, 0x01, 0x00]
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -23,11 +30,4 @@ mod tests {
     fn test_empty() {
         assert!(!is_socks(&[]));
     }
-}
-pub fn detect(data: &[u8]) -> bool {
-    is_socks(data)
-}
-#[cfg(test)]
-pub fn valid_sample() -> Vec<u8> {
-    vec![0x05, 0x01, 0x00]
 }

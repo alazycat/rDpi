@@ -80,6 +80,10 @@ pub const DEFAULT_TCP_GIVEUP: u32 = 20;
 /// UDP 流 DPI 放弃阈值（包数）
 pub const DEFAULT_UDP_GIVEUP: u32 = 5;
 
+/// 风险事件推送回调类型（观察者模式，见 [`Detector::set_risk_callback`]）
+#[cfg(feature = "risk")]
+type RiskCallback = Box<dyn Fn(FlowKey, &RiskResult) + Send + Sync>;
+
 /// 主入口：包检测器
 ///
 /// 自动追踪流，统计每条流的协议、包数、字节数。
@@ -114,7 +118,7 @@ pub struct Detector {
     pending_risks: Vec<(FlowKey, RiskResult)>,
     /// 风险事件推送回调（观察者模式，drain_risks 轮询之外的即时出口）
     #[cfg(feature = "risk")]
-    risk_callback: Option<Box<dyn Fn(FlowKey, &RiskResult) + Send + Sync>>,
+    risk_callback: Option<RiskCallback>,
 }
 
 impl Detector {
@@ -410,13 +414,13 @@ impl Detector {
         if !protocols::tls::is_certificate_message(payload) {
             return;
         }
-        if let Some(cert) = protocols::tls::parse_certificate(payload) {
-            if let Some(Metadata::Tls(ref mut tls)) = flow.metadata {
-                tls.cert_subject = cert.subject;
-                tls.cert_issuer = cert.issuer;
-                tls.cert_valid_from = cert.not_before;
-                tls.cert_valid_to = cert.not_after;
-            }
+        if let Some(cert) = protocols::tls::parse_certificate(payload)
+            && let Some(Metadata::Tls(ref mut tls)) = flow.metadata
+        {
+            tls.cert_subject = cert.subject;
+            tls.cert_issuer = cert.issuer;
+            tls.cert_valid_from = cert.not_before;
+            tls.cert_valid_to = cert.not_after;
         }
     }
 

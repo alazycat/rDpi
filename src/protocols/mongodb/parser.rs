@@ -201,10 +201,8 @@ fn scan_bson_for_handshake(body: &[u8]) -> Option<MongodbMetadata> {
                     "isMaster" | "hello" | "ismaster" => found_cmd = value != 0,
                     "maxWireVersion" => max_wire_version = Some(value),
                     "maxMsgSizeBytes" => max_msg_size = Some(value),
-                    "maxBsonObjectSize" => {
-                        if max_msg_size.is_none() {
-                            max_msg_size = Some(value);
-                        }
+                    "maxBsonObjectSize" if max_msg_size.is_none() => {
+                        max_msg_size = Some(value);
                     }
                     _ => {}
                 }
@@ -262,7 +260,7 @@ mod tests {
     use super::*;
 
     /// Build a BSON document with isMaster=true and ok=1
-    fn build_isMaster_bson(version: &str, max_wire: i32, max_msg: i32) -> Vec<u8> {
+    fn build_is_master_bson(version: &str, max_wire: i32, max_msg: i32) -> Vec<u8> {
         let mut bson = Vec::new();
 
         // isMaster: Boolean true (0x08), name="isMaster\0", value=1
@@ -308,8 +306,8 @@ mod tests {
     }
 
     /// Build a complete OP_MSG packet with BSON body
-    fn build_op_msg_isMaster(version: &str, max_wire: i32, max_msg: i32) -> Vec<u8> {
-        let bson = build_isMaster_bson(version, max_wire, max_msg);
+    fn build_op_msg_is_master(version: &str, max_wire: i32, max_msg: i32) -> Vec<u8> {
+        let bson = build_is_master_bson(version, max_wire, max_msg);
         let body_len = 1 + 1 + bson.len(); // flags(1) + kind(1) + bson
         let msg_len = (16 + body_len) as i32;
 
@@ -325,7 +323,7 @@ mod tests {
     }
 
     /// Build a complete OP_QUERY packet with isMaster BSON query
-    fn build_op_query_isMaster() -> Vec<u8> {
+    fn build_op_query_is_master() -> Vec<u8> {
         let mut bson = Vec::new();
         // isMaster: Int32 1
         bson.push(0x10);
@@ -357,8 +355,8 @@ mod tests {
     }
 
     #[test]
-    fn test_mongodb_isMaster_op_msg() {
-        let data = build_op_msg_isMaster("6.0.0", 17, 48000000);
+    fn test_mongodb_is_master_op_msg() {
+        let data = build_op_msg_is_master("6.0.0", 17, 48000000);
         let meta = parse_mongodb_handshake(&data).unwrap();
 
         assert_eq!(meta.server_version, Some("6.0.0".to_string()));
@@ -368,7 +366,7 @@ mod tests {
 
     #[test]
     fn test_mongodb_hello_op_query() {
-        let data = build_op_query_isMaster();
+        let data = build_op_query_is_master();
         let meta = parse_mongodb_handshake(&data).unwrap();
 
         assert!(meta.server_version.is_none()); // OP_QUERY request has no version
@@ -410,7 +408,7 @@ mod tests {
     #[test]
     fn test_mongodb_op_reply() {
         // OP_REPLY with isMaster BSON
-        let bson = build_isMaster_bson("7.0.0", 21, 48000000);
+        let bson = build_is_master_bson("7.0.0", 21, 48000000);
         let msg_len = (16 + 20 + bson.len()) as i32;
 
         let mut packet = Vec::new();

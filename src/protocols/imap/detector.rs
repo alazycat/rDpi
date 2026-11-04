@@ -39,17 +39,13 @@ impl ProtocolDetector for ImapDetector {
         let first_byte = payload[0];
 
         // Path 1: Server response (untagged or tagged)
-        if is_imap_response_prefix(first_byte) {
-            if parse_imap_response(payload).is_some() {
-                return Some(DetectionResult::new(Protocol::Imap));
-            }
+        if is_imap_response_prefix(first_byte) && parse_imap_response(payload).is_some() {
+            return Some(DetectionResult::new(Protocol::Imap));
         }
 
         // Path 2: Client command
-        if is_imap_command_prefix(first_byte) {
-            if parse_imap_command(payload).is_some() {
-                return Some(DetectionResult::new(Protocol::Imap));
-            }
+        if is_imap_command_prefix(first_byte) && parse_imap_command(payload).is_some() {
+            return Some(DetectionResult::new(Protocol::Imap));
         }
 
         None

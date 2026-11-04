@@ -39,17 +39,13 @@ impl ProtocolDetector for Pop3Detector {
         let first_byte = payload[0];
 
         // Path 1: Server response
-        if is_pop3_response_prefix(first_byte) {
-            if parse_pop3_response(payload).is_some() {
-                return Some(DetectionResult::new(Protocol::Pop3));
-            }
+        if is_pop3_response_prefix(first_byte) && parse_pop3_response(payload).is_some() {
+            return Some(DetectionResult::new(Protocol::Pop3));
         }
 
         // Path 2: Client command
-        if is_pop3_command_prefix(first_byte) {
-            if parse_pop3_command(payload).is_some() {
-                return Some(DetectionResult::new(Protocol::Pop3));
-            }
+        if is_pop3_command_prefix(first_byte) && parse_pop3_command(payload).is_some() {
+            return Some(DetectionResult::new(Protocol::Pop3));
         }
 
         None

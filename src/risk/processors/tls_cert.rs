@@ -43,44 +43,44 @@ impl RiskProcessor for TlsCertRiskProcessor {
             .as_secs();
 
         // 1. SelfSignedCert
-        if let (Some(subj), Some(iss)) = (&tls.cert_subject, &tls.cert_issuer) {
-            if subj == iss {
-                results.push(RiskResult::new(
-                    RiskFlag::TlsSelfSignedCert,
-                    RiskSeverity::High,
-                    format!(
-                        "Self-signed TLS certificate: subject = issuer = \"{}\"",
-                        subj
-                    ),
-                ));
-            }
+        if let (Some(subj), Some(iss)) = (&tls.cert_subject, &tls.cert_issuer)
+            && subj == iss
+        {
+            results.push(RiskResult::new(
+                RiskFlag::TlsSelfSignedCert,
+                RiskSeverity::High,
+                format!(
+                    "Self-signed TLS certificate: subject = issuer = \"{}\"",
+                    subj
+                ),
+            ));
         }
 
         // 2. Expired
-        if let Some(not_after) = tls.cert_valid_to {
-            if not_after < now {
-                results.push(RiskResult::new(
-                    RiskFlag::TlsCertExpired,
-                    RiskSeverity::High,
-                    format!("TLS certificate expired {} seconds ago", now - not_after),
-                ));
-            }
+        if let Some(not_after) = tls.cert_valid_to
+            && not_after < now
+        {
+            results.push(RiskResult::new(
+                RiskFlag::TlsCertExpired,
+                RiskSeverity::High,
+                format!("TLS certificate expired {} seconds ago", now - not_after),
+            ));
         }
 
         // 3. Validity too long
-        if let (Some(from), Some(to)) = (tls.cert_valid_from, tls.cert_valid_to) {
-            if to > from {
-                let days = (to - from) / 86400;
-                if days > MAX_CERT_DAYS {
-                    results.push(RiskResult::new(
-                        RiskFlag::TlsCertValidityTooLong,
-                        RiskSeverity::Medium,
-                        format!(
-                            "Certificate valid for {} days (max recommended: {})",
-                            days, MAX_CERT_DAYS
-                        ),
-                    ));
-                }
+        if let (Some(from), Some(to)) = (tls.cert_valid_from, tls.cert_valid_to)
+            && to > from
+        {
+            let days = (to - from) / 86400;
+            if days > MAX_CERT_DAYS {
+                results.push(RiskResult::new(
+                    RiskFlag::TlsCertValidityTooLong,
+                    RiskSeverity::Medium,
+                    format!(
+                        "Certificate valid for {} days (max recommended: {})",
+                        days, MAX_CERT_DAYS
+                    ),
+                ));
             }
         }
 

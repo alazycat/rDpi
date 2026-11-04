@@ -82,7 +82,7 @@ fn parse_x509_certificate(data: &[u8]) -> Option<CertInfo> {
 
     // Check if version's EXPLICIT tag [0] is present (bit 6 = constructed, tag 0)
     // This is indicated by byte 0 having tag 0xa0 = 0x80 | 0x20 | 0x00
-    let has_version = tbs.peek_byte().map_or(false, |b| b == 0xA0);
+    let has_version = tbs.peek_byte() == Some(0xA0);
 
     if has_version {
         // Skip version [0] EXPLICIT INTEGER
@@ -129,23 +129,23 @@ fn extract_dn(reader: &mut BerReader) -> Option<String> {
                 // OID
                 if let Some(_oid) = attr_reader.decode_value() {
                     // Value: PrintableString, UTF8String, T61String, etc.
-                    if let Some((val_tag, val_data)) = attr_reader.decode_tlv() {
-                        if val_tag.class == crate::asn1::types::Asn1Class::Universal {
-                            match val_tag.number {
-                                0x0C | 0x13 => {
-                                    // UTF8String (0x0C) or PrintableString (0x13)
-                                    if let Ok(s) = std::str::from_utf8(val_data) {
-                                        parts.push(s.to_string());
-                                    }
+                    if let Some((val_tag, val_data)) = attr_reader.decode_tlv()
+                        && val_tag.class == crate::asn1::types::Asn1Class::Universal
+                    {
+                        match val_tag.number {
+                            0x0C | 0x13 => {
+                                // UTF8String (0x0C) or PrintableString (0x13)
+                                if let Ok(s) = std::str::from_utf8(val_data) {
+                                    parts.push(s.to_string());
                                 }
-                                0x14 => {
-                                    // T61String / TeletexString
-                                    if let Ok(s) = std::str::from_utf8(val_data) {
-                                        parts.push(s.to_string());
-                                    }
-                                }
-                                _ => {}
                             }
+                            0x14 => {
+                                // T61String / TeletexString
+                                if let Ok(s) = std::str::from_utf8(val_data) {
+                                    parts.push(s.to_string());
+                                }
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -222,7 +222,7 @@ fn parse_generalized_time(data: &[u8]) -> Option<u64> {
 
 /// Simple Unix timestamp calculation (not timezone-aware)
 fn timestamp(year: u64, month: u64, day: u64, hour: u64, min: u64, sec: u64) -> Option<u64> {
-    if year < 1970 || month < 1 || month > 12 || day < 1 || day > 31 {
+    if year < 1970 || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
     if hour > 23 || min > 59 || sec > 59 {
@@ -234,7 +234,7 @@ fn timestamp(year: u64, month: u64, day: u64, hour: u64, min: u64, sec: u64) -> 
         let mut y = 1970u64;
         let mut days = 0u64;
         while y < year {
-            days += if (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0) {
+            days += if (y.is_multiple_of(4) && !y.is_multiple_of(100)) || y.is_multiple_of(400) {
                 366
             } else {
                 365
@@ -242,7 +242,8 @@ fn timestamp(year: u64, month: u64, day: u64, hour: u64, min: u64, sec: u64) -> 
             y += 1;
         }
         let month_days = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-        let is_leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+        let is_leap =
+            (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400);
         for m in 1..month {
             days += month_days[m as usize];
             if m == 2 && is_leap {
@@ -350,7 +351,7 @@ mod tests {
 
     fn append_validity(data: &mut Vec<u8>) {
         let now = 1710000000u64; // 2024-03-09 approx
-        let later = now + 365 * 86400;
+        let _later = now + 365 * 86400;
         // UTCTime format: YYMMDDHHMMSSZ
         let from = b"240309120000Z";
         let to = b"250309120000Z";

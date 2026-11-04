@@ -22,6 +22,15 @@ pub fn is_ptpv2(data: &[u8]) -> bool {
     let msg_len = u16::from_be_bytes([data[2], data[3]]) as usize;
     version == 0x02 && valid_type && msg_len >= 32 && msg_len <= data.len()
 }
+pub fn detect(data: &[u8]) -> bool {
+    is_ptpv2(data)
+}
+#[cfg(test)]
+pub fn valid_sample() -> Vec<u8> {
+    let mut v = vec![0x00, 0x02, 0x00, 0x2C]; // Sync, version 2, messageLength=44
+    v.resize(44, 0x00);
+    v
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,13 +63,4 @@ mod tests {
     fn test_invalid_message_type() {
         assert!(!is_ptpv2(&[0x05, 0x02, 0x00, 0x2C]));
     }
-}
-pub fn detect(data: &[u8]) -> bool {
-    is_ptpv2(data)
-}
-#[cfg(test)]
-pub fn valid_sample() -> Vec<u8> {
-    let mut v = vec![0x00, 0x02, 0x00, 0x2C]; // Sync, version 2, messageLength=44
-    v.resize(44, 0x00);
-    v
 }

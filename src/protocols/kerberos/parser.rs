@@ -40,12 +40,12 @@ fn extract_realm(data: &[u8]) -> Option<String> {
     for i in 6..data.len().saturating_sub(3) {
         if data[i] == 0x04 {
             let len = data[i + 1] as usize;
-            if i + 2 + len <= data.len() && len >= 2 && len <= 128 {
-                if let Ok(s) = std::str::from_utf8(&data[i + 2..i + 2 + len]) {
-                    if s.contains('.') {
-                        return Some(s.to_string());
-                    }
-                }
+            if i + 2 + len <= data.len()
+                && (2..=128).contains(&len)
+                && let Ok(s) = std::str::from_utf8(&data[i + 2..i + 2 + len])
+                && s.contains('.')
+            {
+                return Some(s.to_string());
             }
         }
     }

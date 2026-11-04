@@ -279,14 +279,14 @@ mod tests {
     #[test]
     fn test_parse_varint_2_bytes() {
         // Prefix 01: 2 bytes
-        let data = [0x40 | 0x00, 0x10]; // 16
+        let data = [0x40, 0x10]; // 16
         assert_eq!(parse_varint(&data), Some((16, 2)));
     }
 
     #[test]
     fn test_parse_varint_4_bytes() {
         // Prefix 10: 4 bytes
-        let data = [0x80 | 0x00, 0x01, 0x00, 0x00]; // 65536
+        let data = [0x80, 0x01, 0x00, 0x00]; // 65536
         assert_eq!(parse_varint(&data), Some((65536, 4)));
     }
 

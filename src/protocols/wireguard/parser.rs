@@ -33,7 +33,7 @@ pub fn parse_wireguard_handshake(data: &[u8]) -> Option<WireGuardMetadata> {
 
     // Message type must be 1-4
     let message_type = data[0];
-    if message_type < 1 || message_type > 4 {
+    if !(1..=4).contains(&message_type) {
         return None;
     }
 

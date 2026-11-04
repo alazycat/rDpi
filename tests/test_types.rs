@@ -127,7 +127,7 @@ fn test_application_name() {
 fn test_tls_metadata_with_application() {
     use rdpi::core::types::{Application, TlsMetadata};
 
-    let metadata = TlsMetadata {
+    let _metadata = TlsMetadata {
         sni: Some("www.youtube.com".to_string()),
         version: Some("TLSv1.3".to_string()),
         application: Some(Application::YouTube),

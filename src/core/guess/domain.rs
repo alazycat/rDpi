@@ -3,7 +3,7 @@
 //! 基于 aho-corasick crate 实现的高效多模式域名匹配，
 //! 用于 DNS 域名 / TLS SNI / HTTP Host 到协议和应用的映射。
 
-use crate::core::types::{Application, DetectionResult, Protocol};
+use crate::core::types::{Application, Protocol};
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 
 /// 域名匹配结果

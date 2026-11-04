@@ -1,6 +1,13 @@
 pub fn is_rsync(data: &[u8]) -> bool {
     data.len() >= 7 && data[..7] == *b"@RSYNCD"
 }
+pub fn detect(data: &[u8]) -> bool {
+    is_rsync(data)
+}
+#[cfg(test)]
+pub fn valid_sample() -> Vec<u8> {
+    b"@RSYNCD: 30.0".to_vec()
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -16,11 +23,4 @@ mod tests {
     fn test_short() {
         assert!(!is_rsync(b"@RSYNC"));
     }
-}
-pub fn detect(data: &[u8]) -> bool {
-    is_rsync(data)
-}
-#[cfg(test)]
-pub fn valid_sample() -> Vec<u8> {
-    b"@RSYNCD: 30.0".to_vec()
 }

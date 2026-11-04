@@ -5,6 +5,13 @@ pub fn is_whois(data: &[u8]) -> bool {
     data.iter()
         .all(|&b| b.is_ascii_graphic() || b == b'\r' || b == b'\n' || b == b' ')
 }
+pub fn detect(data: &[u8]) -> bool {
+    is_whois(data)
+}
+#[cfg(test)]
+pub fn valid_sample() -> Vec<u8> {
+    b"example.com\r\n".to_vec()
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -20,11 +27,4 @@ mod tests {
     fn test_binary() {
         assert!(!is_whois(&[0x00, 0x01]));
     }
-}
-pub fn detect(data: &[u8]) -> bool {
-    is_whois(data)
-}
-#[cfg(test)]
-pub fn valid_sample() -> Vec<u8> {
-    b"example.com\r\n".to_vec()
 }

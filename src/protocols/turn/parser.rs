@@ -4,7 +4,7 @@ pub fn is_turn(data: &[u8]) -> bool {
     }
     let channel = u16::from_be_bytes([data[0], data[1]]);
     // TURN channel: 0x4000-0x7FFE, even only (RFC 5766 §11)
-    channel >= 0x4000 && channel <= 0x7FFE && channel % 2 == 0
+    (0x4000..=0x7FFE).contains(&channel) && channel.is_multiple_of(2)
 }
 pub fn detect(d: &[u8]) -> bool {
     is_turn(d)

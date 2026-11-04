@@ -720,10 +720,20 @@ fn risk_exit_callback_pushes_flow_level_risks() {
 
     let got = events.lock().unwrap();
     // 单包未识别流同时命中两条流级风险（behavioral.rs：packets<=3 单向 + packets<=2 探测）
-    assert_eq!(got.len(), 2, "UnidirectionalTraffic + ProbingAttempt pushed at expire");
-    assert!(got.iter().all(|(k, _)| *k == expired[0]), "all keyed by expired flow");
+    assert_eq!(
+        got.len(),
+        2,
+        "UnidirectionalTraffic + ProbingAttempt pushed at expire"
+    );
+    assert!(
+        got.iter().all(|(k, _)| *k == expired[0]),
+        "all keyed by expired flow"
+    );
     assert!(got.iter().any(|(_, f)| *f == RiskFlag::ProbingAttempt));
-    assert!(got.iter().any(|(_, f)| *f == RiskFlag::UnidirectionalTraffic));
+    assert!(
+        got.iter()
+            .any(|(_, f)| *f == RiskFlag::UnidirectionalTraffic)
+    );
 
     // 观察者不影响拉取路径：drain_risks 仍返回该事件
     assert!(

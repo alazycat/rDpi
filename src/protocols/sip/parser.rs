@@ -83,7 +83,7 @@ pub fn is_sip_message(payload: &[u8]) -> bool {
     }
     // 检查 SIP 请求（方法名）
     let first = payload[0];
-    if (b'A'..=b'Z').contains(&first) {
+    if first.is_ascii_uppercase() {
         return SIP_METHODS
             .iter()
             .any(|m| payload.starts_with(m.as_bytes()));

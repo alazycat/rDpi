@@ -46,8 +46,7 @@ pub fn parse_imap_response(data: &[u8]) -> Option<ImapResponse> {
     let line = std::str::from_utf8(&data[..line_end]).ok()?;
 
     // Untagged response: * OK, * NO, * BAD, etc.
-    if line.starts_with("* ") {
-        let rest = &line[2..];
+    if let Some(rest) = line.strip_prefix("* ") {
         let status = rest.split_whitespace().next()?;
         if is_valid_status(status) {
             return Some(ImapResponse {

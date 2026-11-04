@@ -11,6 +11,13 @@ pub fn is_syslog(data: &[u8]) -> bool {
     }
     i > 1 && i < data.len() && data[i] == b'>'
 }
+pub fn detect(data: &[u8]) -> bool {
+    is_syslog(data)
+}
+#[cfg(test)]
+pub fn valid_sample() -> Vec<u8> {
+    b"<14>Mar  1 12:00 test".to_vec()
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -30,11 +37,4 @@ mod tests {
     fn test_no_digit() {
         assert!(!is_syslog(b"<>test"));
     }
-}
-pub fn detect(data: &[u8]) -> bool {
-    is_syslog(data)
-}
-#[cfg(test)]
-pub fn valid_sample() -> Vec<u8> {
-    b"<14>Mar  1 12:00 test".to_vec()
 }

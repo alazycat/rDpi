@@ -90,7 +90,7 @@ fn parse_xor_mapped_address(data: &[u8]) -> Option<String> {
 
         // Align to 4-byte boundary
         offset += attr_len;
-        if offset % 4 != 0 {
+        if !offset.is_multiple_of(4) {
             offset += 4 - (offset % 4);
         }
     }

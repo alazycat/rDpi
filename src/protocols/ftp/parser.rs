@@ -53,10 +53,12 @@ pub fn parse_ftp_command(payload: &[u8]) -> Option<FtpCommand> {
         if upper.starts_with(verb) {
             // Ensure the verb is followed by a space or end-of-line
             // to avoid false matches like "DELETE" matching "DELE"
-            if let Some(ch) = upper.as_bytes().get(verb.len()) {
-                if *ch != b' ' && *ch != b'\r' && *ch != b'\n' {
-                    continue;
-                }
+            if let Some(ch) = upper.as_bytes().get(verb.len())
+                && *ch != b' '
+                && *ch != b'\r'
+                && *ch != b'\n'
+            {
+                continue;
             }
             let arg = line[verb.len()..].trim().to_string();
             let argument = if arg.is_empty() { None } else { Some(arg) };
@@ -112,7 +114,7 @@ pub fn is_ftp_command_prefix(payload: &[u8]) -> bool {
     payload
         .first()
         .copied()
-        .is_some_and(|first| (b'A'..=b'Z').contains(&first))
+        .is_some_and(|first: u8| first.is_ascii_uppercase())
 }
 
 #[cfg(test)]

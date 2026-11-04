@@ -99,7 +99,7 @@ fn build_tls_client_hello() -> Vec<u8> {
 
 fn build_dns_query_packet() -> Vec<u8> {
     // DNS query for example.com
-    let mut payload = vec![
+    let payload = vec![
         0xaa, 0xaa, // TXID
         0x01, 0x00, // Flags: standard query
         0x00, 0x01, // Questions: 1

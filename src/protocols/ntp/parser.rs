@@ -43,7 +43,7 @@ pub fn parse_ntp_packet(data: &[u8]) -> Option<NtpHeader> {
     let mode = first_byte & 0x07;
 
     // Validate version (1-4)
-    if version < 1 || version > 4 {
+    if !(1..=4).contains(&version) {
         return None;
     }
 

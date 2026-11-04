@@ -7,17 +7,20 @@ pub fn is_nfs_rpc(data: &[u8]) -> bool {
     // msg_type: 0=call, 1=reply
     data[12] == 0x00 && data[13] == 0x00 && data[14] == 0x00 && data[15] == 0x02
 }
+pub fn detect(data: &[u8]) -> bool {
+    is_nfs_rpc(data)
+}
+#[cfg(test)]
+pub fn valid_sample() -> Vec<u8> {
+    let mut v = vec![0u8; 20];
+    v[12..16].copy_from_slice(&[0, 0, 0, 2]);
+    v
+}
 #[cfg(test)]
 mod tests {
     use super::*;
     fn rpc_call() -> Vec<u8> {
         let mut v = vec![0u8; 16];
-        v[12..16].copy_from_slice(&[0, 0, 0, 2]);
-        v
-    }
-    fn rpc_reply() -> Vec<u8> {
-        let mut v = vec![0u8; 16];
-        v[8] = 1;
         v[12..16].copy_from_slice(&[0, 0, 0, 2]);
         v
     }
@@ -35,13 +38,4 @@ mod tests {
         v[15] = 3;
         assert!(!is_nfs_rpc(&v));
     }
-}
-pub fn detect(data: &[u8]) -> bool {
-    is_nfs_rpc(data)
-}
-#[cfg(test)]
-pub fn valid_sample() -> Vec<u8> {
-    let mut v = vec![0u8; 20];
-    v[12..16].copy_from_slice(&[0, 0, 0, 2]);
-    v
 }

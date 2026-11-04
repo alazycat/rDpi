@@ -37,37 +37,37 @@ impl ProtocolDetector for SmtpDetector {
         let first_byte = payload[0];
 
         // Path 1: Server response
-        if is_smtp_response_prefix(first_byte) {
-            if let Some(resp) = parse_smtp_response(payload) {
-                let hostname = extract_hostname_from_banner(&resp.message);
-                let metadata = Metadata::Smtp(SmtpMetadata {
-                    hostname,
-                    is_client: false,
-                });
+        if is_smtp_response_prefix(first_byte)
+            && let Some(resp) = parse_smtp_response(payload)
+        {
+            let hostname = extract_hostname_from_banner(&resp.message);
+            let metadata = Metadata::Smtp(SmtpMetadata {
+                hostname,
+                is_client: false,
+            });
 
-                return Some(
-                    DetectionResult::new(Protocol::Smtp)
-                        .with_metadata(metadata)
-                        .with_confidence(Confidence::Dpi),
-                );
-            }
+            return Some(
+                DetectionResult::new(Protocol::Smtp)
+                    .with_metadata(metadata)
+                    .with_confidence(Confidence::Dpi),
+            );
         }
 
         // Path 2: Client command
-        if is_smtp_command_prefix(first_byte) {
-            if let Some(cmd) = parse_smtp_command(payload) {
-                let hostname = extract_hostname_from_command(&cmd);
-                let metadata = Metadata::Smtp(SmtpMetadata {
-                    hostname,
-                    is_client: true,
-                });
+        if is_smtp_command_prefix(first_byte)
+            && let Some(cmd) = parse_smtp_command(payload)
+        {
+            let hostname = extract_hostname_from_command(&cmd);
+            let metadata = Metadata::Smtp(SmtpMetadata {
+                hostname,
+                is_client: true,
+            });
 
-                return Some(
-                    DetectionResult::new(Protocol::Smtp)
-                        .with_metadata(metadata)
-                        .with_confidence(Confidence::Dpi),
-                );
-            }
+            return Some(
+                DetectionResult::new(Protocol::Smtp)
+                    .with_metadata(metadata)
+                    .with_confidence(Confidence::Dpi),
+            );
         }
 
         None
