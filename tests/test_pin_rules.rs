@@ -676,6 +676,63 @@ fn risk_exit_expired_flow_level_risks_reachable() {
     assert!(d.drain_risks().is_empty(), "no duplicate after drain");
 }
 
+/// 风险出口（set_risk_callback，观察者模式）：逐包风险产生即推送。
+#[cfg(feature = "risk")]
+#[test]
+fn risk_exit_callback_pushes_packet_risks() {
+    use rdpi::risk::types::RiskFlag;
+    use std::sync::{Arc, Mutex};
+    let mut d = Detector::new();
+    let events: Arc<Mutex<Vec<(rdpi::core::types::FlowKey, RiskFlag)>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&events);
+    d.set_risk_callback(move |k, r| sink.lock().unwrap().push((k, r.flag)));
+
+    let payload = build_client_hello(None, [0x03, 0x03], false);
+    for _ in 0..2 {
+        let pkt = build_tcp_packet_ip([10, 0, 0, 1], [10, 0, 0, 2], 54321, 443, &payload);
+        d.detect(&pkt).unwrap();
+    }
+    let got = events.lock().unwrap();
+    assert_eq!(got.len(), 2, "each packet's risk pushed immediately");
+    assert!(got.iter().all(|(_, f)| *f == RiskFlag::TlsMissingSni));
+    assert_eq!(got[0].0, got[1].0, "same flow key for both events");
+}
+
+/// 风险出口（set_risk_callback）：流级风险（过期时 analyze_flow）推送。
+/// 回调是观察者——drain_risks 拉取路径不受影响，两通道收到同一事件。
+#[cfg(feature = "risk")]
+#[test]
+fn risk_exit_callback_pushes_flow_level_risks() {
+    use rdpi::risk::types::RiskFlag;
+    use std::sync::{Arc, Mutex};
+    let mut d = Detector::with_config(100, 1);
+    let events: Arc<Mutex<Vec<(rdpi::core::types::FlowKey, RiskFlag)>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&events);
+    d.set_risk_callback(move |k, r| sink.lock().unwrap().push((k, r.flag)));
+
+    let pkt = build_udp_packet_ip([10, 0, 0, 9], [10, 0, 0, 3], 54321, 9999, &[0xAA; 4]);
+    d.detect(&pkt).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1200));
+    let expired = d.expire_flows();
+    assert_eq!(expired.len(), 1);
+
+    let got = events.lock().unwrap();
+    // 单包未识别流同时命中两条流级风险（behavioral.rs：packets<=3 单向 + packets<=2 探测）
+    assert_eq!(got.len(), 2, "UnidirectionalTraffic + ProbingAttempt pushed at expire");
+    assert!(got.iter().all(|(k, _)| *k == expired[0]), "all keyed by expired flow");
+    assert!(got.iter().any(|(_, f)| *f == RiskFlag::ProbingAttempt));
+    assert!(got.iter().any(|(_, f)| *f == RiskFlag::UnidirectionalTraffic));
+
+    // 观察者不影响拉取路径：drain_risks 仍返回该事件
+    assert!(
+        d.drain_risks()
+            .iter()
+            .any(|(_, r)| r.flag == RiskFlag::ProbingAttempt)
+    );
+}
+
 /// 补充 (F6) — 已修复（2026-11-04）：纯 Certificate 记录的单包流不再被误报为 Dns。
 /// 修复：dns/detector.rs 增加问题区可行性校验（每条 question ≥5 字节）+ qname
 /// 非空可打印校验——假 Certificate 帧的 TLS 长度字段被误读为 qdcount=3083 → 拒绝。

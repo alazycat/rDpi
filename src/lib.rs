@@ -112,6 +112,9 @@ pub struct Detector {
     /// 过期流的风险结果暂存（drain_risks 出口之一；流级 analyze_flow 结果此前被直接丢弃）
     #[cfg(feature = "risk")]
     pending_risks: Vec<(FlowKey, RiskResult)>,
+    /// 风险事件推送回调（观察者模式，drain_risks 轮询之外的即时出口）
+    #[cfg(feature = "risk")]
+    risk_callback: Option<Box<dyn Fn(FlowKey, &RiskResult) + Send + Sync>>,
 }
 
 impl Detector {
@@ -143,6 +146,8 @@ impl Detector {
             risk_registry: RiskRegistry::default(),
             #[cfg(feature = "risk")]
             pending_risks: Vec::new(),
+            #[cfg(feature = "risk")]
+            risk_callback: None,
         }
     }
 
@@ -160,6 +165,8 @@ impl Detector {
             risk_registry: RiskRegistry::default(),
             #[cfg(feature = "risk")]
             pending_risks: Vec::new(),
+            #[cfg(feature = "risk")]
+            risk_callback: None,
         }
     }
 
@@ -181,6 +188,8 @@ impl Detector {
             risk_registry: RiskRegistry::default(),
             #[cfg(feature = "risk")]
             pending_risks: Vec::new(),
+            #[cfg(feature = "risk")]
+            risk_callback: None,
         }
     }
 
@@ -366,6 +375,12 @@ impl Detector {
         {
             let risks = self.risk_registry.analyze_packet(&parsed, &*flow);
             if !risks.is_empty() {
+                // 观察者推送（逐包风险）
+                if let Some(cb) = self.risk_callback.as_ref() {
+                    for r in &risks {
+                        cb(key.clone(), r);
+                    }
+                }
                 flow.risks.extend(risks.clone());
                 if let Some(ref mut r) = result {
                     r.risks = risks;
@@ -445,12 +460,35 @@ impl Detector {
                     // 流级风险结果收进 pending_risks（drain_risks 出口），
                     // 此前被 `let _risks = ...` 直接丢弃
                     for r in self.risk_registry.analyze_flow(flow) {
+                        // 观察者推送（流级风险）
+                        if let Some(cb) = self.risk_callback.as_ref() {
+                            cb(key.clone(), &r);
+                        }
                         self.pending_risks.push((key.clone(), r));
                     }
                 }
             }
         }
         self.flow_table.expire_timeout()
+    }
+
+    /// 注册风险事件推送回调（观察者模式）
+    ///
+    /// 逐包风险（detect 路径）与流级风险（expire_flows 过期时）产生即推送，
+    /// 适合接入告警管道等即时消费方。回调是观察者：不影响 `drain_risks`
+    /// 拉取路径——同时使用两条通道会收到相同事件，消费方应择一订阅。
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let mut detector = Detector::new();
+    /// detector.set_risk_callback(|flow_key, risk| {
+    ///     eprintln!("risk {:?} on {:?}", risk.flag, flow_key);
+    /// });
+    /// ```
+    #[cfg(feature = "risk")]
+    pub fn set_risk_callback(&mut self, cb: impl Fn(FlowKey, &RiskResult) + Send + Sync + 'static) {
+        self.risk_callback = Some(Box::new(cb));
     }
 
     /// 收集并清空累积的风险结果（风险出口）
