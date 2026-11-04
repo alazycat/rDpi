@@ -619,6 +619,63 @@ fn r5_expire_window_uses_configured_timeout() {
     assert_eq!(d.flow_count(), 0);
 }
 
+/// 风险出口（drain_risks，2026-11-04 新增）：flow.risks 逐包累积可被收割并清空。
+/// 此前 flow.risks 只能经 flows() 间接读取且无界增长（a6）；drain 后清空。
+#[cfg(feature = "risk")]
+#[test]
+fn risk_exit_drain_collects_and_clears_flow_risks() {
+    use rdpi::risk::types::RiskFlag;
+    let mut d = Detector::new();
+    let payload = build_client_hello(None, [0x03, 0x03], false);
+    for _ in 0..2 {
+        let pkt = build_tcp_packet_ip([10, 0, 0, 1], [10, 0, 0, 2], 54321, 443, &payload);
+        d.detect(&pkt).unwrap();
+    }
+    let drained = d.drain_risks();
+    assert_eq!(drained.len(), 2, "two packets → two accumulated risks");
+    assert_eq!(
+        drained[0].0, drained[1].0,
+        "both risks keyed by the same flow"
+    );
+    assert!(drained[0].1.flag == RiskFlag::TlsMissingSni);
+
+    // 收割后清空：流仍在，但 flow.risks 已空；二次 drain 无残留
+    assert_eq!(d.flow_count(), 1);
+    let flow = d.flows().next().unwrap().1;
+    assert!(flow.risks.is_empty(), "drain must clear flow.risks");
+    assert!(
+        d.drain_risks().is_empty(),
+        "second drain returns nothing new"
+    );
+}
+
+/// 风险出口（drain_risks）：过期流 analyze_flow 结果不再被丢弃。
+/// 修复前：① register 只注册 packet 侧（risk/mod.rs），flow_processors 恒空；
+/// ② lib.rs `let _risks = ...` 丢弃 → 流级风险（ProbingAttempt 等）永不产出。
+#[cfg(feature = "risk")]
+#[test]
+fn risk_exit_expired_flow_level_risks_reachable() {
+    use rdpi::risk::types::RiskFlag;
+    let mut d = Detector::with_config(100, 1); // 1s 过期
+    // 单个 UDP 包打到未知端口：无协议识别、无响应 → 探测特征
+    // payload 用不可打印字节——短可打印文本（如 b"xy"）会被 whois 等认领，
+    // 协议非 None 后 behavioral 不产出探测风险
+    let pkt = build_udp_packet_ip([10, 0, 0, 9], [10, 0, 0, 3], 54321, 9999, &[0xAA; 4]);
+    d.detect(&pkt).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1200));
+    let expired = d.expire_flows();
+    assert_eq!(expired.len(), 1);
+
+    let drained = d.drain_risks();
+    assert!(
+        drained
+            .iter()
+            .any(|(k, r)| *k == expired[0] && r.flag == RiskFlag::ProbingAttempt),
+        "expire-time analyze_flow results must surface via drain_risks"
+    );
+    assert!(d.drain_risks().is_empty(), "no duplicate after drain");
+}
+
 /// 补充 (F6) — 已修复（2026-11-04）：纯 Certificate 记录的单包流不再被误报为 Dns。
 /// 修复：dns/detector.rs 增加问题区可行性校验（每条 question ≥5 字节）+ qname
 /// 非空可打印校验——假 Certificate 帧的 TLS 长度字段被误读为 qdcount=3083 → 拒绝。

@@ -35,9 +35,9 @@ pub trait RiskProcessor: Send + Sync {
 #[cfg(feature = "risk")]
 pub struct RiskRegistry {
     /// 逐包分析的处理器
-    packet_processors: Vec<Box<dyn RiskProcessor>>,
+    packet_processors: Vec<std::sync::Arc<dyn RiskProcessor>>,
     /// 流结束时分析的处理器
-    flow_processors: Vec<Box<dyn RiskProcessor>>,
+    flow_processors: Vec<std::sync::Arc<dyn RiskProcessor>>,
 }
 
 #[cfg(feature = "risk")]
@@ -50,11 +50,15 @@ impl RiskRegistry {
         }
     }
 
-    /// 注册处理器（自动判断 packet/flow 类型）
+    /// 注册处理器
+    ///
+    /// 同一处理器注册到 packet 与 flow 两个列表——处理器未实现的方法
+    /// 走 trait 默认空实现，不会重复产出（此前只注册 packet 侧，
+    /// flow_processors 恒空导致 analyze_flow 永不产出任何结果）。
     pub fn register(&mut self, processor: Box<dyn RiskProcessor>) {
-        // 注册到两个列表中，由各自的方法决定是否返回空
-        self.packet_processors.push(processor);
-        // 也注册到 flow 列表 — 稍后优化
+        let p: std::sync::Arc<dyn RiskProcessor> = std::sync::Arc::from(processor);
+        self.packet_processors.push(p.clone());
+        self.flow_processors.push(p);
     }
 
     /// 逐包运行所有处理器
@@ -112,6 +116,13 @@ mod tests {
                 "test risk",
             )]
         }
+        fn analyze_flow(&self, _flow: &Flow) -> Vec<RiskResult> {
+            vec![RiskResult::new(
+                RiskFlag::ProbingAttempt,
+                RiskSeverity::Low,
+                "test flow risk",
+            )]
+        }
     }
 
     fn dummy_flow() -> Flow {
@@ -129,6 +140,15 @@ mod tests {
         let mut registry = RiskRegistry::new();
         registry.register(Box::new(TestProcessor));
         assert_eq!(registry.processor_count(), 1);
+    }
+
+    /// 同一处理器须同时可跑 packet 与 flow 两个阶段（此前 flow_processors 恒空）
+    #[test]
+    fn test_registry_dual_phase_registration() {
+        let mut registry = RiskRegistry::new();
+        registry.register(Box::new(TestProcessor));
+        let flow = dummy_flow();
+        assert_eq!(registry.analyze_flow(&flow).len(), 1);
     }
 
     #[test]

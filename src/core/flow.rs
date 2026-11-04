@@ -172,6 +172,11 @@ impl FlowTable {
         self.flows.iter()
     }
 
+    /// 可变迭代所有流（供风险出口 drain flow.risks）
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&FlowKey, &mut Flow)> {
+        self.flows.iter_mut()
+    }
+
     /// 获取流超时时间（R5：供外部过期窗口与 expire_timeout 保持一致）
     pub fn timeout(&self) -> Duration {
         self.timeout

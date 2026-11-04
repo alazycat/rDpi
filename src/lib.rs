@@ -71,7 +71,7 @@ use protocols::Registry;
 use std::time::Duration;
 
 #[cfg(feature = "risk")]
-use risk::RiskRegistry;
+use risk::{RiskRegistry, RiskResult};
 #[cfg(feature = "rule")]
 use rule::{Rule, RuleContext, RuleEngine};
 
@@ -109,6 +109,9 @@ pub struct Detector {
     /// 风险分析引擎
     #[cfg(feature = "risk")]
     risk_registry: RiskRegistry,
+    /// 过期流的风险结果暂存（drain_risks 出口之一；流级 analyze_flow 结果此前被直接丢弃）
+    #[cfg(feature = "risk")]
+    pending_risks: Vec<(FlowKey, RiskResult)>,
 }
 
 impl Detector {
@@ -138,6 +141,8 @@ impl Detector {
             rules_only: false,
             #[cfg(feature = "risk")]
             risk_registry: RiskRegistry::default(),
+            #[cfg(feature = "risk")]
+            pending_risks: Vec::new(),
         }
     }
 
@@ -153,6 +158,8 @@ impl Detector {
             rules_only: false,
             #[cfg(feature = "risk")]
             risk_registry: RiskRegistry::default(),
+            #[cfg(feature = "risk")]
+            pending_risks: Vec::new(),
         }
     }
 
@@ -172,6 +179,8 @@ impl Detector {
             rules_only: false,
             #[cfg(feature = "risk")]
             risk_registry: RiskRegistry::default(),
+            #[cfg(feature = "risk")]
+            pending_risks: Vec::new(),
         }
     }
 
@@ -433,16 +442,54 @@ impl Detector {
                 .collect();
             for key in &keys {
                 if let Some(flow) = self.flow_table.get(key) {
-                    let _risks = self.risk_registry.analyze_flow(flow);
+                    // 流级风险结果收进 pending_risks（drain_risks 出口），
+                    // 此前被 `let _risks = ...` 直接丢弃
+                    for r in self.risk_registry.analyze_flow(flow) {
+                        self.pending_risks.push((key.clone(), r));
+                    }
                 }
             }
         }
         self.flow_table.expire_timeout()
     }
 
+    /// 收集并清空累积的风险结果（风险出口）
+    ///
+    /// 汇总两个来源并清空：
+    /// 1. 各活跃流 `flow.risks` 的逐包累积（收集后清空，避免长流无界增长）
+    /// 2. `expire_flows` 过期时流级 `analyze_flow` 的结果（暂存缓冲）
+    ///
+    /// 逐包风险本可通过 `detect()` 返回的 `DetectionResult.risks` 即时获取；
+    /// 本方法面向轮询式消费方——以流为单位批量收割风险事件。
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let mut detector = Detector::new();
+    /// // ... detect 循环 ...
+    /// for (flow_key, risk) in detector.drain_risks() {
+    ///     println!("{:?}: {:?}", flow_key, risk.flag);
+    /// }
+    /// ```
+    #[cfg(feature = "risk")]
+    pub fn drain_risks(&mut self) -> Vec<(FlowKey, RiskResult)> {
+        let mut out = std::mem::take(&mut self.pending_risks);
+        for (key, flow) in self.flow_table.iter_mut() {
+            for r in flow.risks.drain(..) {
+                out.push((key.clone(), r));
+            }
+        }
+        out
+    }
+
     /// 清空流表
     pub fn clear_flows(&mut self) {
         self.flow_table.clear();
+        #[cfg(feature = "risk")]
+        {
+            // 流已清空，暂存的过期风险随之无意义，一并清掉
+            self.pending_risks.clear();
+        }
     }
 }
 

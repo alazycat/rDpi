@@ -75,6 +75,7 @@ cargo fmt ; cargo clippy      # 提交前（存量 never-used 警告见 risks.md
 | F10 | all-features 下 test_integration 7 个存量失败（低特异性误报+计数不同步） | 中 | ✅ 已修复 2026-11-04（Ftp 端口让位 + Ptpv2/Tftp 判定收紧 + 计数表修正） |
 | R9 | CLI 版本号硬编码 0.2.0 与 crate 0.4.1 不一致 | 低 | ✅ 已修复 2026-11-04（改 env!("CARGO_PKG_VERSION")） |
 | R12 | clippy --all-targets 测试目标约 40 处历史 lint（lib+bins 门槛已 0 警告） | 信息 | 登记备查（risks.md R12） |
+| F11 | 流级风险双重死路（flow_processors 恒空 + analyze_flow 结果丢弃） | 中 | ✅ 已修复 2026-11-04（双注册 + pending_risks + drain_risks 出口） |
 
 ## 7. 文档索引
 
