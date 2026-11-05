@@ -153,6 +153,123 @@ pub fn compute_ja4s(
     )
 }
 
+// ==== JA4H：HTTP 客户端指纹（FoxIO JA4+ 家族，对应官方 ja4h.py 的 to_ja4h）====
+
+/// 计算 JA4H HTTP 客户端指纹（仅 HTTP/1.x 请求）
+///
+/// 格式：`{方法2位}{版本2位}{c|n}{r|n}{头部数2位}{语言4位}_{头部哈希12hex}_{cookie字段哈希}_{cookie值哈希}`
+///
+/// 与客户端 JA4 的关键差异（FoxIO 官方语义）：
+/// - 头部名按**发送顺序**哈希，不排序（顺序本身是指纹信号）、保留原始大小写；
+/// - Cookie 与 Referer 头不参与头部计数与哈希，仅作为 c/r 标志位；
+/// - Cookie 字段/值按字段名**排序**后哈希（cookie 名序稳定）；无 Cookie 记 12 个 0；
+/// - 语言取 Accept-Language 首项（去 `-`、截 `;q=` 权重、小写、4 位右补 0），缺省 `0000`；
+/// - HTTP/2 请求走伪头部（`:method` 等），官方版本码为 "20"——本实现仅覆盖
+///   HTTP/1.x（h2 头部需 HPACK 全量解码，超出本库 HTTP/1.x 解析器范围）。
+///
+/// # 参数
+///
+/// * `method` - 请求方法（如 "GET"，取小写前 2 位）
+/// * `version` - 请求行版本字符串（如 "HTTP/1.1"，0→"10"、1→"11"、其余默认 "11"）
+/// * `headers` - 请求头行列表（原始大小写与顺序，[`HeaderLine`](crate::protocols::http::HeaderLine) 可转换）
+pub fn compute_ja4h(method: &str, version: &str, headers: &[(String, String)]) -> String {
+    let has_cookie = headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("cookie"));
+    let has_referer = headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("referer"));
+    let cookie_flag = if has_cookie { 'c' } else { 'n' };
+    let referer_flag = if has_referer { 'r' } else { 'n' };
+
+    // 方法：小写前 2 位（"get"/"po"/"de"/"pu"/"he"/"op"/"co"/"tr"/"pa"）
+    let method = method.to_lowercase();
+    let method = &method[..method.len().min(2)];
+
+    // 版本："HTTP/1.0"→"10"、HTTP/2→"20"、其余（含 HTTP/1.1）默认 "11"
+    let version_code = if version.contains("HTTP/2") {
+        "20"
+    } else if version.contains("HTTP/1.0") {
+        "10"
+    } else {
+        "11"
+    };
+
+    // 参与头部哈希的名字：排除伪头部（':' 开头）、cookie、referer、空名
+    let header_names: Vec<&str> = headers
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .filter(|name| {
+            !name.starts_with(':')
+                && !name.is_empty()
+                && !name.eq_ignore_ascii_case("cookie")
+                && !name.eq_ignore_ascii_case("referer")
+        })
+        .collect();
+    let header_len = header_names.len().min(99);
+    let headers_hash = if header_names.is_empty() {
+        // 官方对空头部也做 sha256("")，非固定 0
+        trunc_hash_hex(b"", 12)
+    } else {
+        trunc_hash_hex(header_names.join(",").as_bytes(), 12)
+    };
+
+    // Cookie 字段/值：按字段名排序（稳定排序，同名保持原始顺序）
+    let (fields_hash, values_hash) = if has_cookie {
+        let mut pairs: Vec<(String, String)> = Vec::new();
+        for (_, value) in headers
+            .iter()
+            .filter(|(n, _)| n.eq_ignore_ascii_case("cookie"))
+        {
+            for part in value.split(';') {
+                let part = part.trim();
+                if part.is_empty() {
+                    continue;
+                }
+                let field = part.split('=').next().unwrap_or("").trim().to_string();
+                pairs.push((field, part.to_string()));
+            }
+        }
+        pairs.sort_by(|a, b| a.0.cmp(&b.0));
+        let fields: Vec<&str> = pairs.iter().map(|(f, _)| f.as_str()).collect();
+        let values: Vec<&str> = pairs.iter().map(|(_, v)| v.as_str()).collect();
+        (
+            trunc_hash_hex(fields.join(",").as_bytes(), 12),
+            trunc_hash_hex(values.join(",").as_bytes(), 12),
+        )
+    } else {
+        ("000000000000".to_string(), "000000000000".to_string())
+    };
+
+    // 语言：Accept-Language 首项，去 '-'、截 ';q=' 权重、小写、4 位右补 0
+    let accept_language = headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("accept-language"))
+        .map(|(_, value)| value.as_str());
+    let lang = match accept_language {
+        Some(l) => {
+            let l = l.replace('-', "").replace(';', ",").to_lowercase();
+            let l = l.split(',').next().unwrap_or("");
+            let l = &l[..l.chars().count().min(4)];
+            format!("{:0<4}", l)
+        }
+        None => "0000".to_string(),
+    };
+
+    format!(
+        "{}{}{}{}{:02}{}_{}_{}_{}",
+        method,
+        version_code,
+        cookie_flag,
+        referer_flag,
+        header_len,
+        lang,
+        headers_hash,
+        fields_hash,
+        values_hash
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,5 +403,119 @@ mod tests {
     fn test_ja4s_grease_version_and_empty_extensions() {
         let ja4s = compute_ja4s(false, 0x0303, Some(0x0a0a), 0x1301, &[], None);
         assert_eq!(ja4s, "t120000_1301_000000000000");
+    }
+
+    // ==== JA4H（golden 向量：SHA-256 前缀经 PowerShell .NET SHA256 独立实现交叉验证）====
+
+    fn h(headers: &[(&str, &str)]) -> Vec<(String, String)> {
+        headers
+            .iter()
+            .map(|(n, v)| (n.to_string(), v.to_string()))
+            .collect()
+    }
+
+    /// GET HTTP/1.1，3 个普通头部，无 cookie/referer/语言
+    /// 头部哈希 = sha256("Host,User-Agent,Accept") 前 12 位
+    #[test]
+    fn test_ja4h_basic_get() {
+        let ja4h = compute_ja4h(
+            "GET",
+            "HTTP/1.1",
+            &h(&[
+                ("Host", "example.com"),
+                ("User-Agent", "test/1"),
+                ("Accept", "*/*"),
+            ]),
+        );
+        assert_eq!(ja4h, "ge11nn030000_fe444ad14866_000000000000_000000000000");
+    }
+
+    /// POST + cookie + referer + 语言：c/r 置位，cookie 名排序，
+    /// 语言 "en-US,en;q=0.9" → 去 '-' 截 ';' → "enus"
+    #[test]
+    fn test_ja4h_post_cookie_referer_lang() {
+        let ja4h = compute_ja4h(
+            "POST",
+            "HTTP/1.1",
+            &h(&[
+                ("Host", "example.com"),
+                ("Cookie", "theme=dark; session_id=abc123"),
+                ("Referer", "https://example.com/"),
+                ("Accept-Language", "en-US,en;q=0.9"),
+            ]),
+        );
+        // 头部计数排除 cookie/referer 后为 2（Host、Accept-Language）
+        assert_eq!(ja4h, "po11cr02enus_09e340ee0db0_ae523545408f_12670912ce0c");
+    }
+
+    /// Cookie 顺序不敏感：同集合不同顺序哈希一致（按字段名排序）
+    #[test]
+    fn test_ja4h_cookie_order_insensitive() {
+        let a = compute_ja4h(
+            "GET",
+            "HTTP/1.1",
+            &h(&[("Cookie", "theme=dark; session_id=abc")]),
+        );
+        let b = compute_ja4h(
+            "GET",
+            "HTTP/1.1",
+            &h(&[("Cookie", "session_id=abc; theme=dark")]),
+        );
+        assert_eq!(a, b);
+    }
+
+    /// 头部顺序敏感：同集合不同顺序产生不同哈希（JA4H 不排序）
+    #[test]
+    fn test_ja4h_header_order_is_significant() {
+        let a = compute_ja4h(
+            "GET",
+            "HTTP/1.1",
+            &h(&[("Host", "a"), ("User-Agent", "b"), ("Accept", "c")]),
+        );
+        let b = compute_ja4h(
+            "GET",
+            "HTTP/1.1",
+            &h(&[("Accept", "c"), ("Host", "a"), ("User-Agent", "b")]),
+        );
+        assert_ne!(a, b);
+        assert!(a.starts_with("ge11nn030000_"));
+    }
+
+    /// 版本编码：HTTP/1.0 → "10"；未知版本默认 "11"
+    #[test]
+    fn test_ja4h_version_codes() {
+        let headers = h(&[("Host", "a")]);
+        assert!(compute_ja4h("GET", "HTTP/1.0", &headers).starts_with("ge10nn010000_"));
+        assert!(compute_ja4h("GET", "HTTP/1.1", &headers).starts_with("ge11nn010000_"));
+        assert!(compute_ja4h("GET", "HTTP/9.9", &headers).starts_with("ge11nn010000_"));
+    }
+
+    /// 语言编码：去 '-'、截 ';q='、右补 0；缺省 "0000"；两字符补齐
+    #[test]
+    fn test_ja4h_language_padding() {
+        let cases = [
+            ("zh", "zh00"),
+            ("en-US,en;q=0.9", "enus"),
+            ("fr;q=0.5", "fr00"),
+        ];
+        for (lang, expected) in cases {
+            let ja4h = compute_ja4h("GET", "HTTP/1.1", &h(&[("Accept-Language", lang)]));
+            let mid = &ja4h[8..12];
+            assert_eq!(mid, expected, "{}", ja4h);
+        }
+        let no_lang = compute_ja4h("GET", "HTTP/1.1", &h(&[("Host", "a")]));
+        assert!(no_lang.starts_with("ge11nn010000_"));
+    }
+
+    /// 伪头部（':' 开头）与 cookie/referer 不参与头部计数；空头部哈希为 sha256("")
+    #[test]
+    fn test_ja4h_excluded_headers_and_empty_hash() {
+        let ja4h = compute_ja4h(
+            "GET",
+            "HTTP/2",
+            &h(&[(":method", "GET"), (":path", "/"), ("Cookie", "a=b")]),
+        );
+        // HTTP/2 版本码 20；参与哈希头部 0 个（sha256("")）；cookie 仍参与字段/值哈希
+        assert_eq!(ja4h, "ge20cn000000_e3b0c44298fc_ca978112ca1b_42144f3939c3");
     }
 }

@@ -274,6 +274,8 @@ pub struct HttpMetadata {
     pub path: Option<String>,
     /// 基于 Host 头识别的应用
     pub application: Option<Application>,
+    /// JA4H 客户端 HTTP 指纹（仅 HTTP/1.x 请求；响应与 HTTP/2 为 None）
+    pub ja4h: Option<String>,
 }
 
 /// HTTP/2 元数据 (feature: proto3)

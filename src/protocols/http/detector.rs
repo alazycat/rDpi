@@ -1,4 +1,6 @@
-use super::parser::{is_http_prefix, parse_host_header, parse_request_line, parse_response_line};
+use super::parser::{
+    is_http_prefix, parse_header_lines, parse_host_header, parse_request_line, parse_response_line,
+};
 use crate::core::types::*;
 use crate::protocols::ProtocolDetector;
 
@@ -51,11 +53,23 @@ impl ProtocolDetector for HttpDetector {
                     None
                 }
             });
+            // JA4H 客户端指纹：仅请求路径计算（头部原始顺序/大小写敏感，
+            // 官方 ja4h.py to_ja4h 语义；HTTP/2 请求由 proto3 模块处理，不在此路径）
+            let header_lines = parse_header_lines(payload);
+            let ja4h = Some(crate::application::compute_ja4h(
+                &req.method,
+                &req.version,
+                &header_lines
+                    .iter()
+                    .map(|h| (h.name.clone(), h.value.clone()))
+                    .collect::<Vec<_>>(),
+            ));
             let metadata = Metadata::Http(HttpMetadata {
                 host,
                 method: Some(req.method),
                 path: Some(req.path),
                 application,
+                ja4h,
             });
 
             return Some(
@@ -73,6 +87,7 @@ impl ProtocolDetector for HttpDetector {
                 method: None,
                 path: None,
                 application: None,
+                ja4h: None,
             });
 
             return Some(

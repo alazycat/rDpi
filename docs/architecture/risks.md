@@ -227,3 +227,15 @@
   - Metadata：`TlsMetadata.ja4s` / `QuicMetadata.ja4s`（types.rs）。
 - **测试**：compute_ja4s 6 项（TCP/QUIC golden 向量、顺序敏感性、版本全表、ALPN 编码、GREASE 回退+空列表）；parse_server_hello 2 项（字段/拒绝）；Detector 全链路 2 项（反向服务端流定型+回显持久、一次性富化不覆盖 SNI）；QUIC 2 项（decrypt_server_hello_meta 字段、检测级 ja4s=q1302h3_1301_…）。**golden 向量 SHA-256 前缀经 PowerShell .NET SHA256 独立实现交叉验证**（同 QUIC Retry 向量做法）。共 12 项新增，默认 274 / all-features 1076 / risk 319 全绿；clippy --all-features --all-targets 0 警告。
 - **已知边界**：TCP ServerHello 跨 TCP 分段无重组支持（尽力而为，与 ClientHello 同策略）；QUIC 服务端 Initial 在服务端→客户端方向为独立流（FlowKey 按五元组方向），JA4 落客户端流、JA4S 落服务端流，与 FoxIO 方向语义一致。
+
+## F31【中】JA4H 客户端 HTTP 指纹（2026-11-05，新功能开发）—— ✅ 已完成
+
+- **背景**：JA4 家族第三个成员（JA4 客户端 TLS + JA4S 服务端 TLS 已有，F30）。JA4H 基于 HTTP 请求行 + 头部集合指纹化客户端软件，纯热路径、零解密、无新依赖。
+- **规格来源**：FoxIO 官方 [ja4h.py](https://github.com/FoxIO-LLC/ja4) `to_ja4h`（FoxIO License 1.1），格式 `{方法小写前2位}{版本2位}{c|n}{r|n}{头部数2位}{语言4位}_{头部哈希12hex}_{cookie字段哈希}_{cookie值哈希}`。与 TLS 侧指纹的关键差异：头部名按**发送顺序**哈希（不排序）、保留原始大小写；Cookie/Referer 头不参与计数与哈希（仅作 c/r 标志）；cookie 字段/值按字段名**排序**后哈希（无 cookie 记 12 个 0）；语言取 Accept-Language 首项（去 `-`、截 `;q=`、小写、4 位右补 0），缺省 `0000`；空头部哈希为 sha256("") 而非固定 0。**header_len 与 lang 之间无分隔符**（实测易错点）。
+- **实现**：
+  - [http/parser.rs](file:///d:/rust_code/rDpi/src/protocols/http/parser.rs) `parse_header_lines` → `HeaderLine{name, value}`（原始大小写保留、去空白、空行终止、畸形行跳过）。
+  - [application/ja4.rs](file:///d:/rust_code/rDpi/src/application/ja4.rs) `compute_ja4h(method, version, headers)`（与 ja4/ja4s 同文件）。
+  - [http/detector.rs](file:///d:/rust_code/rDpi/src/protocols/http/detector.rs) 请求分支计算 JA4H；响应分支恒 None。HTTP/2 请求（proto3 路径）不产出 JA4H——h2 需 HPACK 全量头部解码，超出现有解析器范围（官方版本码 "20" 预留，compute_ja4h 支持 h2 输入）。
+  - Metadata：`HttpMetadata.ja4h`（types.rs）。
+- **测试**：compute_ja4h 7 项（基础 GET/POST+cookie+referer+语言 golden 向量、cookie 顺序不敏感、头序敏感、版本编码、语言补齐、伪头部排除）；parse_header_lines 3 项；Detector 级 4 项（请求携带/响应 None/cookie 语义/全链路回显持久）。**golden 向量经 PowerShell .NET SHA256 独立实现交叉验证**（同 F30 做法）。共 14 项新增，默认 288 / all-features 1090 / risk 333 全绿；clippy --all-features --all-targets 0 警告。
+- **已知边界**：头部区域跨 TCP 分段仅解析当前包内完整行（与 SNI 同策略）；识别仅在流首请求包发生（流协议一次定型），中间流已定型后新请求不再重算——与流模型语义一致。

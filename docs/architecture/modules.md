@@ -85,7 +85,7 @@
 
 - `identify(sni)`：惰性初始化 `ReverseTrie` 查域名后缀（application/mod.rs:17-20）。
 - `mappings.rs`：域名后缀→`Application` 映射表（mappings.rs:5-220，覆盖 YouTube/Netflix/Bilibili/抖音/微信/Telegram 等）。
-- `ja4.rs`：JA4 TLS 指纹 `tlsNN.{ciphers12}.{extensions12}.{groups6}` + SHA256 截断（ja4.rs:18-48, 57-58）；`compute_ja4s`（F30，2026-11-05）：JA4S 服务端指纹 `{t|q}{版本2位}{扩展数2位}{alpn 2字符}_{cipher 4hex}_{sha256("0x%04x"逗号串)[:12]}`，对齐 FoxIO 官方 ja4.py to_ja4s（扩展不排序/不过滤 GREASE），golden 向量经 PowerShell .NET SHA256 交叉验证。
+- `ja4.rs`：JA4 TLS 指纹 `tlsNN.{ciphers12}.{extensions12}.{groups6}` + SHA256 截断（ja4.rs:18-48, 57-58）；`compute_ja4s`（F30，2026-11-05）：JA4S 服务端指纹 `{t|q}{版本2位}{扩展数2位}{alpn 2字符}_{cipher 4hex}_{sha256("0x%04x"逗号串)[:12]}`，对齐 FoxIO 官方 ja4.py to_ja4s（扩展不排序/不过滤 GREASE），golden 向量经 PowerShell .NET SHA256 交叉验证；`compute_ja4h`（F31，2026-11-05）：JA4H 客户端 HTTP 指纹 `{方法2位}{版本2位}{c|n}{r|n}{头部数2位}{语言4位}_{头序敏感哈希}_{cookie字段排序哈希}_{cookie值排序哈希}`，对齐官方 ja4h.py to_ja4h（头部不排序、保留原始大小写、cookie/referer 仅作标志位、语言 4 位右补 0），HttpMetadata.ja4h 仅 HTTP/1.x 请求路径（h2 需 HPACK 全量解码，超范围）。
 
 ## 6. risk 模块（feature=risk）
 

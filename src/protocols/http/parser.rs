@@ -106,6 +106,46 @@ pub fn parse_host_header(data: &[u8]) -> Option<String> {
     None
 }
 
+/// HTTP 请求头行（原始大小写 name + value，JA4H 输入）
+#[derive(Debug, Clone)]
+pub struct HeaderLine {
+    /// 头部名称（保留发送方原始大小写——JA4H 头部哈希区分大小写）
+    pub name: String,
+    /// 头部值（去除两侧空白）
+    pub value: String,
+}
+
+/// 解析请求头行列表
+///
+/// 跳过请求行后逐行解析至空行（`\r\n\r\n` 边界）或载荷结束。
+/// 无 `:` 的行（畸形）跳过；头部区域跨 TCP 分段时仅解析当前包内
+/// 完整行（与 SNI 提取同策略，尽力而为）。
+pub fn parse_header_lines(data: &[u8]) -> Vec<HeaderLine> {
+    let mut headers = Vec::new();
+    let data_str = match std::str::from_utf8(data) {
+        Ok(s) => s,
+        Err(_) => return headers,
+    };
+    let mut lines = data_str.lines();
+    // 跳过请求行
+    if lines.next().is_none() {
+        return headers;
+    }
+    for line in lines {
+        // 空行 = 头部区域结束
+        if line.is_empty() {
+            break;
+        }
+        if let Some((name, value)) = line.split_once(':') {
+            headers.push(HeaderLine {
+                name: name.trim().to_string(),
+                value: value.trim().to_string(),
+            });
+        }
+    }
+    headers
+}
+
 /// 检查首字节是否为 HTTP 方法起始字符
 pub fn is_http_prefix(byte: u8) -> bool {
     matches!(byte, b'G' | b'P' | b'H' | b'D' | b'C' | b'O' | b'T')
@@ -214,5 +254,41 @@ mod tests {
         assert!(is_http_prefix(b'P')); // POST, PUT
         assert!(is_http_prefix(b'H')); // HEAD, HTTP
         assert!(!is_http_prefix(b'A'));
+    }
+
+    // ==== parse_header_lines（JA4H 输入）====
+
+    #[test]
+    fn test_parse_header_lines_basic() {
+        let data = b"GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: test/1\r\n\r\nbody";
+        let headers = parse_header_lines(data);
+        assert_eq!(headers.len(), 2);
+        assert_eq!(headers[0].name, "Host");
+        assert_eq!(headers[0].value, "example.com");
+        assert_eq!(headers[1].name, "User-Agent");
+        // 空行终止：body 不误入头部
+        assert!(!headers.iter().any(|h| h.name.contains("body")));
+    }
+
+    #[test]
+    fn test_parse_header_lines_preserves_case_and_trims() {
+        // 原始大小写保留（JA4H 头部哈希区分大小写）、值两侧空白去除
+        let data = b"GET / HTTP/1.1\r\nhOsT:   example.com   \r\nX-Custom-Header: v\r\n\r\n";
+        let headers = parse_header_lines(data);
+        assert_eq!(headers[0].name, "hOsT");
+        assert_eq!(headers[0].value, "example.com");
+        assert_eq!(headers[1].name, "X-Custom-Header");
+    }
+
+    #[test]
+    fn test_parse_header_lines_malformed_and_empty() {
+        // 无 `:` 的畸形行跳过；LF-only 行也支持（find_line_end/lines 语义）
+        let data = b"GET / HTTP/1.1\r\nBrokenLine\r\nHost: example.com\r\n\r\n";
+        let headers = parse_header_lines(data);
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].name, "Host");
+
+        // 空 payload → 空列表
+        assert!(parse_header_lines(b"").is_empty());
     }
 }
