@@ -47,17 +47,17 @@
 | smtp | smtp |
 | mail | pop3, imap |
 | infra | ntp, dhcp, bgp, dhcpv6, vxlan, netflow, ike, ptpv2 |
-| snmp | snmp（**当前编译失败**，见 risks.md R1） |
+| snmp | snmp（R1 已修复 2026-11-04） |
 | modbus | modbus |
 | database | mysql, postgresql, redis, mongodb |
-| proto3 | ftp, sip, rtp, http2, websocket, rtmp, socks |
+| proto3 | ftp, sip, rtp, http2（HPACK 元数据，2026-11-05）, websocket, rtmp, socks |
 | iot | mqtt |
 | vpn | wireguard, openvpn, l2tp, pptp |
 | voip | stun, turn, mgcp, h323 |
 | auth | kerberos, ldap, radius |
 | remote | rdp |
 | storage | nfs |
-| **无 feature gate** | **tftp, rsync, whois, syslog（mod.rs:66-69）；telnet, vnc（mod.rs:83-84）** —— 始终编译并注册（mod.rs:259-262, 238-239） |
+| misc | tftp, rsync, whois, syslog, telnet, vnc（R7 已修复 2026-11-04，mod.rs `#[cfg(feature = "misc")]`） |
 
 注：quic/snmp/modbus/ntp/dhcp 目录无 detector.rs，通过 `register()` 暴露的 detector 完成检测，与 http/tls 的三分文件模式不同（**[根据代码推断]**：各 mod.rs 内含 detector 实现，未逐一核对行号）。
 
@@ -68,6 +68,13 @@
 - **tls/parser.rs**：新增 `parse_server_hello_alpn`（msg_type 0x02 校验 + 字段布局自洽校验 + ALPN 扩展提取，复用私有 `parse_alpn_extension`）。
 - **mod.rs**：detect/detect_with_context 接线解密富化——先客户端方向（ClientHello → sni/alpn/**ja4** + SNI 应用识别），失败再服务端方向（ServerHello → 仅 alpn，无 SNI/JA4）；解密失败静默降级为仅头部信息。QuicMetadata 增 `alpn`/`ja4` 字段（types.rs），JA4 与 TLS 路径同源（application::compute_ja4）。
 - **rule / CLI 消费**（2026-11-05）：rule 引擎 `sni_contains` 覆盖 QUIC SNI（lib.rs 规则分支追加 Initial 解密回退，`rule`+`tls`+`quic` 三 feature）；CLI 域名列识别 `Metadata::Quic`（rdpi.rs）。
+
+### http2 模块（2026-11-05 扩展：HPACK 元数据提取）
+
+- **hpack.rs**（新增）：全手写 HPACK 解码（RFC 7541，零新增依赖）——Huffman 解码（257 符号码表，运行时 OnceLock 构建 trie；码表经 nghttp2 与 Go x/net 双源逐项交叉验证 + Kraft 精确和 Σ2^(30-bits)=2³⁰ + 前缀无冲突）、静态表 61 项（Appendix A）、前缀整数/字符串字面量解码、帧内动态表（索引 ≥62）。上限防护：MAX_HEADERS=64 / MAX_STRING_LEN=4096 / MAX_DYN_ENTRIES=64，畸形输入返回 None。
+- **parser.rs**：新增 `extract_request_headers`——preface 后按 9 字节帧头扫描（MAX_FRAMES=8），首个 HEADERS 帧按 flags 跳过 PADDED/PRIORITY 后解码头块，提取 `:authority`/`:method`/`:path`；帧截断/解码失败/无请求伪头部返回 None。无 preface 时直接按帧流扫描（定型流富化路径）。
+- **detector.rs**：preface 命中即尝试同包提取，元数据起步 `Http2Metadata::default()`；返回 `Metadata::Http2`（types.rs 新变体）。
+- **lib.rs**：`enrich_http2_headers`（feature=proto3）——定型流回显路径一次性富化（字段全空时对后续包提取并写回，协议不重检，对齐 enrich_tls_cert / ADR-0004）。能力边界与验证见 risks.md R14；测试 tests/test_http2.rs（9 测试）。
 - **非 Initial 长包头识别**（2026-11-05）：`detect_other_long_header`（mod.rs）覆盖 0-RTT（0xD0）/Handshake（0xE0）/Retry（0xF0）/VN（version=0，不要求 Fixed Bit）——仅提取 version+DCID（`is_quic_long_header`/`parse_long_header_dcid`，parser.rs），无解密富化；version≠0 时要求 Fixed Bit=1，DCID 长度上限 20 校验。此前这些包全部漏判落入 guess 兜底。
 - **CLI/bench 消费**（2026-11-05）：CLI 域名列 QUIC 分支 SNI→ALPN 回退（rdpi.rs:77）；`cargo bench` 增 `detect_quic_header_only`（~5µs）/`detect_quic_initial_decrypt`（~29µs，A.2 样本全解密+CH+JA4），bench 文件 cfg(quic) 双 criterion_group。
 - 测试：crypto.rs 内单测（各 RFC 官方向量 + 服务端向量）+ parser.rs 单测（A.2 端到端、服务端 Initial 构造/解密/ALPN、detect 级 alpn 富化、SH 独立解析与拒绝）+ tests/test_quic.rs 集成（RFC 9001 A.2 1200 字节样本 → SNI "example.com"/ALPN "alpn"，篡改 1 字节降级）。

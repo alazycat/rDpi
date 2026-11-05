@@ -176,6 +176,9 @@ pub enum Metadata {
     Tls(TlsMetadata),
     /// HTTP 元数据
     Http(HttpMetadata),
+    /// HTTP/2 元数据 (feature: proto3)
+    #[cfg(feature = "proto3")]
+    Http2(Http2Metadata),
     /// SSH 元数据
     Ssh(SshMetadata),
     /// SMTP 元数据
@@ -263,6 +266,20 @@ pub struct HttpMetadata {
     pub path: Option<String>,
     /// 基于 Host 头识别的应用
     pub application: Option<Application>,
+}
+
+/// HTTP/2 元数据 (feature: proto3)
+///
+/// 从首个客户端 HEADERS 帧提取（HPACK 解码，RFC 7541）。
+#[derive(Debug, Clone, Default)]
+#[cfg(feature = "proto3")]
+pub struct Http2Metadata {
+    /// :authority 伪头部（等价 HTTP/1.x 的 Host）
+    pub authority: Option<String>,
+    /// 请求方法
+    pub method: Option<String>,
+    /// 请求路径
+    pub path: Option<String>,
 }
 
 /// SSH 元数据

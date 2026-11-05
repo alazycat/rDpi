@@ -83,6 +83,12 @@
 - **能力边界**：① 仅解密 **Initial** 包（0-RTT/Handshake/1-RTT 密钥不可推导，永不解密）；② 解密失败不产生任何标记，`sni=None` 且 `alpn=None` 即为降级信号；③ QUIC SNI 已覆盖 rule 引擎 `sni_contains`（2026-11-05，[src/lib.rs](file:///d:/rust_code/rDpi/src/lib.rs) 规则分支在 TLS 回退后追加 QUIC Initial 解密回退，需 `rule` + `tls` + `quic` 三 feature）；④ CLI 域名列已支持 `Metadata::Quic`（2026-11-05，QUIC SNI 可打印）。
 - **性能注意**：GHASH 已从无查表逐位实现（每块 128 次移位+条件异或）升级为 Shoup 式 4-bit 查表（2026-11-05，[src/protocols/quic/crypto.rs](file:///d:/rust_code/rDpi/src/protocols/quic/crypto.rs) `GhashTable`，8 KiB 栈上表，每块乘法 32 次查表异或，无移位无数据依赖分支）；release 实测 **150 倍加速**（262144 块 339ms → 2.26ms，对照基准 `test_ghash_table_benchmark`，`cargo test --lib --features tls,quic -- --ignored --nocapture` 可复现）。逐位实现保留为测试 oracle（`gf128_mul_reference`，与查表版 200 对伪随机交叉验证）。detect 路径最坏 2 方向 × 4 个 pn 候选 = 8 次 AES 尝试（pn_len=4 时每方向仅 1 个）。
 
+## R14【信息】HTTP/2 元数据提取的能力边界（2026-11-05，HTTP/2 元数据功能开发）
+
+- **背景**：proto3 feature 下 Http2Detector 在 preface 命中时顺带提取首个请求 HEADERS 帧（HPACK 解码，RFC 7541），提取 `:authority`/`:method`/`:path` 写入 `Metadata::Http2`；preface 包内无 HEADERS 时由定型流富化路径补齐（[src/lib.rs](file:///d:/rust_code/rDpi/src/lib.rs) `enrich_http2_headers`，对齐 enrich_tls_cert / ADR-0004 一次定型语义）。Huffman 解码（257 符号码表，nghttp2 与 Go x/net 双源逐项交叉验证 + Kraft 精确和 + 前缀无冲突）、静态表 61 项、前缀整数解码均为手写，零新增依赖。
+- **能力边界**：① **无状态设计**——只解码首个客户端 HEADERS 帧（连接级动态表在该帧解码时必为空，帧内自洽），不维护跨包 HPACK 状态；后续请求帧不再提取。② **CONTINUATION 跨帧不重组**——头块若被拆分到 CONTINUATION 帧（type=0x09），解码失败返回 None，元数据保持为空。③ **帧截断即放弃**——HEADERS 帧体被 TCP 分段切开时（[src/protocols/http2/parser.rs](file:///d:/rust_code/rDpi/src/protocols/http2/parser.rs) `pos + len > body.len()`）返回 None，等后续包（同流富化路径每包重试直至填充）。④ 服务端响应帧（仅 `:status` 伪头部）不提取。⑤ 单包最多扫描 8 帧（MAX_FRAMES）防热路径拖慢。
+- **验证**：`cargo test --features proto3 --test test_http2`（9 测试：分包富化、回显保持、响应帧不误写）+ hpack 单元 12 测试（RFC C.4.1 官方向量）全绿；三配置回归（默认 / --all-features / --features risk）0 失败。
+
 ## R10【低】Git 历史存在 9 个内容相同的重复提交
 
 - **分类**：[代码明确实现]

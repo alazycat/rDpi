@@ -62,7 +62,7 @@ fn main() -> rdpi::error::Result<()> {
 | `snmp` | ❌ | SNMP v1/v2c 检测，完整 PDU 解析 |
 | `modbus` | ❌ | Modbus TCP 检测，功能码解析 |
 | `database` | ❌ | MongoDB/MySQL/PostgreSQL/Redis 检测 |
-| `proto3` | ❌ | FTP/SIP/RTP/HTTP2/WebSocket/RTMP/SOCKS |
+| `proto3` | ❌ | FTP/SIP/RTP/HTTP2/WebSocket/RTMP/SOCKS（HTTP2 经 HPACK 提取 `:authority`/`:method`/`:path`） |
 | `iot` | ❌ | MQTT 协议检测 |
 | `vpn` | ❌ | WireGuard/OpenVPN/L2TP/PPTP 协议检测 |
 | `voip` | ❌ | STUN/TURN/MGCP/H.323 协议检测 |
@@ -96,7 +96,8 @@ rdpi = { version = "0.4.2", default-features = false, features = ["http", "tls",
 | SNMP | `snmp` | 版本、Community、PDU、VarBinds |
 | Modbus | `modbus` | 事务 ID、功能码 |
 | MongoDB、MySQL、PostgreSQL、Redis | `database` | 服务端版本、认证插件、用户/库名等 |
-| FTP、SIP、RTP/RTCP、HTTP/2、WebSocket、RTMP、SOCKS | `proto3` | SIP 方法、RTP 编码等 |
+| HTTP/2 | `proto3` | `:authority`、方法、路径（首个请求 HEADERS 帧，HPACK 解码） |
+| FTP、SIP、RTP/RTCP、WebSocket、RTMP、SOCKS | `proto3` | SIP 方法、RTP 编码等 |
 | MQTT | `iot` | 消息类型、QoS |
 | WireGuard、OpenVPN、L2TP、PPTP | `vpn` | WireGuard 握手参数等 |
 | STUN、TURN、MGCP、H.323 | `voip` | STUN 消息类型等 |

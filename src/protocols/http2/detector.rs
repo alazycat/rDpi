@@ -1,9 +1,9 @@
 //! HTTP/2 protocol detector for rDpi
 
-use crate::core::types::{Confidence, DetectionResult, Protocol};
+use crate::core::types::{Confidence, DetectionResult, Metadata, Protocol};
 use crate::protocols::ProtocolDetector;
 
-use super::parser::is_http2_preface;
+use super::parser::{extract_request_headers, is_http2_preface};
 
 pub struct Http2Detector {
     _private: (),
@@ -27,11 +27,17 @@ impl ProtocolDetector for Http2Detector {
     }
 
     fn detect(&self, payload: &[u8]) -> Option<DetectionResult> {
-        if is_http2_preface(payload) {
-            Some(DetectionResult::new(Protocol::Http2).with_confidence(Confidence::Dpi))
-        } else {
-            None
+        if !is_http2_preface(payload) {
+            return None;
         }
+        // preface 包内若已含首个请求 HEADERS 帧则顺带提取；否则由 lib.rs
+        // 定型流富化路径在后续包补齐（Http2Metadata::default 起步）
+        let metadata = extract_request_headers(payload).unwrap_or_default();
+        Some(
+            DetectionResult::new(Protocol::Http2)
+                .with_confidence(Confidence::Dpi)
+                .with_metadata(Metadata::Http2(metadata)),
+        )
     }
 }
 

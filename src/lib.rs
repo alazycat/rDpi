@@ -359,6 +359,11 @@ impl Detector {
             #[cfg(feature = "tls")]
             Self::enrich_tls_cert(flow, &parsed.payload);
 
+            // HTTP/2 定型流：首个请求 HEADERS 帧常在 preface 之后的独立包到达，
+            // 一次性提取 :authority/:method/:path（写回 flow.metadata，回显自动携带）
+            #[cfg(feature = "proto3")]
+            Self::enrich_http2_headers(flow, &parsed.payload);
+
             // 流已有协议，不重复检测，但需要返回当前协议信息
             flow.protocol.map(|p| {
                 let mut r = DetectionResult::new(p);
@@ -432,6 +437,28 @@ impl Detector {
             tls.cert_issuer = cert.issuer;
             tls.cert_valid_from = cert.not_before;
             tls.cert_valid_to = cert.not_after;
+        }
+    }
+
+    /// HTTP/2 元数据一次性富化（对齐 enrich_tls_cert 先例，ADR-0004）
+    ///
+    /// 定型 HTTP/2 流的载荷中定位首个客户端 HEADERS 帧并 HPACK 解码，
+    /// 提取 `:authority`/`:method`/`:path` 写回 flow.metadata。协议不重检；
+    /// 字段已填充（或非 Http2 流）直接返回，不产生额外开销。
+    #[cfg(feature = "proto3")]
+    fn enrich_http2_headers(flow: &mut Flow, payload: &[u8]) {
+        let needs_enrich = matches!(
+            flow.metadata,
+            Some(Metadata::Http2(ref h2))
+                if h2.authority.is_none() && h2.method.is_none() && h2.path.is_none()
+        );
+        if !needs_enrich || flow.protocol != Some(Protocol::Http2) {
+            return;
+        }
+        if let Some(md) = protocols::http2::extract_request_headers(payload)
+            && let Some(Metadata::Http2(ref mut h2)) = flow.metadata
+        {
+            *h2 = md;
         }
     }
 
