@@ -78,9 +78,10 @@
 
 ## 6. risk 模块（feature=risk）
 
-- `RiskRegistry::analyze_packet` / `analyze_flow` 统一入口（risk/mod.rs:32-90），Default 注册 5 个处理器：tls、dns、http、behavioral、tls_cert（risk/processors/mod.rs:2-15）。
+- `RiskRegistry::analyze_packet` / `analyze_flow` 统一入口（risk/mod.rs:32-90），Default 注册 5+1 个处理器：tls、dns、http、behavioral、tls_cert（risk/processors/mod.rs:2-15）+ quic（挂 quic+risk 双 feature，risk/processors/quic.rs）。
 - 结果类型 `RiskResult{flag,severity,description}`（risk/types.rs:78-88），由 Detector 附加到流与检测结果（lib.rs:332-341）。
 - tls_cert 处理器依赖 Phase 12B 的证书解析（src/protocols/tls/certificate.rs，TlsMetadata 证书字段 types.rs:237-244）。
+- quic 处理器（Phase 13，2026-11-05）：逐包判定 QUIC 长包头（不依赖解密）——0-RTT 包（首字节 0xD0）→ `QuicZeroRtt`（Medium，0-RTT 数据可重放）、Initial 携带 draft-28/29 版本 → `QuicNonStandardVersion`（Low）。按流去重（flow.risks 已含同 flag 则不重复产出）；仅 UDP 流生效。RiskFlag 新增 QUIC 分节（risk/types.rs:45-49，default_severity/name 同步）。
 
 ## 7. rule 模块（feature=rule）
 
