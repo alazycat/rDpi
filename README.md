@@ -11,10 +11,10 @@ Rust Deep Packet Inspection library - 轻量级、高性能的深度包检测库
 
 - **传输层解析**: TCP/UDP/ICMP 协议识别
 - **协议检测**: DNS、HTTP、TLS、QUIC、SSH、SMTP、POP3/IMAP、NTP/DHCP、SNMP、Modbus、MySQL/PostgreSQL/Redis、FTP/SIP/RTP、MQTT、WireGuard/OpenVPN、STUN 等 49 个 detector（见下表）
-- **元数据提取**: DNS 域名、HTTP 方法/路径/Host、TLS SNI/版本/证书、QUIC 版本/连接 ID、SSH 版本等
+- **元数据提取**: DNS 域名、HTTP 方法/路径/Host、TLS SNI/版本/证书、QUIC 版本/连接 ID/SNI/ALPN/JA4、SSH 版本等
 - **应用识别**: TLS SNI → 应用归属（反向 Trie 域名匹配）
 - **流管理**: 五元组追踪、超时清理、容量上限（满载先清超时流，再按最久未活跃逐出）
-- **风险分析**（`risk` feature）: TLS/DNS/HTTP/行为/证书风险处理器
+- **风险分析**（`risk` feature）: TLS/DNS/HTTP/行为/证书/QUIC 风险处理器（0-RTT 观测、非标准 draft 版本）
 - **规则引擎**（`rule` feature）: 自定义匹配规则，支持 JSON 加载
 - **零拷贝设计，最小化分配**
 
@@ -56,7 +56,7 @@ fn main() -> rdpi::error::Result<()> {
 | `tls` | ✅ | TLS 协议检测，提取 SNI、版本、证书 |
 | `ssh` | ❌ | SSH 协议检测，提取协议和软件版本 |
 | `smtp` | ❌ | SMTP 协议检测，提取主机名 |
-| `quic` | ❌ | QUIC 协议检测，提取版本和连接 ID |
+| `quic` | ❌ | QUIC 协议检测：长包头全类型识别（Initial/0-RTT/Handshake/Retry/VN）+ Initial 包解密提取 SNI/ALPN/JA4（手写 AES-GCM/HKDF，零新增依赖） |
 | `mail` | ❌ | POP3/POP3S/IMAP/IMAPS 协议检测 |
 | `infra` | ❌ | NTP/DHCP/BGP/NetFlow/IKE/PTPv2/DHCPv6/VXLAN |
 | `snmp` | ❌ | SNMP v1/v2c 检测，完整 PDU 解析 |
@@ -90,7 +90,7 @@ rdpi = { version = "0.4.2", default-features = false, features = ["http", "tls",
 | TLS | `tls` | SNI、TLS 版本、应用、证书 |
 | SSH | `ssh` | 协议版本、软件版本 |
 | SMTP | `smtp` | 主机名、客户端标识 |
-| QUIC | `quic` | 版本、连接 ID、SNI |
+| QUIC | `quic` | 版本、连接 ID、SNI、ALPN、JA4、应用 |
 | POP3/POP3S、IMAP/IMAPS | `mail` | - |
 | NTP、DHCP、BGP、NetFlow、IKE、PTPv2、DHCPv6、VXLAN | `infra` | NTP 版本/模式、DHCP Opcode/MAC 等 |
 | SNMP | `snmp` | 版本、Community、PDU、VarBinds |
@@ -124,6 +124,7 @@ rdpi = { version = "0.4.2", default-features = false, features = ["http", "tls",
 - [x] Phase 10: 风险分析引擎（TLS/DNS/HTTP/行为风险处理器）
 - [x] Phase 11A/12A: 扩展至 49 个协议 detector（TFTP/RSYNC/Whois/Syslog/RTMP/SOCKS/NetFlow/IKE/PTPv2/NFS、DHCPv6/Telnet/VNC/L2TP/PPTP/VXLAN/RADIUS/TURN/MGCP/H.323 等）
 - [x] Phase 12B: TLS 证书解析 + 证书风险处理器（自签名/过期/有效期过长/ALPN-SNI 不一致）
+- [x] Phase 13: QUIC Initial 解密补全（SNI/ALPN/JA4 + 风险信号 + 长包头全类型识别，RFC 9001 官方向量验证）
 - [x] 库打包、规则引擎（`rule`）、pcap CLI（`pcap`）
 
 ### 规划中
