@@ -161,6 +161,7 @@ mod tests {
             dst_port: 80,
             transport: TransportProto::Tcp,
             payload: vec![],
+            tcp: None,
         };
         let flow = dummy_flow();
         let results = registry.analyze_packet(&parsed, &flow);
@@ -178,6 +179,7 @@ mod tests {
             dst_port: 80,
             transport: TransportProto::Tcp,
             payload: vec![],
+            tcp: None,
         };
         let flow = dummy_flow();
         assert!(registry.analyze_packet(&parsed, &flow).is_empty());

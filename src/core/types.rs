@@ -565,6 +565,8 @@ pub struct DetectionResult {
     pub breed: ProtocolBreed,
     /// 应用层协议（如 YouTube, WeChat 等）
     pub app_protocol: Option<Application>,
+    /// JA4T 客户端 TCP 指纹（F33：来自流的初始 SYN 包；非 TCP / 无 SYN 时为 None）
+    pub ja4t: Option<String>,
     /// 风险分析结果 (feature: risk)
     #[cfg(feature = "risk")]
     pub risks: Vec<super::super::risk::types::RiskResult>,
@@ -580,6 +582,7 @@ impl DetectionResult {
             category: protocol.category(),
             breed: protocol.breed(),
             app_protocol: None,
+            ja4t: None,
             #[cfg(feature = "risk")]
             risks: Vec::new(),
         }

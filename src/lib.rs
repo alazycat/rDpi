@@ -305,6 +305,25 @@ impl Detector {
         // 增加包计数
         flow.packets_seen += 1;
 
+        // F33：JA4T 客户端 TCP 指纹——仅初始 SYN（SYN 置位且 ACK 清零；
+        // SYN+ECN 同样满足，SYN-ACK 不算），每流只取第一个满足的包（对齐
+        // FoxIO 官方 rust/ja4 tcp.rs）。存流级旁路字段，不占用
+        // protocol/metadata 的一次定型语义，不影响后续协议识别。
+        if flow.ja4t.is_none()
+            && parsed
+                .tcp
+                .is_some_and(|tcp| tcp.flags & 0x02 != 0 && tcp.flags & 0x10 == 0)
+        {
+            // unwrap 安全：is_some_and 已确认 tcp 存在
+            let tcp = parsed.tcp.unwrap();
+            flow.ja4t = Some(application::compute_ja4t(
+                tcp.window,
+                &tcp.option_kinds[..tcp.option_kinds_len],
+                tcp.mss,
+                tcp.window_scale,
+            ));
+        }
+
         // 计算 giveup 阈值
         let giveup_threshold = match flow.key.transport {
             TransportProto::Tcp => DEFAULT_TCP_GIVEUP,
@@ -340,7 +359,8 @@ impl Detector {
                     sni,
                     payload: parsed.payload.clone(),
                 };
-                if let Some(r) = engine.match_rule(&rule_ctx) {
+                if let Some(mut r) = engine.match_rule(&rule_ctx) {
+                    r.ja4t = flow.ja4t.clone();
                     flow.protocol = Some(r.protocol);
                     flow.metadata = Some(r.metadata.clone());
                     return Ok(Some(r));
@@ -434,8 +454,9 @@ impl Detector {
         flow.stats.bytes += packet.len() as u64;
         flow.stats.last_time = std::time::Instant::now();
 
-        // 如果有检测结果，保存元数据
-        if let Some(ref r) = result {
+        // 如果有检测结果，保存元数据（并携带流级 JA4T，若此前已捕获 SYN）
+        if let Some(ref mut r) = result {
+            r.ja4t = flow.ja4t.clone();
             flow.metadata = Some(r.metadata.clone());
         }
 

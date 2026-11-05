@@ -251,3 +251,15 @@
   - Metadata：`TlsMetadata.cert_ja4x`（types.rs，json feature 随 derive 序列化）。
 - **测试**：compute_ja4x 4 项（**官方 FoxIO rust/ja4x hash12 黄金向量** `hash12("551d0f,551d25,551d11")="aae71e8db6d7"`、空列表全零、DN OID 编码、顺序敏感）；certificate.rs 2 项（CN-only golden 向量、v3 扩展证书）；tests/test_tls.rs 2 项（纯 Certificate 记录定型 TLS + cert_ja4x、enrich 一次性富化 + SNI 保持 + 回显持久）。golden 向量经 PowerShell .NET SHA256 独立交叉验证。共 8 项新增，默认 296 / all-features 1098 / risk 341 全绿；clippy --all-features --all-targets 0 警告。
 - **已知边界**：扩展 OID 跨包分段随整个证书解析失败而放弃（与既有证书解析同策略）；QUIC 证书在加密握手包内，本路径不覆盖（QUIC 侧无证书解析）；多值 RDN（SET 内多属性）按属性顺序逐个收集，与官方 tshark 抽取的计数口径一致。测试构造器教训：DER 长度 ≥ 0x80 必须用长格式（`0x81` 前缀），单字节直写 0x8x 会被解码器按 long-form 误读（`0x8a` = 长 10 字节）。
+
+## F33【中】JA4T 客户端 TCP 指纹（2026-11-05，新功能开发）—— ✅ 已完成
+
+- **背景**：JA4 家族第五个成员（JA4/JA4S TLS（F30）+ JA4H HTTP（F31）+ JA4X 证书（F32）已有）。JA4T 基于 TCP 初始 SYN 头部字段（窗口/选项序列/MSS/缩放因子）指纹化客户端操作系统/协议栈，纯传输层、零解密、无新依赖，且不依赖任何协议 feature。
+- **规格来源**：FoxIO 官方 [rust/ja4 tcp.rs](https://github.com/FoxIO-LLC/ja4) 的 `to_ja4t`，格式 `{window}_{options}_{mss}_{window_scale}`（官方示例 `64240_2-1-3-1-1-4_1460_8`）。触发语义：仅**初始 SYN**（flags SYN=0x02 置位且 ACK=0x10 清零；SYN+ECN 0xC2 满足，SYN-ACK 0x12 不满足），每流只取第一个满足的包。字段语义：window 为 TCP 头原始值（不按缩放因子换算）；options 为选项 kind 序列按序 dash 连接（含 NOP=1，EOL=0 终止，空记 "00"）；mss 缺省 0、`%02` 最少两位（9→"09"）；wscale 为 0（含缺省）记 "00"、非 0 记原值。
+- **实现**：
+  - [parser/tcp.rs](file:///d:/rust_code/rDpi/src/parser/tcp.rs) 新增 `TcpHeaderInfo`（flags/window/option_kinds[40]/mss/window_scale，手写 Default——`[u8;40]` 超 derive 上限）：选项区逐选项单遍走查，畸形长度立即终止，EOL 填充不计 kind；固定容量栈结构，解析零堆分配（热路径铁律 2）。`ParsedPacket.tcp: Option<TcpHeaderInfo>`（parser/mod.rs，`pub use tcp::TcpHeaderInfo`）。
+  - [application/ja4.rs](file:///d:/rust_code/rDpi/src/application/ja4.rs) `compute_ja4t(window, option_kinds, mss, window_scale)`（与 ja4/ja4s/ja4h/ja4x 同文件，应用模块重导出）。
+  - [lib.rs](file:///d:/rust_code/rDpi/src/lib.rs) detect 主流程：`flow.ja4t.is_none()` 且当前包为初始 SYN 时一次性计算写入 `Flow.ja4t`（core/flow.rs 新字段）——**流级旁路字段，不占用 protocol/metadata 一次定型语义**（若 SYN 写 protocol 会阻断后续 TLS ClientHello 识别）；`DetectionResult.ja4t`（types.rs 新字段）在结果落库处统一携带（回显/规则/DPI/guess 全分支覆盖）。
+  - CLI：文本输出追加 ` ja4t=...`（rdpi.rs print_detection）；json feature 随 DetectionResult derive 自动序列化。
+- **测试**：compute_ja4t 3 项（官方 3 向量 `8192_00_00_00`/`5744_2-4-8-1-3_1436_00`/`8192_2_09_00` 直证 + Windows 11 形态 + 补零语义）；parser/tcp.rs 5 项（字段提取/无选项/EOL 填充/畸形长度/截断）；tests/test_ja4t.rs 6 项（SYN 捕获、回显携带且不覆盖、SYN-ACK 不触发但后续 SYN 捕获、SYN+ECN、无 SYN 不产出、每流取第一个 SYN）。JA4T 无哈希段（纯格式化），无需 SHA256 交叉验证。共 14 项新增，默认 310 / all-features 1112 / risk 355 全绿；clippy --all-features --all-targets 0 警告。
+- **已知边界**：官方 rust/ja4 仅实现 JA4T（客户端 SYN），JA4TS（服务端 SYN-ACK）官方未实现——本轮对齐官方只做 JA4T，服务端指纹留待官方规格落地；窗口缩放后实际窗口（window << wscale）不在指纹内（与官方一致，用原始值）；IP 分片 TCP 头仅首个分片含选项，重组层不感知（parse_packet 不做 IP 重组，分片包按独立处理）；测试教训：FlowKey 为方向性五元组，SYN 与 SYN-ACK 属不同流（tests/test_ja4t.rs 按方向断言）。

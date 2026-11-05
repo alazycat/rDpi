@@ -81,6 +81,7 @@ mod tests {
             dst_port: 53,
             transport: TransportProto::Udp,
             payload: vec![0u8; payload_size],
+            tcp: None,
         };
         (parsed, flow)
     }
@@ -100,6 +101,7 @@ mod tests {
             dst_port: 80,
             transport: TransportProto::Tcp,
             payload: vec![0u8; 1024],
+            tcp: None,
         };
         (parsed, flow)
     }

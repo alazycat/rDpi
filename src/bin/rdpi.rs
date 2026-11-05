@@ -260,12 +260,19 @@ fn print_detection(pkt_num: u64, det: &DetectionResult) {
         _ => "",
     };
 
-    if meta_str.is_empty() {
+    // F33：JA4T 客户端 TCP 指纹（来自流的初始 SYN 包）
+    let ja4t_str = det
+        .ja4t
+        .as_deref()
+        .map(|j| format!(" ja4t={}", j))
+        .unwrap_or_default();
+
+    if meta_str.is_empty() && ja4t_str.is_empty() {
         println!("[{:6}] {:?} [{:?}]", pkt_num, det.protocol, det.confidence);
     } else {
         println!(
-            "[{:6}] {:?} ({}) [{:?}]",
-            pkt_num, det.protocol, meta_str, det.confidence
+            "[{:6}] {:?} ({}{}) [{:?}]",
+            pkt_num, det.protocol, meta_str, ja4t_str, det.confidence
         );
     }
 }

@@ -161,6 +161,7 @@ mod tests {
             dst_port: 443,
             transport: TransportProto::Udp,
             payload: payload.to_vec(),
+            tcp: None,
         }
     }
 

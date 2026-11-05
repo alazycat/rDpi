@@ -3,6 +3,8 @@ mod ip;
 mod tcp;
 mod udp;
 
+pub use tcp::TcpHeaderInfo;
+
 use crate::error::Result;
 
 /// 解析后的包信息
@@ -14,6 +16,8 @@ pub struct ParsedPacket {
     pub dst_port: u16,
     pub transport: crate::core::TransportProto,
     pub payload: Vec<u8>,
+    /// TCP 头部关键字段（F33：仅 TCP 包为 Some，供 JA4T 指纹使用）
+    pub tcp: Option<TcpHeaderInfo>,
 }
 
 /// 解析原始包
@@ -37,6 +41,7 @@ pub fn parse_packet(data: &[u8]) -> Result<ParsedPacket> {
                 dst_port: 0,
                 transport: crate::core::TransportProto::Icmp,
                 payload: remainder.to_vec(),
+                tcp: None,
             })
         }
         p => Ok(ParsedPacket {
@@ -46,6 +51,7 @@ pub fn parse_packet(data: &[u8]) -> Result<ParsedPacket> {
             dst_port: 0,
             transport: crate::core::TransportProto::Other(p),
             payload: remainder.to_vec(),
+            tcp: None,
         }),
     }
 }

@@ -302,6 +302,45 @@ pub fn compute_ja4x(
     )
 }
 
+/// JA4T：TCP 客户端指纹（F33，2026-11-05）
+///
+/// 格式对齐 FoxIO 官方 rust/ja4 `tcp.rs` 的 `to_ja4t`：
+/// `{window}_{options}_{mss}_{window_scale}`
+///
+/// - `window`：TCP 头原始窗口值（未按缩放因子换算）
+/// - `options`：TCP 选项 kind 序列按序 dash 连接（含 NOP=1；EOL=0 终止），
+///   空记 "00"
+/// - `mss`：MSS 选项值，缺省 0，最少两位（9→"09"，1460→"1460"）
+/// - `window_scale`：缩放因子，为 0（含缺省）记 "00"，非 0 记原值
+///
+/// 触发语义由调用方负责：仅初始 SYN（SYN 置位且 ACK 清零），每流取第一个
+/// 满足的包。官方测试向量：`8192_00_00_00`、`5744_2-4-8-1-3_1436_00`、
+/// `8192_2_09_00`。
+///
+/// # 参数
+///
+/// * `window` - TCP 头原始窗口值
+/// * `option_kinds` - TCP 选项 kind 序列（按出现顺序，含 NOP）
+/// * `mss` - MSS 选项值（缺省 0）
+/// * `window_scale` - 窗口缩放因子 shift（缺省 0）
+pub fn compute_ja4t(window: u16, option_kinds: &[u8], mss: u16, window_scale: u8) -> String {
+    let options = if option_kinds.is_empty() {
+        "00".to_string()
+    } else {
+        option_kinds
+            .iter()
+            .map(|k| k.to_string())
+            .collect::<Vec<_>>()
+            .join("-")
+    };
+    let scale = if window_scale == 0 {
+        "00".to_string()
+    } else {
+        window_scale.to_string()
+    };
+    format!("{window}_{options}_{mss:02}_{scale}")
+}
+
 /// OID 列表 → 12 位哈希段：DER 内容字节 hex 逗号拼接后 SHA-256 截断；空列表为 12 个 0
 fn hash12_oids(oids: &[Vec<u8>]) -> String {
     if oids.is_empty() {
@@ -314,6 +353,33 @@ fn hash12_oids(oids: &[Vec<u8>]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_ja4t_official_vectors() {
+        // 官方 rust/ja4 tcp.rs 测试向量
+        assert_eq!(compute_ja4t(8192, &[], 0, 0), "8192_00_00_00");
+        assert_eq!(
+            compute_ja4t(5744, &[2, 4, 8, 1, 3], 1436, 0),
+            "5744_2-4-8-1-3_1436_00"
+        );
+        assert_eq!(compute_ja4t(8192, &[2], 9, 0), "8192_2_09_00");
+    }
+
+    #[test]
+    fn test_ja4t_windows11_shape() {
+        // 官方文档示例（Windows 11 Chrome）：MSS=1460、wscale=8（非 0 记原值）
+        assert_eq!(
+            compute_ja4t(64240, &[2, 1, 3, 1, 1, 4], 1460, 8),
+            "64240_2-1-3-1-1-4_1460_8"
+        );
+    }
+
+    #[test]
+    fn test_ja4t_padding_semantics() {
+        // mss/scale 补零语义：mss 9→"09"；scale 0→"00"
+        assert_eq!(compute_ja4t(1024, &[2, 3], 9, 0), "1024_2-3_09_00");
+        assert_eq!(compute_ja4t(1024, &[1, 1], 0, 2), "1024_1-1_00_2");
+    }
 
     #[test]
     fn test_ja4_basic() {

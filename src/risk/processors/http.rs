@@ -211,6 +211,7 @@ mod tests {
             dst_port: 80,
             transport: TransportProto::Tcp,
             payload: payload.as_bytes().to_vec(),
+            tcp: None,
         };
         (parsed, flow)
     }
@@ -284,6 +285,7 @@ mod tests {
             dst_port: 443,
             transport: TransportProto::Tcp,
             payload: b"password=secret".to_vec(),
+            tcp: None,
         };
         let proc = HttpRiskProcessor::new();
         let risks = proc.analyze_packet(&parsed, &flow);

@@ -28,15 +28,16 @@ lib.rs (Detector 编排) → parser (以太网/IP/TCP/UDP) → core (FlowTable/g
 - **JA4S 服务端指纹（F30，2026-11-05）**：TLS detector 识别 ServerHello 记录（`parse_server_hello`，tls/parser.rs）→ 纯 ServerHello 的服务端流自此可定型为 Tls（此前服务端流靠 cert 或 guess 回退）；JA4S 格式对齐 FoxIO 官方 ja4.py to_ja4s（`application::compute_ja4s`，application/ja4.rs：扩展不排序/不过滤 GREASE、服务端选定 cipher 明文 4hex、hash 输入 0x%04x 逗号串）；QUIC 走服务端 Initial 解密产出 q 前缀 JA4S（quic/parser.rs decrypt_server_hello_meta）；TCP 回显路径一次性富化（lib.rs enrich_tls_ja4s，对齐 ADR-0004）。
 - **JA4H 客户端 HTTP 指纹（F31，2026-11-05）**：`application::compute_ja4h`（官方 ja4h.py to_ja4h 语义：头序敏感+原始大小写、cookie/referer 仅作 c/r 标志、cookie 字段/值按名排序哈希、语言 4 位右补 0、header_len 与 lang 间无分隔符）；`http::parse_header_lines` 提供头行输入；仅 HTTP/1.x 请求路径产出（响应与 h2 为 None）。
 - **JA4X X.509 证书指纹（F32，2026-11-05）**：`application::compute_ja4x`（官方 rust/ja4x hash12 语义：`{issuer12}_{subject12}_{扩展12}`，OID DER 内容字节 hex 逗号拼接哈希、不排序，空列表记 12 个 0）；`tls/certificate.rs` `extract_dn` 返回 OID 列表 + `extract_extension_oids`（`[3] EXPLICIT` 双层解封装）；CertInfo.ja4x 解析期一次算好，经 tls detector 识别路径与 enrich_tls_cert 富化路径双接入，`TlsMetadata.cert_ja4x`。
+- **JA4T 客户端 TCP 指纹（F33，2026-11-05）**：`application::compute_ja4t`（官方 rust/ja4 tcp.rs `to_ja4t` 语义：`{window}_{options}_{mss}_{wscale}`，选项 kind 序列含 NOP/EOL 终止、空记 "00"、mss 最少两位、wscale=0 记 "00"）；`parser::tcp::TcpHeaderInfo` 固定容量栈结构零堆分配提取 flags/window/选项 kind/MSS/wscale（ParsedPacket.tcp）；detect 主流程初始 SYN（SYN 置位且 ACK 清零）每流一次写入 `Flow.ja4t` 流级旁路字段——**不占用 protocol/metadata 一次定型语义**；DetectionResult.ja4t 随回显/规则分支携带。
 - **首字节门预筛（F29，2026-11-05）**：detector 可声明 `first_byte_gate()`（payload[0] 允许区间），Registry 注册期预计算 skip 位图、detect 循环内位测试跳过（miss 路径 36/49 已声明门，同机 A/B -12.3%）；13 个首字节任意的 detector 保持 `None`（dns/mongodb/postgresql/stun/modbus/l2tp/pptp/ike/nfs/whois/websocket/pop3/imap，证据见 risks.md F29）。
 - **feature gate**：全部协议有 gate（R7 已修复 2026-11-04：tftp/rsync/whois/syslog/telnet/vnc 挂在 `misc` feature，risks.md R7）。
 
 ## 3. 常用命令
 
 ```bash
-cargo test                    # 默认 features (dns+http+tls)，296 测试全绿（2026-11-05 F32 JA4X 轮实测）
-cargo test --all-features     # 1098 测试全绿（10 ignored = test_regression 存量）；F32 后实测
-cargo test --features risk    # 341 测试全绿（含风险处理器相关探针 a1_risk/a6/r5）
+cargo test                    # 默认 features (dns+http+tls)，310 测试全绿（2026-11-05 F33 JA4T 轮实测）
+cargo test --all-features     # 1112 测试全绿（10 ignored = test_regression 存量）；F33 后实测
+cargo test --features risk    # 355 测试全绿（含风险处理器相关探针 a1_risk/a6/r5）
 cargo build --features pcap   # 构建 CLI
 cargo bench                   # criterion 基准（benches/bench_detect.rs）；基线见 docs/architecture/performance.md
 cargo bench --features quic   # 全量 9 项（含 QUIC 头部判定/Initial 解密冷+稳态）
@@ -88,6 +89,7 @@ cargo fmt ; cargo clippy      # 提交前（lib+bins 门槛 0 警告；验证须
 | F30 | JA4S 服务端 TLS 指纹：TLS detector 识别 ServerHello + FoxIO ja4.py 格式 + QUIC q 前缀变体 + 回显一次性富化 | 中 | ✅ 已完成 2026-11-05（纯 ServerHello 服务端流自此可定型；golden 向量经 PowerShell .NET SHA256 交叉验证；默认 274 / all-features 1076 / risk 319 全绿，详见 risks.md F30） |
 | F31 | JA4H 客户端 HTTP 指纹：HTTP/1.x 请求头集合指纹，对齐官方 ja4h.py（头序敏感/cookie 排序/语言编码） | 中 | ✅ 已完成 2026-11-05（http parser 增 parse_header_lines + compute_ja4h；HttpMetadata.ja4h 仅请求路径；golden 向量独立实现交叉验证；默认 288 / all-features 1090 / risk 333 全绿，详见 risks.md F31） |
 | F32 | JA4X X.509 证书指纹：issuer/subject/扩展 OID 哈希，对齐官方 rust/ja4x（空列表全零、DER 内容字节 hex 输入） | 中 | ✅ 已完成 2026-11-05（certificate.rs OID 收集 + compute_ja4x + cert 富化双路径；官方 hash12 黄金向量交叉验证；默认 296 / all-features 1098 / risk 341 全绿，详见 risks.md F32） |
+| F33 | JA4T 客户端 TCP 指纹：初始 SYN 头部字段指纹（window/选项 kind/MSS/wscale），对齐官方 rust/ja4 tcp.rs（流级旁路字段，不占用协议定型语义） | 中 | ✅ 已完成 2026-11-05（TcpHeaderInfo 栈结构零堆分配提取 + compute_ja4t + Flow.ja4t/DetectionResult.ja4t；官方 3 向量直证；默认 310 / all-features 1112 / risk 355 全绿，详见 risks.md F33） |
 
 ## 7. 文档索引
 

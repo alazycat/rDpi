@@ -164,6 +164,7 @@ mod tests {
             dst_port: 443,
             transport: TransportProto::Tcp,
             payload: vec![],
+            tcp: None,
         }
     }
 

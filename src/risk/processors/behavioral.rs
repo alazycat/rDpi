@@ -185,6 +185,7 @@ mod tests {
             dst_port: 80,
             transport: TransportProto::Tcp,
             payload,
+            tcp: None,
         }
     }
 

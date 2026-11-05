@@ -25,5 +25,6 @@ pub fn parse(data: &[u8], src_ip: IpAddr, dst_ip: IpAddr) -> Result<ParsedPacket
         dst_port,
         transport: TransportProto::Udp,
         payload,
+        tcp: None,
     })
 }
