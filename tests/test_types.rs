@@ -141,6 +141,74 @@ fn test_tls_metadata_with_application() {
     };
 }
 
+// ============================================================================
+// JSON 序列化（feature=json，CLI -o json/jsonl 消费面）
+// ============================================================================
+
+#[cfg(feature = "json")]
+mod json_tests {
+    use rdpi::core::types::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_detection_result_serializes() {
+        let metadata = Metadata::Tls(TlsMetadata {
+            sni: Some("www.youtube.com".to_string()),
+            version: Some("TLSv1.3".to_string()),
+            application: Some(Application::YouTube),
+            ja4: Some("t13.771.771".to_string()),
+            cipher_suites: vec![0x13, 0x01],
+            alpn: Some("h2".to_string()),
+            cert_subject: None,
+            cert_issuer: None,
+            cert_valid_from: None,
+            cert_valid_to: None,
+        });
+        let det = DetectionResult::new(Protocol::Tls).with_metadata(metadata);
+        let v = serde_json::to_value(&det).unwrap();
+        assert_eq!(v["protocol"], "Tls");
+        assert_eq!(v["confidence"], "Dpi");
+        assert_eq!(v["category"], "WebTunnel");
+        assert_eq!(v["breed"], "Safe");
+        assert_eq!(v["app_protocol"], "YouTube");
+        assert_eq!(v["metadata"]["Tls"]["sni"], "www.youtube.com");
+        assert_eq!(v["metadata"]["Tls"]["ja4"], "t13.771.771");
+    }
+
+    #[test]
+    fn test_metadata_none_serializes_as_string() {
+        let det = DetectionResult::new(Protocol::Tcp);
+        let v = serde_json::to_value(&det).unwrap();
+        assert_eq!(v["metadata"], json!("None"));
+    }
+
+    #[test]
+    fn test_quic_metadata_with_transport_params_serializes() {
+        let metadata = Metadata::Quic(QuicMetadata {
+            sni: None,
+            alpn: Some("h3".to_string()),
+            ja4: None,
+            version: Some("00000001".to_string()),
+            destination_connection_id: Some(vec![0xde, 0xad]),
+            application: None,
+            transport_parameters: Some(QuicTransportParams {
+                max_idle_timeout: Some(30000),
+                max_udp_payload_size: Some(1500),
+                initial_max_data: Some(1024),
+                initial_max_streams_bidi: Some(8),
+                initial_max_streams_uni: None,
+            }),
+        });
+        let det = DetectionResult::new(Protocol::Quic).with_metadata(metadata);
+        let v = serde_json::to_value(&det).unwrap();
+        assert_eq!(v["metadata"]["Quic"]["alpn"], "h3");
+        assert_eq!(
+            v["metadata"]["Quic"]["transport_parameters"]["initial_max_data"],
+            1024
+        );
+    }
+}
+
 #[test]
 fn test_quic_metadata_with_application() {
     use rdpi::core::types::QuicMetadata;

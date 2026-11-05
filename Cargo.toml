@@ -32,6 +32,7 @@ modbus = []
 database = []
 pcap = ["dep:pcap-file"]
 rule = ["serde", "serde_json"]
+json = ["serde", "serde_json"]  # CLI/库 JSON 序列化输出
 proto3 = []    # FTP, SIP, RTP/RTCP
 iot = []       # MQTT
 vpn = []       # WireGuard, OpenVPN

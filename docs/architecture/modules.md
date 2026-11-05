@@ -104,4 +104,12 @@
 
 ## 9. CLI（src/bin/rdpi.rs）
 
-参数：`-i/--input` pcap 路径、`-o/--output`（text/json/csv）、`-v/--verbose`（rdpi.rs:15-27）。流程：`PcapProcessor::process_file` → 逐包统计协议计数 → 汇总输出（rdpi.rs:29-66）。注意：`#[command(version = "0.2.0")]`（rdpi.rs:14）与 crate 版本 0.4.1 不一致（**[代码明确实现]**）。
+参数：`-i/--input` pcap 路径、`-o/--output`（text/json/jsonl/csv，默认 text）、`-v/--verbose`（rdpi.rs:30-42）。版本号 `env!("CARGO_PKG_VERSION")`（R9 修复）。流程：`PcapProcessor::process_file` → 逐包统计协议计数 → 汇总输出。
+
+输出格式（rdpi.rs:115-141）：
+- **text**（默认）：人类可读汇总
+- **csv**：协议计数表
+- **json**（feature=json）：单 JSON 文档 `{summary, packets}`；`packets` 仅 `-v` 时收集于内存（`PacketRecord{packet_no, timestamp_us, detection flatten}`，rdpi.rs:150-171），超大 pcap 用 jsonl。**无 json feature 时降级**为手写 summary（仅汇总，`print_json_summary` rdpi.rs:302）
+- **jsonl**（feature=json）：JSON Lines 流式输出，零内存缓冲——每包一行 `PacketRecord`、未识别包一行 `{"type":"unknown","packet_no":N}`、末行 `{"type":"summary",...}`（flatten 展开 Summary，rdpi.rs:236-245）。无 json feature 时报错 exit(2)（rdpi.rs:49-52）
+
+库侧序列化（feature=json）：`serde::Serialize` 经 `#[cfg_attr(feature = "json", derive(...))]` 派生到 core/types.rs 全部公开类型（37 处）与 risk/types.rs（RiskFlag/Severity/Result 3 处）；复用既有 optional serde/serde_json 依赖（Cargo.toml features 表 `json = ["serde", "serde_json"]`）。Metadata 枚举为 externally-tagged（如 `"Tls":{...}`），`Metadata::None` 序列化为字符串 `"None"`。`risk` 字段在 feature=risk 下随 DetectionResult flatten 输出。

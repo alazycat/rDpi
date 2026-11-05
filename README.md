@@ -73,6 +73,7 @@ fn main() -> rdpi::error::Result<()> {
 | `misc` | ❌ | TFTP/RSYNC/Whois/Syslog/Telnet/VNC 协议检测 |
 | `pcap` | ❌ | pcap 文件读取 CLI |
 | `rule` | ❌ | 自定义规则引擎（JSON 规则加载） |
+| `json` | ❌ | CLI/库 JSON 序列化输出（`-o json` 单文档 / `-o jsonl` JSON Lines） |
 | `risk` | ❌ | 风险分析引擎（TLS/DNS/HTTP/行为/证书风险） |
 
 禁用默认 features:
@@ -138,7 +139,7 @@ rdpi = { version = "0.4.2", default-features = false, features = ["http", "tls",
 - **语言**: Rust 2024 Edition
 - **协议解析**: 手写以太网/IP/TCP/UDP 解析器与各协议 detector（无解析库依赖）
 - **错误处理**: thiserror
-- **序列化**（可选）: serde / serde_json（`rule`、`risk` feature）
+- **序列化**（可选）: serde / serde_json（`rule`、`risk`、`json` feature）
 - **CLI**（可选）: clap + pcap-file（`pcap` feature）
 
 ## 许可证

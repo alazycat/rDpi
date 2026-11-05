@@ -6,6 +6,7 @@
 ///
 /// 对应 nDPI 的 `ndpi_risk_enum` 概念，每个变体代表一种可检测的安全/异常风险。
 #[cfg(feature = "risk")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RiskFlag {
     // === TLS 安全 (7) ===
@@ -71,6 +72,7 @@ pub enum RiskFlag {
 
 /// 风险严重程度等级
 #[cfg(feature = "risk")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RiskSeverity {
     /// 低风险，信息性
@@ -85,6 +87,7 @@ pub enum RiskSeverity {
 
 /// 单条风险结果
 #[cfg(feature = "risk")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct RiskResult {
     /// 风险标记

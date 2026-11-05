@@ -5,6 +5,7 @@
 use std::net::IpAddr;
 
 /// 传输层协议类型
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TransportProto {
     /// TCP 协议
@@ -29,6 +30,7 @@ pub enum TransportProto {
 /// - `quic`: QUIC, HTTP/3
 /// - `mail`: POP3, POP3S, IMAP, IMAPS
 /// - `infra`: NTP, DHCP
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Protocol {
     // 传输层
@@ -165,6 +167,7 @@ pub struct FlowKey {
 /// 协议特定元数据
 ///
 /// 包含各协议提取的元数据信息。
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone, Default)]
 pub enum Metadata {
     /// 无元数据
@@ -222,6 +225,7 @@ pub enum Metadata {
 }
 
 /// DNS 元数据
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct DnsMetadata {
     /// 查询域名
@@ -231,6 +235,7 @@ pub struct DnsMetadata {
 }
 
 /// TLS 元数据
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone, Default)]
 pub struct TlsMetadata {
     /// Server Name Indication (SNI)
@@ -256,6 +261,7 @@ pub struct TlsMetadata {
 }
 
 /// HTTP 元数据
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct HttpMetadata {
     /// Host 头
@@ -271,6 +277,7 @@ pub struct HttpMetadata {
 /// HTTP/2 元数据 (feature: proto3)
 ///
 /// 从首个客户端 HEADERS 帧提取（HPACK 解码，RFC 7541）。
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone, Default)]
 #[cfg(feature = "proto3")]
 pub struct Http2Metadata {
@@ -283,6 +290,7 @@ pub struct Http2Metadata {
 }
 
 /// SSH 元数据
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct SshMetadata {
     /// 协议版本 (如 "2.0")
@@ -292,6 +300,7 @@ pub struct SshMetadata {
 }
 
 /// SMTP 元数据
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct SmtpMetadata {
     /// 主机名（来自 banner 或 EHLO）
@@ -304,6 +313,7 @@ pub struct SmtpMetadata {
 ///
 /// 来自 ClientHello 的 `quic_transport_parameters` (0x0039) 扩展，
 /// 仅收录数值型（varint 值）参数用于行为指纹/风险信号；未知参数跳过。
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone, Default)]
 pub struct QuicTransportParams {
     /// 最大空闲超时（毫秒，0x01）
@@ -322,6 +332,7 @@ pub struct QuicTransportParams {
 ///
 /// SNI/ALPN/JA4 来自 Initial 包解密（RFC 9001 §5，CRYPTO 帧 → TLS ClientHello），
 /// 解密失败或非客户端 Initial 时为 None。
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct QuicMetadata {
     /// Server Name Indication (SNI)
@@ -341,6 +352,7 @@ pub struct QuicMetadata {
 }
 
 /// NTP 元数据
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct NtpMetadata {
     /// NTP 版本 (1-4)
@@ -352,6 +364,7 @@ pub struct NtpMetadata {
 }
 
 /// DHCP 元数据
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct DhcpMetadata {
     /// 操作码 (1=request, 2=reply)
@@ -361,6 +374,7 @@ pub struct DhcpMetadata {
 }
 
 /// SNMP 元数据
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct SnmpMetadata {
     /// SNMP 版本 (v1=0, v2c=1)
@@ -382,6 +396,7 @@ pub struct SnmpMetadata {
 }
 
 /// SNMP 版本
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnmpVersion {
     /// SNMPv1
@@ -391,6 +406,7 @@ pub enum SnmpVersion {
 }
 
 /// SNMP PDU 类型
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnmpPduType {
     /// GetRequest
@@ -414,6 +430,7 @@ pub enum SnmpPduType {
 }
 
 /// SNMP VarBind
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct SnmpVarBind {
     /// OID
@@ -423,6 +440,7 @@ pub struct SnmpVarBind {
 }
 
 /// SNMP v1 Trap 特殊信息
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct SnmpTrapInfo {
     /// Enterprise OID
@@ -438,6 +456,7 @@ pub struct SnmpTrapInfo {
 }
 
 /// Modbus TCP 元数据
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct ModbusMetadata {
     /// Transaction ID
@@ -457,6 +476,7 @@ pub struct ModbusMetadata {
 }
 
 /// Modbus 数据
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub enum ModbusData {
     /// 读请求
@@ -522,6 +542,7 @@ pub enum ModbusData {
 }
 
 /// 协议检测结果
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct DetectionResult {
     /// 检测到的协议
@@ -587,6 +608,7 @@ impl DetectionResult {
 ///
 /// 共 25 个分类，涵盖网络层到应用层的业务分类。
 /// 新增分类保持向后兼容，未使用的预留给未来协议扩展。
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProtocolCategory {
     /// 网络层协议（如 TCP, UDP, ICMP）
@@ -838,6 +860,7 @@ impl Protocol {
 }
 
 /// 协议风险评级
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ProtocolBreed {
     /// 未评级
@@ -859,6 +882,7 @@ pub enum ProtocolBreed {
 }
 
 /// 协议检测置信度级别
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Confidence {
     /// 未识别
@@ -1001,6 +1025,7 @@ pub struct DetectContext {
 }
 
 /// 应用分类
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ApplicationCategory {
     /// 流媒体
@@ -1014,6 +1039,7 @@ pub enum ApplicationCategory {
 /// 应用层协议识别
 ///
 /// 基于 TLS SNI 识别的应用平台。
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Application {
     // 流媒体
@@ -1236,6 +1262,7 @@ impl Application {
 }
 
 /// MySQL 元数据
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct MysqlMetadata {
     /// 服务器版本 (如 "8.0.33")
@@ -1245,6 +1272,7 @@ pub struct MysqlMetadata {
 }
 
 /// PostgreSQL 元数据
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct PostgresqlMetadata {
     /// 用户名
@@ -1256,6 +1284,7 @@ pub struct PostgresqlMetadata {
 }
 
 /// Redis 元数据
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct RedisMetadata {
     /// 命令类型 (如 GET, SET, SELECT)
@@ -1264,6 +1293,7 @@ pub struct RedisMetadata {
 
 /// MQTT 元数据 (feature: iot)
 #[cfg(feature = "iot")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct MqttMetadata {
     /// 协议名称: "MQTT" (v3.1.1/v5) 或 "MQIsdp" (v3.1)
@@ -1281,6 +1311,7 @@ pub struct MqttMetadata {
 }
 
 /// MongoDB 握手响应元数据 (feature: database)
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct MongodbMetadata {
     /// 服务器版本号 (来自 isMaster 响应)
@@ -1293,6 +1324,7 @@ pub struct MongodbMetadata {
 
 /// WireGuard 元数据 (feature: vpn)
 #[cfg(feature = "vpn")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct WireGuardMetadata {
     /// 消息类型: 1=Initiation, 2=Response, 3=CookieReply, 4=Transport
@@ -1303,6 +1335,7 @@ pub struct WireGuardMetadata {
 
 /// STUN 元数据 (feature: voip)
 #[cfg(feature = "voip")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct StunMetadata {
     /// 消息类型 (如 0x0001=Binding Request)
@@ -1315,6 +1348,7 @@ pub struct StunMetadata {
 
 /// Kerberos 元数据 (feature: auth)
 #[cfg(feature = "auth")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct KerberosMetadata {
     /// 消息类型: 10=AS-REQ, 11=AS-REP, 12=TGS-REQ, 13=TGS-REP
@@ -1324,6 +1358,7 @@ pub struct KerberosMetadata {
 }
 
 #[cfg(feature = "proto3")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct FtpMetadata {
     pub is_client: bool,
@@ -1333,6 +1368,7 @@ pub struct FtpMetadata {
 }
 
 #[cfg(feature = "proto3")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct SipMetadata {
     pub is_request: bool,
@@ -1342,6 +1378,7 @@ pub struct SipMetadata {
 }
 
 #[cfg(feature = "proto3")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
 pub struct RtpMetadata {
     pub ssrc: u32,
