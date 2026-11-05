@@ -16,6 +16,14 @@ pub fn parse_pg_startup(data: &[u8]) -> Option<PostgresqlMetadata> {
         return None;
     }
 
+    // 误报面审计 2026-11-05：长度字段自洽校验——pg_len（含自身 4 字节）
+    // 必须与 payload 实际长度一致且 >= 9（4 长度 + 4 版本 + 1 终止符），
+    // 拒绝以任意二进制开头且恰好带 v3.0 版本号的畸形载荷。
+    let pg_len = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
+    if pg_len != data.len() || pg_len < 9 {
+        return None;
+    }
+
     // Check protocol version (3.0 = 0x00030000)
     if data[4..8] != [0x00, 0x03, 0x00, 0x00] {
         return None;
@@ -184,6 +192,30 @@ mod tests {
         let msg = vec![
             0x00, 0x00, 0x00, 0x08, // Length: 8
             0x04, 0xd2, 0x16, 0x2e, // SSL request magic number
+        ];
+        assert!(parse_pg_startup(&msg).is_none());
+    }
+
+    // ---- 误报面审计 2026-11-05 探针 ----
+    #[test]
+    fn test_probe_length_field_mismatch() {
+        // 旧判定命中（len>=9 且版本号 v3.0），新判定拒绝：pg_len=16 与 9 字节 payload 不自洽
+        let msg = vec![
+            0x00, 0x00, 0x00, 0x10, // Length: 16（声明值）
+            0x00, 0x03, 0x00, 0x00, // Protocol v3.0
+            0x00, // terminator
+        ];
+        assert!(parse_pg_startup(&msg).is_none());
+    }
+
+    #[test]
+    fn test_probe_length_below_minimum() {
+        // 旧判定命中（payload 实际 9 字节且版本号 v3.0），新判定拒绝：
+        // pg_len=8 < 9（最小 StartupMessage = 4 长度 + 4 版本 + 1 终止符）
+        let msg = vec![
+            0x00, 0x00, 0x00, 0x08, // Length: 8（< 9）
+            0x00, 0x03, 0x00, 0x00, // Protocol v3.0
+            0x00, // terminator
         ];
         assert!(parse_pg_startup(&msg).is_none());
     }

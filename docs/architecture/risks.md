@@ -168,3 +168,29 @@
 - **证据**：流已识别时回显结果 `flow.protocol.map(...)`（原 [lib.rs:316-319](file:///d:/rust_code/rDpi/src/lib.rs#L316-L319)），`DetectionResult::new` 的 metadata 默认 `Metadata::None`（[types.rs:500](file:///d:/rust_code/rDpi/src/core/types.rs#L500)）；随后 [lib.rs:327-329](file:///d:/rust_code/rDpi/src/lib.rs#L327-L329) 无条件 `flow.metadata = Some(r.metadata.clone())` → 长流第二包起元数据被抹成 `Some(Metadata::None)`。
 - **修复**：[lib.rs:316-328](file:///d:/rust_code/rDpi/src/lib.rs#L316-L328) 回显分支携带 `flow.metadata`（`r.metadata = m.clone()`）。效果：① risk 处理器（tls/dns/http，依赖 flow.metadata）从第二包起恢复逐包生效；② `Detector::flows()` 读到的长流元数据持久。**协议一次定型语义未动**（ADR-0004，已同步）。
 - **验证**：b4 改断言元数据随回显持久（Http host 保留）；a2 改断言 Some(Tls) 且 F3 证书字段仍 None（F3 未修，另案）；a6 risk 计数 1→3（P9 原断言恢复）；ADR-0004/0006 已更新。`--features risk` 15 测试 + all-features 全量回归绿。
+
+## F12-F27【高×5 / 中×11】误报面审计：16 个低特异性 detector 判定收紧 —— ✅ 全部已修复（2026-11-05，用户批准"全部 16 项"）
+
+> 背景：F6/F8/F9/F10 修复先例的系统性推广。通读全部 49 个协议 detector 源码后汇总（高风险 5 + 中风险 11），**注册顺序一律未动**（R11 影响面），均为单 detector payload 判定收紧 + 误报探针测试固化（每模块 2-5 个"旧判定命中、新判定拒绝"探针）。已达标未动的协议：dns/tftp/ptpv2（F6/F10 已收紧）、stun/dhcp/snmp/modbus/mongodb/rdp/ssh/mysql/nfs/ntp/mgcp/rsync/vnc/rtp。
+
+| ID | Detector | 原判定缺陷 | 修复后判定 | 证据 |
+|---|---|---|---|---|
+| F12【高】 | pptp | `data[0..2]==0x0001`：真 PPTP 控制报文首 2 字节是长度字段，**永远匹配不到真报文**（假阴），同时任意 0x0001 前缀二进制被认领（假阳） | RFC 2637：`len>=8 && data[2..6]==0x1A2B3C4D`（Magic Cookie） | [pptp/parser.rs](file:///d:/rust_code/rDpi/src/protocols/pptp/parser.rs) |
+| F13【高】 | whois | payload 全可打印 ASCII 即命中——任何幸存到尾部的文本流量全被认领 | `5..=1000` 全可打印 + 末字节 `\n` + 首行 ≤255 | [whois/parser.rs](file:///d:/rust_code/rDpi/src/protocols/whois/parser.rs) |
+| F14【高】 | socks | 首字节 0x04/0x05 即命中（1/256 二进制误报面） | v5：`nmethods>=1 && 2+nmethods<=len`；v4：`len>=8 && cmd∈1..=4` | [socks/parser.rs](file:///d:/rust_code/rDpi/src/protocols/socks/parser.rs) |
+| F15【高】 | rtmp | 首字节 0x03 即命中；真握手 C0+C1 共 1537 字节 | `data[0]==0x03 && len>=1537` | [rtmp/parser.rs](file:///d:/rust_code/rDpi/src/protocols/rtmp/parser.rs) |
+| F16【高】 | ldap | `data[0]==0x30 && contains(0x60)`——任意含 0x60 的 BER 系二进制命中；LDAP 注册在 mysql/postgresql 之前会抢答数据库流量 | RFC 4511 BindRequest 结构逐字段：SEQUENCE 长度自洽 + msgID INTEGER + 0x60 tag + version INTEGER | [ldap/parser.rs](file:///d:/rust_code/rDpi/src/protocols/ldap/parser.rs) |
+| F17【中】 | telnet | 仅首字节 0xFF | `data[1]∈0xFA..=0xFE`（IAC 协商命令 SB/WILL/WONT/DO/DONT） | [telnet/parser.rs](file:///d:/rust_code/rDpi/src/protocols/telnet/parser.rs) |
+| F18【中】 | h323 | 仅首字节 0x08（1/256） | TPKT 形态（长度自洽 + data[4]==0x08）或裸 Q.931（call-ref 长度 ≤2） | [h323/parser.rs](file:///d:/rust_code/rDpi/src/protocols/h323/parser.rs) |
+| F19【中】 | vxlan | 仅 flags==0x0800 | 保留位 3 字节必须全 0 | [vxlan/parser.rs](file:///d:/rust_code/rDpi/src/protocols/vxlan/parser.rs) |
+| F20【中】 | syslog | `<PRI>` 接受任意位数数字 | PRI 1-3 位且 ≤191（RFC 3164） | [syslog/parser.rs](file:///d:/rust_code/rDpi/src/protocols/syslog/parser.rs) |
+| F21【中】 | turn | 仅 channel 码范围（1/8 二进制命中面） | RFC 5766 长度自洽：`4+msg_len<=len && msg_len>=1` | [turn/parser.rs](file:///d:/rust_code/rDpi/src/protocols/turn/parser.rs) |
+| F22【中】 | radius | `data[1]==0x01` 为 bogus 约束（packet id 是随机的，**99.6% 真实流量漏判**）且无长度校验 | `code∈1..=50 && pkt_len==len && len>=20`（删除 bogus 约束） | [radius/parser.rs](file:///d:/rust_code/rDpi/src/protocols/radius/parser.rs) |
+| F23【中】 | netflow | 仅版本前缀 0x0005 | v5 结构自洽：`count∈[1,30] && len>=24+count×48`（RFC 3954） | [netflow/parser.rs](file:///d:/rust_code/rDpi/src/protocols/netflow/parser.rs) |
+| F24【中】 | bgp | 16×0xFF marker + type，长度字段未自洽 | `msg_len>=19 && msg_len<=len` | [bgp/parser.rs](file:///d:/rust_code/rDpi/src/protocols/bgp/parser.rs) |
+| F25【中】 | postgresql | 长度字段未自洽 | `pg_len==len && pg_len>=9` | [postgresql/parser.rs](file:///d:/rust_code/rDpi/src/protocols/postgresql/parser.rs) |
+| F26【中】 | dhcpv6 | `data[1]==0x01` 为 bogus 约束（事务 ID 是随机的，**99.6% 真实流量漏判**） | RFC 8415 结构下界：type 1-11→len≥10、12→≥40、13→≥23 | [dhcpv6/parser.rs](file:///d:/rust_code/rDpi/src/protocols/dhcpv6/parser.rs) |
+| F27【中】 | websocket | `to_lowercase()` 在 detect 热路径堆分配（违反铁律 2，存量问题） | 零分配 `contains_case_insensitive` 字节级 ASCII 折叠扫描，语义不变 | [websocket/parser.rs](file:///d:/rust_code/rDpi/src/protocols/websocket/parser.rs) |
+
+- **验证**：三配置全量回归绿（默认 104 lib 套件全绿 / risk 142 / all-features 677 lib + test_integration 72 + test_regression 8 全绿，0 failed）；`cargo clippy --all-features --all-targets` 0 警告（顺带清掉 netflow 本轮引入 + hpack.rs:568 上轮遗留两处）；`cargo fmt --check` 干净。
+- **注意**：F22/F26 属"假阴修复"（删除 bogus 约束后真实流量检出率大幅提升），但 F26 的 len≥10 下界对 4-9 字节的畸形 DHCPv6 极端样本仍会漏判（真实 DHCPv6 至少含 Client-ID option，实际影响趋近于零）。

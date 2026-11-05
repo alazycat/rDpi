@@ -30,12 +30,12 @@ lib.rs (Detector 编排) → parser (以太网/IP/TCP/UDP) → core (FlowTable/g
 ## 3. 常用命令
 
 ```bash
-cargo test                    # 默认 features (dns+http+tls)，233 测试全绿（2026-11-04 第七轮修复后实测）
-cargo test --all-features     # 867 测试全绿（7 ignored = test_regression 存量）；R7 后六协议挂在 misc
-cargo test --features risk    # 273 测试全绿（含风险处理器相关探针 a1_risk/a6/r5）
+cargo test                    # 默认 features (dns+http+tls)，256 测试全绿（2026-11-05 误报面审计轮实测）
+cargo test --all-features     # 1018 测试全绿（10 ignored = test_regression 存量）；F12-F27 收紧后实测
+cargo test --features risk    # 301 测试全绿（含风险处理器相关探针 a1_risk/a6/r5）
 cargo build --features pcap   # 构建 CLI
 cargo bench                   # criterion 基准（benches/bench_detect.rs）
-cargo fmt ; cargo clippy      # 提交前（存量 never-used 警告见 risks.md，不在修复范围）
+cargo fmt ; cargo clippy      # 提交前（lib+bins 门槛 0 警告；验证须用 --message-format=short，R12 教训）
 ```
 
 ## 4. 编码规范（从现有代码归纳）
@@ -76,6 +76,7 @@ cargo fmt ; cargo clippy      # 提交前（存量 never-used 警告见 risks.md
 | R9 | CLI 版本号硬编码 0.2.0 与 crate 0.4.1 不一致 | 低 | ✅ 已修复 2026-11-04（改 env!("CARGO_PKG_VERSION")） |
 | R12 | clippy --all-targets 测试目标约 40 处历史 lint（lib+bins 门槛已 0 警告） | 信息 | 登记备查（risks.md R12） |
 | F11 | 流级风险双重死路（flow_processors 恒空 + analyze_flow 结果丢弃） | 中 | ✅ 已修复 2026-11-04（双注册 + pending_risks + drain_risks 出口） |
+| F12-F27 | 误报面审计：16 个低特异性 detector（pptp/whois/socks/rtmp/ldap/telnet/h323/vxlan/syslog/turn/radius/netflow/bgp/postgresql/dhcpv6/websocket）判定收紧，含 pptp/radius/dhcpv6 三个假阴修复与 websocket 热路径去分配 | 高×5/中×11 | ✅ 已修复 2026-11-05（注册顺序未动，逐模块误报探针固化，详见 risks.md F12-F27） |
 
 ## 7. 文档索引
 

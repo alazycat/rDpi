@@ -33,7 +33,12 @@ impl ProtocolDetector for LdapDetector {
 mod tests {
     use super::*;
     fn msg() -> Vec<u8> {
-        vec![0x30, 0x05, 0x60, 0x03, 0x02, 0x01, 0x03]
+        // 误报面审计 2026-11-05：样本改为长度字段自洽的 BindRequest——外层
+        // SEQUENCE len=0x0A=10（msgID 3 + BindRequest 7），内层 BindRequest
+        // len=5（version 3 + 空 OCTET STRING 2）。
+        vec![
+            0x30, 0x0A, 0x02, 0x01, 0x01, 0x60, 0x05, 0x02, 0x01, 0x03, 0x04, 0x00,
+        ]
     }
     #[test]
     fn test_hit() {

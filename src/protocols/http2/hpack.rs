@@ -565,7 +565,7 @@ mod tests {
         let mut sorted: Vec<(u64, u8, usize)> = HUFFMAN_TABLE
             .iter()
             .enumerate()
-            .map(|(sym, &(bits, code))| (((code as u64) << (30 - bits)) as u64, bits, sym))
+            .map(|(sym, &(bits, code))| ((code as u64) << (30 - bits), bits, sym))
             .collect();
         sorted.sort_by_key(|&(left, _, _)| left);
         for w in sorted.windows(2) {
