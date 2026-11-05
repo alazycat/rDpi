@@ -34,7 +34,8 @@ cargo test                    # 默认 features (dns+http+tls)，256 测试全�
 cargo test --all-features     # 1018 测试全绿（10 ignored = test_regression 存量）；F12-F27 收紧后实测
 cargo test --features risk    # 301 测试全绿（含风险处理器相关探针 a1_risk/a6/r5）
 cargo build --features pcap   # 构建 CLI
-cargo bench                   # criterion 基准（benches/bench_detect.rs）
+cargo bench                   # criterion 基准（benches/bench_detect.rs）；基线见 docs/architecture/performance.md
+cargo bench --features quic   # 全量 8 项（含 QUIC 头部判定/Initial 解密）
 cargo fmt ; cargo clippy      # 提交前（lib+bins 门槛 0 警告；验证须用 --message-format=short，R12 教训）
 ```
 

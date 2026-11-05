@@ -37,6 +37,80 @@ fn build_dns_packet() -> Vec<u8> {
     build_udp_packet(12345, 53, &payload)
 }
 
+/// 构造 TCP 包（IPv4 + TCP 头 + payload）
+fn build_tcp_packet(src_port: u16, dst_port: u16, payload: &[u8]) -> Vec<u8> {
+    let mut pkt = Vec::new();
+    pkt.extend_from_slice(&[0x00; 6]);
+    pkt.extend_from_slice(&[0xff; 6]);
+    pkt.extend_from_slice(&[0x08, 0x00]);
+    let total_len = payload.len() + 20 + 20 + 14;
+    pkt.push(0x45);
+    pkt.push(0x00);
+    pkt.extend_from_slice(&(total_len as u16 - 14).to_be_bytes());
+    pkt.extend_from_slice(&[0x00, 0x01, 0x00, 0x00]);
+    pkt.push(0x40);
+    pkt.push(0x06);
+    pkt.extend_from_slice(&[0x00, 0x00]);
+    pkt.extend_from_slice(&[10, 0, 0, 1]);
+    pkt.extend_from_slice(&[10, 0, 0, 2]);
+    pkt.extend_from_slice(&src_port.to_be_bytes());
+    pkt.extend_from_slice(&dst_port.to_be_bytes());
+    pkt.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+    pkt.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+    pkt.push(0x50);
+    pkt.push(0x00);
+    pkt.extend_from_slice(&[0xff, 0xff, 0x00, 0x00, 0x00, 0x00]);
+    pkt.extend_from_slice(payload);
+    pkt
+}
+
+/// 最小合法 ClientHello（SNI=example.com，AES_128_GCM 套件），可命中 TLS detector
+fn build_tls_clienthello_packet() -> Vec<u8> {
+    let sni_name = b"example.com";
+    // SNI 扩展体：list_len(2) + entry(type 0x00 + name_len + name)
+    let entry_len = 1 + 2 + sni_name.len();
+    let list_len = 2 + entry_len;
+    // ClientHello 体
+    let mut ch: Vec<u8> = Vec::new();
+    ch.extend_from_slice(&[0x03, 0x03]); // client_version TLS1.2
+    ch.extend_from_slice(&[0x11; 32]); // random
+    ch.push(0x00); // session_id len
+    ch.extend_from_slice(&2u16.to_be_bytes()); // cipher_suites len
+    ch.extend_from_slice(&[0x00, 0x2f]); // AES_128_GCM_SHA256
+    ch.push(0x01); // compression methods len
+    ch.push(0x00);
+    ch.extend_from_slice(&(4 + list_len as u16).to_be_bytes()); // extensions len
+    ch.extend_from_slice(&[0x00, 0x00]); // SNI type
+    ch.extend_from_slice(&(list_len as u16).to_be_bytes());
+    ch.extend_from_slice(&(entry_len as u16).to_be_bytes());
+    ch.push(0x00);
+    ch.extend_from_slice(&(sni_name.len() as u16).to_be_bytes());
+    ch.extend_from_slice(sni_name);
+    // Handshake + Record
+    let mut hs: Vec<u8> = Vec::new();
+    hs.push(0x01); // ClientHello
+    let body_len = ch.len();
+    hs.extend_from_slice(&(body_len as u32).to_be_bytes()[1..]);
+    hs.extend_from_slice(&ch);
+    let mut payload: Vec<u8> = Vec::new();
+    payload.push(0x16); // handshake record
+    payload.extend_from_slice(&[0x03, 0x01]);
+    payload.extend_from_slice(&(hs.len() as u16).to_be_bytes());
+    payload.extend_from_slice(&hs);
+    build_tcp_packet(12345, 443, &payload)
+}
+
+/// 确定性伪随机 256 字节（LCG），保证不匹配任何 detector（miss 路径）
+fn build_unknown_payload() -> Vec<u8> {
+    let mut payload = Vec::with_capacity(256);
+    let mut state = 0x9E3779B9u32;
+    for _ in 0..256 {
+        state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+        payload.push((state >> 24) as u8);
+    }
+    payload
+}
+
 fn build_http_packet() -> Vec<u8> {
     // TCP 包上 HTTP GET
     let payload = b"GET /index.html HTTP/1.1\r\nHost: example.com\r\n\r\n";
@@ -89,6 +163,45 @@ fn bench_detector_create(c: &mut Criterion) {
     c.bench_function("detector_new", |b| {
         b.iter(|| {
             let _ = Detector::new();
+        });
+    });
+}
+
+/// TLS ClientHello 单包冷路径（对齐现有 detect_* 风格：含 Detector 创建）
+fn bench_tls_detection(c: &mut Criterion) {
+    let pkt = build_tls_clienthello_packet();
+    c.bench_function("detect_tls_clienthello", |b| {
+        b.iter(|| {
+            let mut detector = Detector::new();
+            let _ = detector.detect(black_box(&pkt));
+        });
+    });
+}
+
+/// 稳态路径：单实例连续处理 100 包（两条已定型流，覆盖识别后回显/规则跳过路径）
+fn bench_steady_state(c: &mut Criterion) {
+    let http_pkt = build_http_packet();
+    let dns_pkt = build_dns_packet();
+    c.bench_function("detect_steady_state_mixed_100", |b| {
+        b.iter(|| {
+            let mut detector = Detector::new();
+            for _ in 0..50 {
+                let _ = detector.detect(black_box(&http_pkt));
+                let _ = detector.detect(black_box(&dns_pkt));
+            }
+        });
+    });
+}
+
+/// 未识别 miss 路径：单实例连续处理 100 包（每包全 Registry 遍历 + giveup 计数）
+fn bench_unknown_miss(c: &mut Criterion) {
+    let pkt = build_tcp_packet(54321, 44444, &build_unknown_payload());
+    c.bench_function("detect_unknown_tcp_miss_100", |b| {
+        b.iter(|| {
+            let mut detector = Detector::new();
+            for _ in 0..100 {
+                let _ = detector.detect(black_box(&pkt));
+            }
         });
     });
 }
@@ -183,6 +296,9 @@ criterion_group!(
     benches,
     bench_dns_detection,
     bench_http_detection,
+    bench_tls_detection,
+    bench_steady_state,
+    bench_unknown_miss,
     bench_detector_create
 );
 #[cfg(feature = "quic")]
@@ -190,6 +306,9 @@ criterion_group!(
     benches,
     bench_dns_detection,
     bench_http_detection,
+    bench_tls_detection,
+    bench_steady_state,
+    bench_unknown_miss,
     bench_detector_create,
     quic_benches::bench_quic_header_only,
     quic_benches::bench_quic_initial_decrypt
