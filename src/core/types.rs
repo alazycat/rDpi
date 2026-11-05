@@ -300,6 +300,24 @@ pub struct SmtpMetadata {
     pub is_client: bool,
 }
 
+/// QUIC Transport Parameters（RFC 9000 §18.2，feature: quic）
+///
+/// 来自 ClientHello 的 `quic_transport_parameters` (0x0039) 扩展，
+/// 仅收录数值型（varint 值）参数用于行为指纹/风险信号；未知参数跳过。
+#[derive(Debug, Clone, Default)]
+pub struct QuicTransportParams {
+    /// 最大空闲超时（毫秒，0x01）
+    pub max_idle_timeout: Option<u64>,
+    /// 最大 UDP 载荷大小（字节，0x03）
+    pub max_udp_payload_size: Option<u64>,
+    /// 初始连接级流控上限（字节，0x04）
+    pub initial_max_data: Option<u64>,
+    /// 初始双向流数上限（0x08）
+    pub initial_max_streams_bidi: Option<u64>,
+    /// 初始单向流数上限（0x09）
+    pub initial_max_streams_uni: Option<u64>,
+}
+
 /// QUIC 元数据
 ///
 /// SNI/ALPN/JA4 来自 Initial 包解密（RFC 9001 §5，CRYPTO 帧 → TLS ClientHello），
@@ -318,6 +336,8 @@ pub struct QuicMetadata {
     pub destination_connection_id: Option<Vec<u8>>,
     /// 识别的应用
     pub application: Option<Application>,
+    /// Transport Parameters（仅客户端 Initial 携带；解密失败/无扩展时为 None）
+    pub transport_parameters: Option<QuicTransportParams>,
 }
 
 /// NTP 元数据

@@ -519,6 +519,49 @@ fn test_decrypt_initial_sni_alpn_via_detector() {
     }
 }
 
+/// RFC 9001 A.2 样例真解密：Transport Parameters 经检测器级链路正确填充
+///
+/// 样例 ClientHello 自带 0x0039 扩展（50 字节），逐字节核对官方值。
+#[test]
+#[cfg(feature = "tls")]
+fn test_decrypt_initial_transport_parameters_via_detector() {
+    let detector = QuicDetector::new();
+    let data = hex_to_bytes(A2_PROTECTED_PACKET_HEX);
+
+    let result = detector.detect(&data).unwrap();
+    assert_eq!(result.protocol, Protocol::Quic);
+    if let Metadata::Quic(meta) = result.metadata {
+        let tp = meta
+            .transport_parameters
+            .expect("a2 样本应携带 Transport Parameters");
+        assert_eq!(tp.initial_max_data, Some((1u64 << 62) - 1));
+        assert_eq!(tp.max_idle_timeout, Some(30000));
+        assert_eq!(tp.initial_max_streams_bidi, Some(16));
+        assert_eq!(tp.initial_max_streams_uni, Some(16));
+        assert!(tp.max_udp_payload_size.is_none());
+    } else {
+        panic!("expected Quic metadata");
+    }
+}
+
+/// 篡改密文 → 解密失败 → transport_parameters 降级为 None（不影响协议判定）
+#[test]
+#[cfg(feature = "tls")]
+fn test_transport_parameters_degrades_on_tampered_payload() {
+    let detector = QuicDetector::new();
+    let mut data = hex_to_bytes(A2_PROTECTED_PACKET_HEX);
+    data[600] ^= 0x01;
+
+    let result = detector.detect(&data).unwrap();
+    assert_eq!(result.protocol, Protocol::Quic);
+    if let Metadata::Quic(meta) = result.metadata {
+        assert!(meta.sni.is_none());
+        assert!(meta.transport_parameters.is_none());
+    } else {
+        panic!("expected Quic metadata");
+    }
+}
+
 #[test]
 #[cfg(feature = "tls")]
 fn test_decrypt_initial_sni_via_detector_with_context_http3() {

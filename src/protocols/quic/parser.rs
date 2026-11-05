@@ -338,6 +338,41 @@ pub fn parse_crypto_frames(plaintext: &[u8]) -> Option<Vec<u8>> {
     }
 }
 
+/// 解析 QUIC Transport Parameters（RFC 9000 §18.2，ClientHello 0x0039 扩展值）
+///
+/// 序列为 `varint 参数 ID + varint 长度 + 值字节`；仅收录数值型参数（值本身为
+/// varint）到 [`crate::core::types::QuicTransportParams`]，未知参数跳过。
+/// 结构性损坏（截断/越界）返回 None；已知参数的值无法按 varint 解析时该字段留 None。
+pub fn parse_transport_parameters(data: &[u8]) -> Option<crate::core::types::QuicTransportParams> {
+    use crate::core::types::QuicTransportParams;
+
+    let mut md = QuicTransportParams::default();
+    let mut pos = 0usize;
+    while pos < data.len() {
+        // 参数 ID（varint）
+        let (id, used) = parse_varint(&data[pos..])?;
+        pos += used;
+        // 值长度（varint）
+        let (len, used) = parse_varint(&data[pos..])?;
+        pos += used;
+        let len = len as usize;
+        if pos + len > data.len() {
+            return None;
+        }
+        let value = &data[pos..pos + len];
+        pos += len;
+        match id {
+            0x01 => md.max_idle_timeout = parse_varint(value).map(|(v, _)| v),
+            0x03 => md.max_udp_payload_size = parse_varint(value).map(|(v, _)| v),
+            0x04 => md.initial_max_data = parse_varint(value).map(|(v, _)| v),
+            0x08 => md.initial_max_streams_bidi = parse_varint(value).map(|(v, _)| v),
+            0x09 => md.initial_max_streams_uni = parse_varint(value).map(|(v, _)| v),
+            _ => {}
+        }
+    }
+    Some(md)
+}
+
 /// 解密 QUIC v1 Initial 包并提取其中的 TLS ClientHello（需要 tls feature）
 ///
 /// CRYPTO 帧载荷是裸握手消息；套上一个合成的 TLS record 头后复用现有
@@ -345,6 +380,21 @@ pub fn parse_crypto_frames(plaintext: &[u8]) -> Option<Vec<u8>> {
 /// 返回 None（尽力而为，不做跨包重组）。
 #[cfg(feature = "tls")]
 pub fn decrypt_client_hello(data: &[u8]) -> Option<crate::protocols::tls::ClientHelloInfo> {
+    decrypt_client_meta(data).map(|(ch, _)| ch)
+}
+
+/// 解密客户端 Initial 包并提取 ClientHello + QUIC Transport Parameters（需要 tls feature）
+///
+/// 与 [`decrypt_client_hello`] 同一解密链路（单次解密，二者共用），额外从
+/// ClientHello 的 0x0039 扩展解析 Transport Parameters；无该扩展或解析失败时
+/// tp 为 None（不影响 ClientHello 字段）。
+#[cfg(feature = "tls")]
+pub fn decrypt_client_meta(
+    data: &[u8],
+) -> Option<(
+    crate::protocols::tls::ClientHelloInfo,
+    Option<crate::core::types::QuicTransportParams>,
+)> {
     let plaintext = decrypt_initial(data)?;
     let crypto = parse_crypto_frames(&plaintext)?;
 
@@ -361,7 +411,10 @@ pub fn decrypt_client_hello(data: &[u8]) -> Option<crate::protocols::tls::Client
     record.extend_from_slice(&[0x16, 0x03, 0x03, (hs_len >> 8) as u8, (hs_len & 0xff) as u8]);
     record.extend_from_slice(&crypto);
 
-    crate::protocols::tls::parse_client_hello(&record)
+    let ch = crate::protocols::tls::parse_client_hello(&record)?;
+    let tp = crate::protocols::tls::extract_quic_transport_parameters(&record)
+        .and_then(|raw| parse_transport_parameters(&raw));
+    Some((ch, tp))
 }
 
 /// 解密服务端 Initial 包并从 CRYPTO 帧的 ServerHello 提取 ALPN（需要 tls feature）
@@ -570,6 +623,71 @@ mod tests {
             assert_eq!(ch.sni.as_deref(), Some("example.com"));
             assert_eq!(ch.alpn.as_deref(), Some("alpn"));
         }
+    }
+
+    /// Transport Parameters 解析（合成 blob 覆盖 1/2/4 字节 varint + 未知参数跳过）
+    #[test]
+    fn test_parse_transport_parameters_full() {
+        // 01 04 8001d4c0 → max_idle_timeout=120000（4 字节 varint，varint 无 3 字节形式）
+        // 03 02 45ac → max_udp_payload_size=1452（2 字节）
+        // 04 04 80100000 → initial_max_data=1048576（4 字节，首字节 0x80 前缀）
+        // 08 02 4064 → initial_max_streams_bidi=100（2 字节）
+        // 09 01 03 → initial_max_streams_uni=3（1 字节）
+        // 00 04 deadbeef → original_destination_connection_id（字节值参数，跳过）
+        let blob = hex(concat!(
+            "01048001d4c0",
+            "030245ac",
+            "040480100000",
+            "08024064",
+            "090103",
+            "0004deadbeef",
+        ));
+        let tp = parse_transport_parameters(&blob).expect("合法参数序列应解析成功");
+        assert_eq!(tp.max_idle_timeout, Some(120000));
+        assert_eq!(tp.max_udp_payload_size, Some(1452));
+        assert_eq!(tp.initial_max_data, Some(1048576));
+        assert_eq!(tp.initial_max_streams_bidi, Some(100));
+        assert_eq!(tp.initial_max_streams_uni, Some(3));
+    }
+
+    #[test]
+    fn test_parse_transport_parameters_empty() {
+        let tp = parse_transport_parameters(&[]).expect("空序列应返回全 None");
+        assert!(tp.max_idle_timeout.is_none());
+        assert!(tp.max_udp_payload_size.is_none());
+        assert!(tp.initial_max_data.is_none());
+        assert!(tp.initial_max_streams_bidi.is_none());
+        assert!(tp.initial_max_streams_uni.is_none());
+    }
+
+    #[test]
+    fn test_parse_transport_parameters_truncated() {
+        // 值截断：声明 3 字节只给 2
+        assert!(parse_transport_parameters(&hex("010381d4")).is_none());
+        // 长度越界：声明 5 字节只剩 2
+        assert!(parse_transport_parameters(&hex("01050000")).is_none());
+        // 长度字段本身截断
+        assert!(parse_transport_parameters(&hex("0103")).is_none());
+    }
+
+    /// RFC 9001 A.2 官方样例：真解密全链路提取 Transport Parameters
+    ///
+    /// 样例 ClientHello 自带 0x0039 扩展（50 字节），逐字节核对官方值断言。
+    #[test]
+    #[cfg(feature = "tls")]
+    fn test_decrypt_client_meta_transport_parameters_a2() {
+        let packet = make_a2_sample_packet();
+        let (_ch, tp) = decrypt_client_meta(&packet).expect("A.2 样例应解密成功");
+        let tp = tp.expect("A.2 样例 ClientHello 应携带 0x0039 扩展");
+        // 0408ffffffffffffffff → initial_max_data = 2^62-1（varint 首字节前缀占 2 位，最大 62 位）
+        assert_eq!(tp.initial_max_data, Some((1u64 << 62) - 1));
+        // 010480007530 → max_idle_timeout = 0x7530 = 30000 ms
+        assert_eq!(tp.max_idle_timeout, Some(30000));
+        // 080110 / 090110 → 双向/单向流数上限均为 16
+        assert_eq!(tp.initial_max_streams_bidi, Some(16));
+        assert_eq!(tp.initial_max_streams_uni, Some(16));
+        // 样例未携带 0x03
+        assert!(tp.max_udp_payload_size.is_none());
     }
 
     /// 打印 A.2 样例受保护包的 hex（用于生成 tests/test_quic.rs 集成测试夹具）

@@ -152,6 +152,7 @@ fn test_quic_metadata_with_application() {
         version: Some("00000001".to_string()),
         destination_connection_id: Some(vec![0x01, 0x02]),
         application: None, // 预留，目前为 None
+        transport_parameters: None,
     };
 
     assert!(metadata.application.is_none());

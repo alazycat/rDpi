@@ -11,7 +11,7 @@ Rust Deep Packet Inspection library - 轻量级、高性能的深度包检测库
 
 - **传输层解析**: TCP/UDP/ICMP 协议识别
 - **协议检测**: DNS、HTTP、TLS、QUIC、SSH、SMTP、POP3/IMAP、NTP/DHCP、SNMP、Modbus、MySQL/PostgreSQL/Redis、FTP/SIP/RTP、MQTT、WireGuard/OpenVPN、STUN 等 49 个 detector（见下表）
-- **元数据提取**: DNS 域名、HTTP 方法/路径/Host、TLS SNI/版本/证书、QUIC 版本/连接 ID/SNI/ALPN/JA4、SSH 版本等
+- **元数据提取**: DNS 域名、HTTP 方法/路径/Host、TLS SNI/版本/证书、QUIC 版本/连接 ID/SNI/ALPN/JA4/Transport Parameters、SSH 版本等
 - **应用识别**: TLS SNI → 应用归属（反向 Trie 域名匹配）
 - **流管理**: 五元组追踪、超时清理、容量上限（满载先清超时流，再按最久未活跃逐出）
 - **风险分析**（`risk` feature）: TLS/DNS/HTTP/行为/证书/QUIC 风险处理器（0-RTT 观测、非标准 draft 版本）
@@ -90,7 +90,7 @@ rdpi = { version = "0.4.2", default-features = false, features = ["http", "tls",
 | TLS | `tls` | SNI、TLS 版本、应用、证书 |
 | SSH | `ssh` | 协议版本、软件版本 |
 | SMTP | `smtp` | 主机名、客户端标识 |
-| QUIC | `quic` | 版本、连接 ID、SNI、ALPN、JA4、应用 |
+| QUIC | `quic` | 版本、连接 ID、SNI、ALPN、JA4、应用、Transport Parameters |
 | POP3/POP3S、IMAP/IMAPS | `mail` | - |
 | NTP、DHCP、BGP、NetFlow、IKE、PTPv2、DHCPv6、VXLAN | `infra` | NTP 版本/模式、DHCP Opcode/MAC 等 |
 | SNMP | `snmp` | 版本、Community、PDU、VarBinds |

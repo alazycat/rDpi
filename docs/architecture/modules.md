@@ -68,6 +68,7 @@
 - **tls/parser.rs**：新增 `parse_server_hello_alpn`（msg_type 0x02 校验 + 字段布局自洽校验 + ALPN 扩展提取，复用私有 `parse_alpn_extension`）。
 - **mod.rs**：detect/detect_with_context 接线解密富化——先客户端方向（ClientHello → sni/alpn/**ja4** + SNI 应用识别），失败再服务端方向（ServerHello → 仅 alpn，无 SNI/JA4）；解密失败静默降级为仅头部信息。QuicMetadata 增 `alpn`/`ja4` 字段（types.rs），JA4 与 TLS 路径同源（application::compute_ja4）。
 - **rule / CLI 消费**（2026-11-05）：rule 引擎 `sni_contains` 覆盖 QUIC SNI（lib.rs 规则分支追加 Initial 解密回退，`rule`+`tls`+`quic` 三 feature）；CLI 域名列识别 `Metadata::Quic`（rdpi.rs）。
+- **Transport Parameters 提取**（2026-11-05）：tls/parser.rs 增 `extract_quic_transport_parameters`（通用 `find_client_hello_extension` 遍历器按类型取扩展值，0x0039）；quic/parser.rs 增 `parse_transport_parameters`（RFC 9000 §18.2：varint ID + varint 长度 + 值，仅收录数值型参数 max_idle_timeout/max_udp_payload_size/initial_max_data/initial_max_streams_bidi/initial_max_streams_uni → `QuicTransportParams`，字节值参数跳过）；`decrypt_client_meta` 与 `decrypt_client_hello` 共用单次解密链路（前者多返回 TP）；QuicMetadata 增 `transport_parameters` 字段（types.rs）。无扩展/解析失败/解密失败时该字段为 None，不影响其余元数据。注意：RFC 9000 varint 仅 1/2/4/8 字节形式、最大值 2⁶²−1（首字节前缀占 2 位）。A.2 官方样例自带 0x0039 扩展（50 字节），全链路断言官方值。
 
 ### http2 模块（2026-11-05 扩展：HPACK 元数据提取）
 

@@ -462,6 +462,71 @@ pub fn extract_alpn(data: &[u8]) -> Option<String> {
     parse_client_hello_extensions_for_alpn(data).flatten()
 }
 
+/// QUIC Transport Parameters 扩展类型（RFC 9000 §7.4 定稿值 57/0x0039；草案期各版本编号不同，不覆盖）
+const EXTENSION_TYPE_QUIC_TRANSPORT_PARAMS: u16 = 0x0039;
+
+/// 在 ClientHello 的扩展区中按类型查找指定扩展，返回其值字节
+///
+/// 遍历方式与 parse_client_hello_extensions_for_alpn 一致（record 头 +
+/// 握手头 + 各字段跳过）；扩展越界即停止。未找到返回 None。
+fn find_client_hello_extension<'a>(data: &'a [u8], wanted: u16) -> Option<&'a [u8]> {
+    let mut offset = 5; // Skip TLS record header
+    offset += 4; // Skip handshake header
+    offset += 2; // Skip client version
+    offset += 32; // Skip random
+    // Skip session ID
+    if offset >= data.len() {
+        return None;
+    }
+    let session_id_len = data[offset] as usize;
+    offset += 1 + session_id_len;
+    // Skip cipher suites
+    if offset + 2 > data.len() {
+        return None;
+    }
+    let cipher_suites_len = u16_from_be(&data[offset..offset + 2]) as usize;
+    offset += 2 + cipher_suites_len;
+    // Skip compression methods
+    if offset >= data.len() {
+        return None;
+    }
+    let compression_len = data[offset] as usize;
+    offset += 1 + compression_len;
+    // Parse extensions
+    if offset + 2 > data.len() {
+        return None;
+    }
+    let extensions_len = u16_from_be(&data[offset..offset + 2]) as usize;
+    offset += 2;
+    let extensions_end = offset + extensions_len;
+    if extensions_end > data.len() {
+        return None;
+    }
+    while offset + 4 <= extensions_end {
+        let ext_type = u16_from_be(&data[offset..offset + 2]);
+        offset += 2;
+        let ext_len = u16_from_be(&data[offset..offset + 2]) as usize;
+        offset += 2;
+        if offset + ext_len > extensions_end {
+            break;
+        }
+        if ext_type == wanted {
+            return Some(&data[offset..offset + ext_len]);
+        }
+        offset += ext_len;
+    }
+    None
+}
+
+/// 从 ClientHello 提取 QUIC Transport Parameters 原始字节（RFC 9000 §7.4）
+///
+/// 返回 0x0039 扩展的值字节（varint 参数序列，交给 quic::parse_transport_parameters
+/// 解析）；无该扩展或 ClientHello 结构非法时返回 None。
+pub fn extract_quic_transport_parameters(data: &[u8]) -> Option<Vec<u8>> {
+    find_client_hello_extension(data, EXTENSION_TYPE_QUIC_TRANSPORT_PARAMS)
+        .map(|value| value.to_vec())
+}
+
 /// TLS 记录迭代器：切分单个 TCP 段内串联的多条记录（a3 连体场景）
 ///
 /// TLS 允许把多条记录写入同一个 TCP 段（如服务器把 ServerHello + Certificate
@@ -550,6 +615,58 @@ mod tests {
         assert_eq!(decode_tls_version(0x03, 0x03), Some("TLS 1.2".to_string()));
         assert_eq!(decode_tls_version(0x03, 0x04), Some("TLS 1.3".to_string()));
         assert_eq!(decode_tls_version(0x03, 0x00), None);
+    }
+
+    /// 构造带扩展区的最小 ClientHello 记录（record + 握手头 + 各字段 + 扩展）
+    fn make_ch_record(extensions: &[u8]) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend_from_slice(&[0x03, 0x03]); // client version
+        body.extend_from_slice(&[0x11u8; 32]); // random
+        body.push(0x00); // session id len 0
+        body.extend_from_slice(&[0x00, 0x02, 0x13, 0x01]); // cipher suites: TLS_AES_128_GCM_SHA256
+        body.extend_from_slice(&[0x01, 0x00]); // compression methods
+        body.extend_from_slice(&(extensions.len() as u16).to_be_bytes());
+        body.extend_from_slice(extensions);
+
+        let mut hs = Vec::with_capacity(body.len() + 4);
+        hs.push(0x01); // ClientHello
+        hs.extend_from_slice(&(body.len() as u32).to_be_bytes()[1..4]);
+        hs.extend_from_slice(&body);
+
+        let mut rec = Vec::with_capacity(hs.len() + 5);
+        rec.extend_from_slice(&[0x16, 0x03, 0x03]);
+        rec.extend_from_slice(&(hs.len() as u16).to_be_bytes());
+        rec.extend_from_slice(&hs);
+        rec
+    }
+
+    #[test]
+    fn test_extract_quic_transport_parameters_found() {
+        // 扩展区：server_name(空) + quic_transport_parameters(0x0039) + alpn
+        let tp_value = [0x01u8, 0x04, 0x80, 0x01, 0xd4, 0xc0]; // max_idle_timeout=120000
+        let mut exts = vec![0x00, 0x00, 0x00, 0x00]; // server_name, len 0
+        exts.extend_from_slice(&[0x00, 0x39]);
+        exts.extend_from_slice(&(tp_value.len() as u16).to_be_bytes());
+        exts.extend_from_slice(&tp_value);
+        exts.extend_from_slice(&[0x00, 0x10, 0x00, 0x00]); // alpn, len 0
+
+        let got = extract_quic_transport_parameters(&make_ch_record(&exts)).unwrap();
+        assert_eq!(got, tp_value);
+    }
+
+    #[test]
+    fn test_extract_quic_transport_parameters_absent() {
+        // 扩展区仅 server_name → None
+        let exts = [0x00u8, 0x00, 0x00, 0x00];
+        assert!(extract_quic_transport_parameters(&make_ch_record(&exts)).is_none());
+    }
+
+    #[test]
+    fn test_extract_quic_transport_parameters_malformed_extensions() {
+        // 0x0039 扩展长度越界（声明 8 字节实际只剩 2）→ 遍历 break，返回 None
+        let mut exts = vec![0x00, 0x39, 0x00, 0x08, 0x01, 0x02];
+        exts.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        assert!(extract_quic_transport_parameters(&make_ch_record(&exts)).is_none());
     }
 
     /// 构造一条最小 TLS 记录（content_type + version 0x0303 + len + payload）
