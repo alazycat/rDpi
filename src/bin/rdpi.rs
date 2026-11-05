@@ -73,7 +73,11 @@ fn print_detection(pkt_num: u64, det: &DetectionResult) {
     let meta_str = match &det.metadata {
         rdpi::Metadata::Dns(dns) => dns.query_domain.as_deref().unwrap_or(""),
         rdpi::Metadata::Tls(tls) => tls.sni.as_deref().unwrap_or(""),
-        rdpi::Metadata::Quic(quic) => quic.sni.as_deref().unwrap_or(""),
+        // QUIC：优先 SNI，其次 ALPN（服务端方向只有 ALPN）
+        rdpi::Metadata::Quic(quic) => quic
+            .sni
+            .as_deref()
+            .unwrap_or(quic.alpn.as_deref().unwrap_or("")),
         rdpi::Metadata::Http(http) => http.host.as_deref().unwrap_or(""),
         rdpi::Metadata::Ssh(ssh) => ssh.software.as_deref().unwrap_or(""),
         _ => "",
