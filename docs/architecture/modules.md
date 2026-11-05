@@ -20,7 +20,7 @@
 
 - **types.rs**（1263 行）：`TransportProto`（types.rs:9-18）、`Protocol` 枚举约 55 个变体 + `Other(u16)`（types.rs:33-133）、`Metadata` 枚举 23 个变体（types.rs:161-211）、`DetectionResult`（types.rs:476-492，含 confidence/category/breed/app_protocol/risks）、`ProtocolCategory` 26 分类（types.rs:541-594，含 nDPI 兼容 ID 映射 types.rs:867-896）、`ProtocolBreed` 8 级风险评级（types.rs:763-780）、`Confidence` 7 级置信度（types.rs:784-799）、`Application` 41 个应用枚举（types.rs:939-995）。
 - **flow.rs**：`Flow`（flow.rs:51-69，含 packets_seen/dpi_only/risks）、`FlowTable`（flow.rs:91-171，HashMap 存储，`max_entries` 明确注释"预留，未实现 LRU 淘汰" flow.rs:102；超时清理 flow.rs:149-165）。
-- **guess/**：`GuessEngine` 按 match_domain → match_ip → match_port 顺序回退（guess/mod.rs:15-37）；域名匹配基于 aho-corasick（guess/domain.rs:6）；端口匹配返回 `Confidence::MatchByPort`（guess/port.rs:7-45）。
+- **guess/**：`GuessEngine` 按 match_domain → match_ip → match_port 顺序回退；域名匹配基于 aho-corasick（guess/domain.rs:6）；端口匹配返回 `Confidence::MatchByPort`（guess/port.rs）。**可配置化**（2026-11-05）：`GuessEngine::builder()`——`with_builtin_domains/ips/ports` 三级开关（默认全启用）+ `with_custom_domains/subnets/ports` 注入自定义条目（域名：同名覆盖内置；子网：合并最长前缀匹配；端口：自定义先于内置）；lib.rs Detector 侧引擎**惰性构建 + 长期复用**（此前每次 giveup 重建 aho-corasick 自动机）、`set_guess_engine` 注入自定义引擎并解除粘性禁用、`disable_guess` 置粘性禁用（新流 dpi_only + 引擎停用，已存在流也不再猜测）。语义细节：disable 后创建的流永不 giveup（dpi_only）；disable 前已存在的流在 set_guess_engine 后恢复猜测。
 - **stats.rs**：流统计辅助（具体消费方 **[目前无法确认]**，FlowTable 内部使用 FlowStats，flow.rs:24-33）。
 
 ## 3. parser 子模块

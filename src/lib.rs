@@ -104,6 +104,12 @@ pub struct Detector {
     flow_table: FlowTable,
     /// 新流是否默认启用猜测
     default_guess: bool,
+    /// 猜测引擎粘性禁用（disable_guess 置位；set_guess_engine 复位）。
+    /// 置位时 giveup 阶段不猜测，且惰性构建不生效。
+    guess_disabled: bool,
+    /// 猜测引擎（None = 尚未构建，首次 giveup 时惰性创建默认引擎——
+    /// 域名表背后是 aho-corasick 自动机，不应在 Detector::new / 逐包重建）
+    guess_engine: Option<GuessEngine>,
     /// 规则引擎（可选）
     #[cfg(feature = "rule")]
     rule_engine: Option<RuleEngine>,
@@ -142,6 +148,8 @@ impl Detector {
             registry: Registry::default(),
             flow_table: FlowTable::new(max_flows, Duration::from_secs(timeout_secs)),
             default_guess: true,
+            guess_disabled: false,
+            guess_engine: None,
             #[cfg(feature = "rule")]
             rule_engine: None,
             #[cfg(feature = "rule")]
@@ -161,6 +169,8 @@ impl Detector {
             registry,
             flow_table: FlowTable::new(10000, Duration::from_secs(120)),
             default_guess: true,
+            guess_disabled: false,
+            guess_engine: None,
             #[cfg(feature = "rule")]
             rule_engine: None,
             #[cfg(feature = "rule")]
@@ -175,8 +185,36 @@ impl Detector {
     }
 
     /// 禁用猜测（仅 DPI 模式）
+    ///
+    /// 新流标记为 dpi_only；猜测引擎停用（含惰性构建——已存在流 giveup 后
+    /// 也不再猜测）。[`Self::set_guess_engine`] 可重新注入引擎恢复猜测。
     pub fn disable_guess(&mut self) {
         self.default_guess = false;
+        self.guess_disabled = true;
+        self.guess_engine = None;
+    }
+
+    /// 替换猜测引擎（可注入自定义域名/IP 子网/端口映射，见
+    /// [`GuessEngine::builder`]），并解除 disable_guess 的粘性禁用。
+    ///
+    /// 注意：disable_guess 之后创建的流已带 dpi_only 标记，永不进入 giveup；
+    /// disable_guess 之前已存在的流在注入引擎后恢复猜测。
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rdpi::{Detector, core::guess::GuessEngine, core::types::Protocol};
+    ///
+    /// let mut detector = Detector::new();
+    /// detector.set_guess_engine(
+    ///     GuessEngine::builder()
+    ///         .with_custom_ports(vec![(9000, Protocol::Other(9000))])
+    ///         .build(),
+    /// );
+    /// ```
+    pub fn set_guess_engine(&mut self, engine: GuessEngine) {
+        self.guess_disabled = false;
+        self.guess_engine = Some(engine);
     }
 
     /// 使用规则创建检测器
@@ -186,6 +224,8 @@ impl Detector {
             registry: Registry::default(),
             flow_table: FlowTable::new(10000, Duration::from_secs(120)),
             default_guess: true,
+            guess_disabled: false,
+            guess_engine: None,
             rule_engine: Some(RuleEngine { rules }),
             rules_only: false,
             #[cfg(feature = "risk")]
@@ -345,7 +385,14 @@ impl Detector {
                         _ => None,
                     }),
                 };
-                let guess = GuessEngine::new().guess(&ctx);
+                // 引擎惰性构建 + 随 Detector 复用（域名表为 aho-corasick 自动机，勿逐包重建）
+                let guess = if self.guess_disabled {
+                    None
+                } else {
+                    self.guess_engine
+                        .get_or_insert_with(GuessEngine::new)
+                        .guess(&ctx)
+                };
 
                 if let Some(ref r) = guess {
                     flow.protocol = Some(r.protocol);

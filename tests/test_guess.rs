@@ -309,6 +309,106 @@ fn test_confidence_as_u8() {
     assert_eq!(Confidence::CustomRule as u8, 6);
 }
 
+// ============================================================================
+// 猜测引擎可配置化（GuessEngineBuilder + Detector 接线）
+// ============================================================================
+
+#[test]
+fn test_detector_custom_port_guess() {
+    let mut detector = Detector::new();
+    detector.set_guess_engine(
+        GuessEngine::builder()
+            .with_custom_ports(vec![(54321, Protocol::Other(54321))])
+            .build(),
+    );
+
+    // UDP giveup 阈值为 5：前 4 包 DPI 阶段，第 5 包触发猜测
+    let packet = build_udp_packet(54321, 54321, &garbage_payload());
+    for _ in 0..4 {
+        let _ = detector.detect(&packet).unwrap();
+    }
+    let result = detector.detect(&packet).unwrap();
+
+    let r = result.expect("custom port should match at giveup");
+    assert_eq!(r.protocol, Protocol::Other(54321));
+    assert_eq!(r.confidence, Confidence::MatchByPort);
+}
+
+#[test]
+fn test_detector_custom_engine_disables_builtin_ports() {
+    let mut detector = Detector::new();
+    // 仅注入一条自定义端口：内置端口表未显式关闭时仍可用（合并语义），
+    // 这里显式关闭以验证开关
+    detector.set_guess_engine(
+        GuessEngine::builder()
+            .with_builtin_ports(false)
+            .with_custom_ports(vec![(54321, Protocol::Other(54321))])
+            .build(),
+    );
+
+    // 内置端口 22 已关闭 → giveup 后无猜测结果
+    let builtin_pkt = build_tcp_packet(12345, 22, &garbage_payload());
+    for _ in 0..20 {
+        let _ = detector.detect(&builtin_pkt).unwrap();
+    }
+    assert!(detector.detect(&builtin_pkt).unwrap().is_none());
+
+    // 新流走自定义端口 → 命中
+    let custom_pkt = build_udp_packet(54321, 54321, &garbage_payload());
+    for _ in 0..4 {
+        let _ = detector.detect(&custom_pkt).unwrap();
+    }
+    let r = detector
+        .detect(&custom_pkt)
+        .unwrap()
+        .expect("custom port matches");
+    assert_eq!(r.protocol, Protocol::Other(54321));
+}
+
+#[test]
+fn test_set_guess_engine_reenables_after_disable() {
+    let mut detector = Detector::new();
+    detector.disable_guess();
+    // disable_guess 后重新注入引擎 → 猜测恢复（default_guess 仍为 false，
+    // 但已定型行为以引擎是否存在为准）
+    detector.set_guess_engine(
+        GuessEngine::builder()
+            .with_custom_ports(vec![(54321, Protocol::Other(54321))])
+            .build(),
+    );
+
+    // disable_guess 之后创建的流带 dpi_only 标记 → 仍不猜测
+    let packet = build_udp_packet(54321, 54321, &garbage_payload());
+    for _ in 0..5 {
+        let _ = detector.detect(&packet).unwrap();
+    }
+    assert!(
+        detector.detect(&packet).unwrap().is_none(),
+        "dpi_only flows never reach guess"
+    );
+
+    // disable_guess 之前存在的流不带 dpi_only → 引擎恢复后可猜测
+    let mut detector2 = Detector::new();
+    let packet2 = build_udp_packet(54321, 54321, &garbage_payload());
+    for _ in 0..2 {
+        let _ = detector2.detect(&packet2).unwrap();
+    }
+    detector2.disable_guess();
+    detector2.set_guess_engine(
+        GuessEngine::builder()
+            .with_custom_ports(vec![(54321, Protocol::Other(54321))])
+            .build(),
+    );
+    for _ in 0..5 {
+        let _ = detector2.detect(&packet2).unwrap();
+    }
+    let r = detector2
+        .detect(&packet2)
+        .unwrap()
+        .expect("existing flow guesses again");
+    assert_eq!(r.protocol, Protocol::Other(54321));
+}
+
 #[test]
 fn test_confidence_ordering() {
     assert!(Confidence::Dpi > Confidence::DpiPartial);
