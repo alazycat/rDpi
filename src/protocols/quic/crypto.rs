@@ -126,8 +126,20 @@ fn shift_right_128(v: &mut [u8; 16]) {
     v[0] >>= 1;
 }
 
-/// GF(2^128) 乘法（NIST SP 800-38D §6.3，无查表逐位实现）
-fn gf128_mul(x: &[u8; 16], y: &[u8; 16]) -> [u8; 16] {
+/// 乘 x（GCM 的 GF(2^128) 约定：右移 1 位，最高位溢出则异或 R = 0xe1…）
+fn mul_x(v: &mut [u8; 16]) {
+    let lsb = v[15] & 1;
+    shift_right_128(v);
+    if lsb == 1 {
+        v[0] ^= 0xe1;
+    }
+}
+
+/// 逐位 GF(2^128) 乘法参考实现（NIST SP 800-38D §6.3）
+///
+/// 仅保留为测试对照基准（oracle）：生产路径已改用 [`GhashTable`] 查表乘法。
+#[cfg(test)]
+fn gf128_mul_reference(x: &[u8; 16], y: &[u8; 16]) -> [u8; 16] {
     let mut z = [0u8; 16];
     let mut v = *y;
     for i in 0..128 {
@@ -136,30 +148,92 @@ fn gf128_mul(x: &[u8; 16], y: &[u8; 16]) -> [u8; 16] {
                 z[j] ^= v[j];
             }
         }
-        let lsb = v[15] & 1;
-        shift_right_128(&mut v);
-        if lsb == 1 {
-            v[0] ^= 0xe1;
-        }
+        mul_x(&mut v);
     }
     z
 }
 
-/// GHASH 单块吸收：Y ^= block; Y = gf128_mul(Y, H)
-#[inline]
-fn ghash_block(h: &[u8; 16], y: &mut [u8; 16], block: &[u8; 16]) {
-    for j in 0..16 {
-        y[j] ^= block[j];
+/// GHASH 查表乘法结构（Shoup 式 4-bit 表）
+///
+/// T[k][m] = 被乘数第 k 个 nibble（自最高位起，k=0 为字节 0 高 4 位）取值 m 时
+/// 对 V·H 的贡献，即 nibble 的四个比特分别乘 H·x^(4k+0..3) 后的异或和。
+/// 于是 V·H = ⊕_k T[k][nibble_k(V)]——单次 128 位乘法从逐位 128 次移位+条件异或
+/// 降为 32 次查表异或，无移位、无数据依赖分支。
+///
+/// 空间：32 × 16 × 16B = 8 KiB（栈上）；构建约百次移位，随 GHASH 块数摊销
+/// （单个 QUIC Initial 的 GCM 计算约 80 块，摊销比约 1:60）。
+struct GhashTable {
+    t: [[[u8; 16]; 16]; 32],
+}
+
+impl GhashTable {
+    /// 由 H 构建查表
+    fn new(h: &[u8; 16]) -> Self {
+        let mut t = [[[0u8; 16]; 16]; 32];
+        let mut base = *h; // base = H · x^(4k)
+        for (k, t_k) in t.iter_mut().enumerate() {
+            if k > 0 {
+                for _ in 0..4 {
+                    mul_x(&mut base);
+                }
+            }
+            // W[q] = H · x^(4k+q)；m 的第 p 位（自低位起）对应 nibble 内第 (3-p) 高位，
+            // 其权重为 x^(4k+3-p)，故单比特基项 T[k][1<<p] = W[3-p]
+            let mut w = [base; 4];
+            for i in 1..4 {
+                w[i] = w[i - 1];
+                mul_x(&mut w[i]);
+            }
+            t_k[1] = w[3];
+            t_k[2] = w[2];
+            t_k[4] = w[1];
+            t_k[8] = w[0];
+            // 其余项由低一位项异或对应基项得出
+            for m in 1..16usize {
+                if m.count_ones() > 1 {
+                    let p = m.trailing_zeros() as usize;
+                    let mut acc = t_k[m & (m - 1)];
+                    let b = &t_k[1 << p];
+                    for j in 0..16 {
+                        acc[j] ^= b[j];
+                    }
+                    t_k[m] = acc;
+                }
+            }
+        }
+        Self { t }
     }
-    *y = gf128_mul(y, h);
+
+    /// V · H：32 次查表异或（无移位、无分支）
+    fn mul(&self, v: &[u8; 16]) -> [u8; 16] {
+        let mut z = [0u8; 16];
+        for (j, byte) in v.iter().enumerate() {
+            let th = &self.t[2 * j][(byte >> 4) as usize];
+            let tl = &self.t[2 * j + 1][(byte & 0x0f) as usize];
+            for i in 0..16 {
+                z[i] ^= th[i] ^ tl[i];
+            }
+        }
+        z
+    }
+}
+
+/// GHASH 单块吸收：Y ^= block; Y = Y · H（查表乘法）
+#[inline]
+fn ghash_block(table: &GhashTable, y: &mut [u8; 16], block: &[u8; 16]) {
+    let mut v = [0u8; 16];
+    for j in 0..16 {
+        v[j] = y[j] ^ block[j];
+    }
+    *y = table.mul(&v);
 }
 
 /// GHASH 流式吸收（自动补零到 16 字节边界）
-fn ghash_update(h: &[u8; 16], y: &mut [u8; 16], data: &[u8]) {
+fn ghash_update(table: &GhashTable, y: &mut [u8; 16], data: &[u8]) {
     for chunk in data.chunks(16) {
         let mut block = [0u8; 16];
         block[..chunk.len()].copy_from_slice(chunk);
-        ghash_block(h, y, &block);
+        ghash_block(table, y, &block);
     }
 }
 
@@ -178,6 +252,7 @@ pub(crate) fn aes128_gcm_decrypt(
 
     // H = E(K, 0^128)
     let h = aes128_encrypt_block(&rk, &[0u8; 16]);
+    let table = GhashTable::new(&h);
 
     // J0 = nonce || 0x00000001
     let mut j0 = [0u8; 16];
@@ -196,9 +271,9 @@ pub(crate) fn aes128_gcm_decrypt(
 
     // S = GHASH_H(AAD || pad || C || pad || len)
     let mut s = [0u8; 16];
-    ghash_update(&h, &mut s, aad);
-    ghash_update(&h, &mut s, ct);
-    ghash_block(&h, &mut s, &len_block);
+    ghash_update(&table, &mut s, aad);
+    ghash_update(&table, &mut s, ct);
+    ghash_block(&table, &mut s, &len_block);
 
     // T = E(K, J0) XOR S
     let ek_j0 = aes128_encrypt_block(&rk, &j0);
@@ -463,6 +538,7 @@ pub(crate) fn aes128_gcm_encrypt(
 ) -> (Vec<u8>, [u8; 16]) {
     let rk = key_expansion(key);
     let h = aes128_encrypt_block(&rk, &[0u8; 16]);
+    let table = GhashTable::new(&h);
 
     // CTR 加密
     let mut j0 = [0u8; 16];
@@ -481,8 +557,8 @@ pub(crate) fn aes128_gcm_encrypt(
 
     // 标签 = E(K, J0) XOR GHASH(AAD, CT, len)
     let mut s = [0u8; 16];
-    ghash_update(&h, &mut s, aad);
-    ghash_update(&h, &mut s, &ct);
+    ghash_update(&table, &mut s, aad);
+    ghash_update(&table, &mut s, &ct);
     let len_block: [u8; 16] = {
         let aad_bits = (aad.len() as u64) * 8;
         let ct_bits = (ct.len() as u64) * 8;
@@ -491,7 +567,7 @@ pub(crate) fn aes128_gcm_encrypt(
         b[8..].copy_from_slice(&ct_bits.to_be_bytes());
         b
     };
-    ghash_block(&h, &mut s, &len_block);
+    ghash_block(&table, &mut s, &len_block);
     let ek_j0 = aes128_encrypt_block(&rk, &j0);
     let mut tag = [0u8; 16];
     for j in 0..16 {
@@ -651,6 +727,89 @@ mod tests {
         let mut bad_ct = ct.clone();
         bad_ct[0] ^= 1;
         assert!(aes128_gcm_decrypt(&key, &nonce, &aad, &bad_ct, &tag).is_none());
+    }
+
+    #[test]
+    fn test_ghash_table_matches_bitwise_reference() {
+        // 查表乘法与逐位参考实现交叉验证（xorshift32 伪随机 200 对）
+        let mut seed = 0x1a2b3c4du32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        for _ in 0..200 {
+            let mut x = [0u8; 16];
+            let mut y = [0u8; 16];
+            for b in x.iter_mut() {
+                *b = (next() & 0xff) as u8;
+            }
+            for b in y.iter_mut() {
+                *b = (next() & 0xff) as u8;
+            }
+            let table = GhashTable::new(&y);
+            assert_eq!(table.mul(&x), gf128_mul_reference(&x, &y));
+        }
+    }
+
+    /// 性能对照（默认忽略）：查表 vs 逐位参考实现
+    ///
+    /// 运行：cargo test --lib -- --ignored --nocapture ghash_table_benchmark
+    #[test]
+    #[ignore]
+    fn test_ghash_table_benchmark() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        let mut seed = 0xdeadbeefu32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let mut h = [0u8; 16];
+        for b in h.iter_mut() {
+            *b = (next() & 0xff) as u8;
+        }
+        let table = GhashTable::new(&h);
+        let mut blocks = vec![[0u8; 16]; 4096];
+        for b in blocks.iter_mut() {
+            for e in b.iter_mut() {
+                *e = (next() & 0xff) as u8;
+            }
+        }
+
+        // 查表版
+        let t0 = Instant::now();
+        let mut acc = [0u8; 16];
+        for _ in 0..64 {
+            for b in &blocks {
+                let r = black_box(table.mul(black_box(b)));
+                for i in 0..16 {
+                    acc[i] ^= r[i];
+                }
+            }
+        }
+        let d_table = t0.elapsed();
+
+        // 逐位参考版
+        let t1 = Instant::now();
+        let mut acc2 = [0u8; 16];
+        for _ in 0..64 {
+            for b in &blocks {
+                let r = black_box(gf128_mul_reference(black_box(b), &h));
+                for i in 0..16 {
+                    acc2[i] ^= r[i];
+                }
+            }
+        }
+        let d_bits = t1.elapsed();
+
+        println!("查表 GHASH：262144 块耗时 {:?}", d_table);
+        println!("逐位 GHASH：262144 块耗时 {:?}", d_bits);
+        black_box((acc, acc2)); // 防止编译器消除循环
     }
 
     // ------------------------------------------------------------------

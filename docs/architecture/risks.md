@@ -81,7 +81,7 @@
 
 - **背景**：quic feature 下 QuicDetector 对 Initial 包做全手写解密（[src/protocols/quic/crypto.rs](file:///d:/rust_code/rDpi/src/protocols/quic/crypto.rs)，AES-128-GCM + HKDF-SHA256，零新增依赖；RFC 9001 A.1/A.2 官方向量 + 独立 Python 交叉核对的服务端向量验证）。客户端 Initial → ClientHello（QuicMetadata.sni/alpn）；服务端 Initial → ServerHello（仅 alpn，ServerHello 无 SNI）。密钥材料恒取自包头 DCID 字段（客户端包 DCID = ODCID；服务端包 DCID 也是 ODCID——服务端 Initial 的接收方是客户端，DCID 即客户端所选 CID），故 Retry 前后、任一方向均可解。
 - **能力边界**：① 仅解密 **Initial** 包（0-RTT/Handshake/1-RTT 密钥不可推导，永不解密）；② 解密失败不产生任何标记，`sni=None` 且 `alpn=None` 即为降级信号；③ QUIC SNI 仍**不覆盖** rule 引擎 `sni_contains`（R6 修复范围仅 TLS，见 rule/mod.rs 注释）；④ CLI 域名列（src/bin/rdpi.rs 的 Metadata 提取）暂不认 Metadata::Quic，QUIC SNI 不会出现在 CLI 输出。
-- **性能注意**：GHASH 为无查表逐位实现（`gf128_mul`），每字节 8 次迭代——正确性优先于吞吐；detect 路径最坏 2 方向 × 4 个 pn 候选 = 8 次 AES 尝试（pn_len=4 时每方向仅 1 个）。高频场景若成瓶颈，优化路径为查表 GHASH（256B/64KB 表），接口不变。
+- **性能注意**：GHASH 已从无查表逐位实现（每块 128 次移位+条件异或）升级为 Shoup 式 4-bit 查表（2026-11-05，[src/protocols/quic/crypto.rs](file:///d:/rust_code/rDpi/src/protocols/quic/crypto.rs) `GhashTable`，8 KiB 栈上表，每块乘法 32 次查表异或，无移位无数据依赖分支）；release 实测 **150 倍加速**（262144 块 339ms → 2.26ms，对照基准 `test_ghash_table_benchmark`，`cargo test --lib --features tls,quic -- --ignored --nocapture` 可复现）。逐位实现保留为测试 oracle（`gf128_mul_reference`，与查表版 200 对伪随机交叉验证）。detect 路径最坏 2 方向 × 4 个 pn 候选 = 8 次 AES 尝试（pn_len=4 时每方向仅 1 个）。
 
 ## R10【低】Git 历史存在 9 个内容相同的重复提交
 
