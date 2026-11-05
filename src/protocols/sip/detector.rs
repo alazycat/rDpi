@@ -22,6 +22,11 @@ impl ProtocolDetector for SipDetector {
         "sip"
     }
 
+    /// 首字节门：SIP 请求方法与响应行（SIP/）均以大写字母起始（0x41-0x5A）。
+    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+        Some(&[(0x41u8, 0x5Au8)])
+    }
+
     fn detect(&self, payload: &[u8]) -> Option<DetectionResult> {
         if payload.is_empty() {
             return None;
@@ -90,6 +95,20 @@ mod tests {
             detector
                 .detect(b"GET / HTTP/1.1\r\nHost: example.com\r\n")
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn test_first_byte_gate_covers_valid_sample() {
+        use crate::protocols::ProtocolDetector;
+        let detector = SipDetector::new();
+        let gate = detector.first_byte_gate().expect("detector 应声明首字节门");
+        let sample = b"INVITE sip:user@domain.com SIP/2.0\r\nVia: SIP/2.0/UDP 10.0.0.1\r\nCSeq: 1 INVITE\r\n";
+        assert!(
+            gate.iter()
+                .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
+            "门区间不覆盖合法样本首字节 0x{:02X}",
+            sample[0]
         );
     }
 }

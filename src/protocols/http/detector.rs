@@ -21,6 +21,19 @@ impl ProtocolDetector for HttpDetector {
         "http"
     }
 
+    /// 首字节门：HTTP 方法/响应行首字母（C/D/G/H/O/P/T）。
+    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+        Some(&[
+            (0x43u8, 0x43u8),
+            (0x44u8, 0x44u8),
+            (0x47u8, 0x47u8),
+            (0x48u8, 0x48u8),
+            (0x4Fu8, 0x4Fu8),
+            (0x50u8, 0x50u8),
+            (0x54u8, 0x54u8),
+        ])
+    }
+
     fn detect(&self, payload: &[u8]) -> Option<DetectionResult> {
         // Layer 1: Quick pre-check - first byte must be HTTP method prefix
         if payload.is_empty() || !is_http_prefix(payload[0]) {
@@ -70,5 +83,24 @@ impl ProtocolDetector for HttpDetector {
         }
 
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_first_byte_gate_covers_valid_sample() {
+        use crate::protocols::ProtocolDetector;
+        let detector = HttpDetector::new();
+        let gate = detector.first_byte_gate().expect("detector 应声明首字节门");
+        let sample = b"GET / HTTP/1.1\r\n";
+        assert!(
+            gate.iter()
+                .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
+            "门区间不覆盖合法样本首字节 0x{:02X}",
+            sample[0]
+        );
     }
 }

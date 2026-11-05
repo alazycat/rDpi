@@ -20,6 +20,11 @@ impl ProtocolDetector for RdpDetector {
     fn name(&self) -> &'static str {
         "rdp"
     }
+
+    /// 首字节门：RDP TPKT 头 version=0x03。
+    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+        Some(&[(0x03u8, 0x03u8)])
+    }
     fn detect(&self, p: &[u8]) -> Option<DetectionResult> {
         if is_rdp_connect(p) {
             Some(DetectionResult::new(Protocol::Rdp).with_confidence(Confidence::Dpi))
@@ -51,5 +56,19 @@ mod tests {
     fn test_empty() {
         let d = RdpDetector::new();
         assert!(d.detect(b"").is_none());
+    }
+
+    #[test]
+    fn test_first_byte_gate_covers_valid_sample() {
+        use crate::protocols::ProtocolDetector;
+        let detector = RdpDetector::new();
+        let gate = detector.first_byte_gate().expect("detector 应声明首字节门");
+        let sample = msg();
+        assert!(
+            gate.iter()
+                .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
+            "门区间不覆盖合法样本首字节 0x{:02X}",
+            sample[0]
+        );
     }
 }

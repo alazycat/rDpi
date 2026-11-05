@@ -384,6 +384,32 @@ pub fn decrypt_initial_server(data: &[u8]) -> Option<Vec<u8>> {
     )
 }
 
+/// 解密客户端方向 Initial 包（带每 Detector 密钥缓存）——性能优化路径（F28）
+///
+/// 与 [`decrypt_initial`] 语义一致；缓存命中时免去 HKDF 派生 + AES 轮密钥扩展。
+pub(crate) fn decrypt_initial_with_cache(
+    data: &[u8],
+    cache: &crypto::InitialKeyCache,
+) -> Option<Vec<u8>> {
+    let (info, pn_offset, packet_len) = parse_initial_header(data)?;
+    let packet_len = usize::try_from(packet_len).ok()?;
+    let end = (pn_offset + packet_len).min(data.len());
+    let pre = cache.get_or_derive(info.version, &info.dcid, crypto::Side::Client)?;
+    crypto::decrypt_initial_payload_with(&pre, &data[..end], pn_offset)
+}
+
+/// 解密服务端方向 Initial 包（带每 Detector 密钥缓存）——性能优化路径（F28）
+pub(crate) fn decrypt_initial_server_with_cache(
+    data: &[u8],
+    cache: &crypto::InitialKeyCache,
+) -> Option<Vec<u8>> {
+    let (info, pn_offset, packet_len) = parse_initial_header(data)?;
+    let packet_len = usize::try_from(packet_len).ok()?;
+    let end = (pn_offset + packet_len).min(data.len());
+    let pre = cache.get_or_derive(info.version, &info.dcid, crypto::Side::Server)?;
+    crypto::decrypt_initial_payload_with(&pre, &data[..end], pn_offset)
+}
+
 /// 从解密后的 QUIC 帧数据中提取 CRYPTO 帧（帧类型 0x06）载荷
 ///
 /// 遍历识别 PADDING(0x00)/PING(0x01)/CRYPTO(0x06) 三种帧；遇到其他帧（如 ACK）
@@ -481,6 +507,30 @@ pub fn decrypt_client_meta(
     Option<crate::core::types::QuicTransportParams>,
 )> {
     let plaintext = decrypt_initial(data)?;
+    client_meta_from_plaintext(plaintext)
+}
+
+/// 带每 Detector 密钥缓存的 [`decrypt_client_meta`]（性能优化路径 F28）
+#[cfg(feature = "tls")]
+pub(crate) fn decrypt_client_meta_with_cache(
+    data: &[u8],
+    cache: &crypto::InitialKeyCache,
+) -> Option<(
+    crate::protocols::tls::ClientHelloInfo,
+    Option<crate::core::types::QuicTransportParams>,
+)> {
+    let plaintext = decrypt_initial_with_cache(data, cache)?;
+    client_meta_from_plaintext(plaintext)
+}
+
+/// 从解密后的 Initial 明文提取 ClientHello + Transport Parameters（共享后段）
+#[cfg(feature = "tls")]
+fn client_meta_from_plaintext(
+    plaintext: Vec<u8>,
+) -> Option<(
+    crate::protocols::tls::ClientHelloInfo,
+    Option<crate::core::types::QuicTransportParams>,
+)> {
     let crypto = parse_crypto_frames(&plaintext)?;
 
     // 裸握手消息：type(1B) + length(3B)，ClientHello type = 0x01
@@ -509,6 +559,22 @@ pub fn decrypt_client_meta(
 #[cfg(feature = "tls")]
 pub fn decrypt_server_alpn(data: &[u8]) -> Option<String> {
     let plaintext = decrypt_initial_server(data)?;
+    server_alpn_from_plaintext(plaintext)
+}
+
+/// 带每 Detector 密钥缓存的 [`decrypt_server_alpn`]（性能优化路径 F28）
+#[cfg(feature = "tls")]
+pub(crate) fn decrypt_server_alpn_with_cache(
+    data: &[u8],
+    cache: &crypto::InitialKeyCache,
+) -> Option<String> {
+    let plaintext = decrypt_initial_server_with_cache(data, cache)?;
+    server_alpn_from_plaintext(plaintext)
+}
+
+/// 从解密后的服务端 Initial 明文提取 ALPN（共享后段）
+#[cfg(feature = "tls")]
+fn server_alpn_from_plaintext(plaintext: Vec<u8>) -> Option<String> {
     let crypto = parse_crypto_frames(&plaintext)?;
 
     // 裸握手消息：type(1B) + length(3B)，ServerHello type = 0x02

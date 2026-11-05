@@ -23,6 +23,11 @@ impl ProtocolDetector for OpenVpnDetector {
     fn name(&self) -> &'static str {
         "openvpn"
     }
+
+    /// 首字节门：P_CONTROL opcode（opcode<<3|key）落在 0x38-0x57
+    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+        Some(&[(0x38u8, 0x57u8)])
+    }
     fn detect(&self, _p: &[u8]) -> Option<DetectionResult> {
         None
     }
@@ -93,6 +98,20 @@ mod tests {
                 }
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn test_first_byte_gate_covers_valid_sample() {
+        use crate::protocols::ProtocolDetector;
+        let detector = OpenVpnDetector::new();
+        let gate = detector.first_byte_gate().expect("detector 应声明首字节门");
+        let sample = msg(7);
+        assert!(
+            gate.iter()
+                .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
+            "门区间不覆盖合法样本首字节 0x{:02X}",
+            sample[0]
         );
     }
 }

@@ -27,6 +27,11 @@ impl ProtocolDetector for RedisDetector {
         "redis"
     }
 
+    /// 首字节门：RESP 类型字节 '$'/'*'/'+'（0x24/0x2A/0x2B）。
+    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+        Some(&[(0x24u8, 0x24u8), (0x2Au8, 0x2Au8), (0x2Bu8, 0x2Bu8)])
+    }
+
     fn detect(&self, payload: &[u8]) -> Option<DetectionResult> {
         if let Some(metadata) = parse_redis_command(payload) {
             return Some(
@@ -93,5 +98,19 @@ mod tests {
         let detector = RedisDetector::new();
         assert!(detector.detect(b"GET / HTTP/1.1\r\n").is_none());
         assert!(detector.detect(b"220 OK\r\n").is_none());
+    }
+
+    #[test]
+    fn test_first_byte_gate_covers_valid_sample() {
+        use crate::protocols::ProtocolDetector;
+        let detector = RedisDetector::new();
+        let gate = detector.first_byte_gate().expect("detector 应声明首字节门");
+        let sample = create_array_command("GET");
+        assert!(
+            gate.iter()
+                .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
+            "门区间不覆盖合法样本首字节 0x{:02X}",
+            sample[0]
+        );
     }
 }

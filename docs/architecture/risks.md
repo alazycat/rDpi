@@ -194,3 +194,22 @@
 
 - **验证**：三配置全量回归绿（默认 104 lib 套件全绿 / risk 142 / all-features 677 lib + test_integration 72 + test_regression 8 全绿，0 failed）；`cargo clippy --all-features --all-targets` 0 警告（顺带清掉 netflow 本轮引入 + hpack.rs:568 上轮遗留两处）；`cargo fmt --check` 干净。
 - **注意**：F22/F26 属"假阴修复"（删除 bogus 约束后真实流量检出率大幅提升），但 F26 的 len≥10 下界对 4-9 字节的畸形 DHCPv6 极端样本仍会漏判（真实 DHCPv6 至少含 Client-ID option，实际影响趋近于零）。
+
+## F28【信息】QUIC Initial 解密路径优化：密钥缓存 + GHASH 线性候选比对（2026-11-05，性能优化功能开发）—— ✅ 已完成
+
+- **背景**：performance.md 基线显示 `detect_quic_initial_decrypt` 25.6µs 是唯一显著开销项（R13）。开销构成：每包 × 每方向 × 每 pn 候选（pn_len<4 时最多 4 个，最坏 8 次 AES 尝试）都完整重做 HKDF-SHA256 密钥派生 + AES key expansion + GHASH 表构建 + 全量 GHASH/CTR。
+- **修复**（两层次，[src/protocols/quic/crypto.rs](file:///d:/rust_code/rDpi/src/protocols/quic/crypto.rs)）：
+  1. **密钥缓存**：`InitialKeyCache`（`Mutex<HashMap<CacheKey, PreparedInitialKeys>>`，CacheKey = 版本+方向+DCID 拼接 23B 数组）——HKDF 派生、AES 轮密钥（key_rk/hp_rk 各 176B）、GHASH 前置准备每 (version, side, DCID) 只做一次；上限 1024 条超限整体 `clear()` 防无界内存；锁中毒降级 `poisoned.into_inner()`。QuicDetector 实例持有缓存（[src/protocols/quic/mod.rs](file:///d:/rust_code/rDpi/src/protocols/quic/mod.rs)），流内命中即免派生；无缓存公开 API 保留（rule 引擎 QUIC SNI 回退等调用方不变）。
+  2. **候选解密分层**：**候选 0（raw pn）直接对真实 pn 字节做全量 GHASH + tag 比对**——握手期 raw pn 几乎恒为真实 pn，该路径与旧实现同价（还省掉旧实现 aes128_gcm_decrypt 内的第三次 key_expansion）。仅候选 0 miss 且 pn_len<4 时才启动预检机制：利用 GF(2^128) 线性性预计算"pn 置零 GHASH 和 + H^w 权重表"，pn 字段（≤4B）至多横跨最后两个 AAD 块，候选 1-3 各仅 1 次 GF 乘 + 1 次 AES 块完成 tag 预检，命中才全量 CTR——最坏 4 候选从 4 次全量解密降为 1 次全量 + 3 次轻量预检。AAD 跨块边界逐字节归块（pn 横跨两 AAD 块时用双权重表）。
+- **实测教训（基准驱动修正）**：首版设计把预检机制无条件用于全部候选，权重链 H^w_last 需 w≈74 次表乘 + 两张 8KiB 权重表构建，在候选 0 恒命中的常见路径上纯属白付——冷解密 25.6→28.5µs（**+10.7% 回归**，criterion 实测抓获）。改为"候选 0 直通 + miss 才预计算"后冷解密 **23.3µs（较旧基线 -9%）**。教训：性能优化的预计算成本必须放在低频分支。
+- **影响面复述**：注册顺序未动（R11）；解密结果与旧路径逐字节一致（RFC 8439/9001 官方向量 + 往返测试覆盖）；detect 路径无新增堆分配（缓存条目按值克隆，仅首次派生时分配）。
+- **验证**：crypto 单元 16 测试全绿（含缓存命中一致性/异键隔离/容量上界/缓存与无缓存解密一致/pn_len 1-3 候选往返 5 个新测试）；quic lib 161 + test_quic 集成 29 全绿。基准（`detect_quic` 过滤，本机）：冷解密 25.6→23.3µs（-9%）；新增稳态基准 `detect_quic_initial_decrypt_steady_100` 0.574µs/包（第 1 包解密、其余回显）；`detect_quic_header_only` 4.12→5.24µs 为合成最坏情形（pn_len<4 永久解密失败包付候选 0 miss 预计算成本，真实流第 1 包即定型不再触发，已接受），详见 [performance.md](file:///d:/rust_code/rDpi/docs/architecture/performance.md)。
+
+## F29【中】miss 路径全 Registry 遍历：首字节门预筛（2026-11-05，性能优化功能开发）—— ✅ 已完成
+
+- **背景**：performance.md 基线显示 `detect_unknown_tcp_miss_100` 1.737µs/包为最坏路径——DPI 阶段每包线性遍历 49 个 detector（[protocols/mod.rs](file:///d:/rust_code/rDpi/src/protocols/mod.rs) `register_defaults`，R11 顺序语义）。绝大多数 detector 对 `payload[0]` 的取值有硬约束（如 TLS 0x16、MQTT 0x10-0x1F、BGP 0xFF），却仍要逐个执行判定逻辑。
+- **机制**：`ProtocolDetector` 新增默认方法 `first_byte_gate() -> Option<&'static [(u8, u8)]>`（含区间闭区间对，`None` = 首字节任意、不参与预筛）；`Registry::register` 在**注册期**预计算每 detector 的 `[u64; 4]` skip 位图（256 位，区间外字节置位）；`detect()` / `detect_with_ports()` 循环内对非空 payload 做一次位测试跳过（零分配）。检测结果语义、回显路径、R11 注册顺序全部未动。
+- **审计覆盖**：49 个 detector 全量实锤逐文件核验（36 个声明门 / 13 个保持 `None`）。保持 `None` 的均有硬证据：dns/mongodb/postgresql/stun/modbus（首字段任意）、l2tp/pptp/ike/nfs（长度/cookie/xid 任意）、whois/websocket（自由文本/子串匹配）、pop3/imap（端口 995/993 下空载荷也无条件命中——[pop3/detector.rs](file:///d:/rust_code/rDpi/src/protocols/pop3/detector.rs)、[imap/detector.rs](file:///d:/rust_code/rDpi/src/protocols/imap/detector.rs) `detect_with_context`，跳过会引入假阴）。审计中纠正了三处规划期错误：modbus 首字节是 Transaction ID（任意，不可门）、ntp 门区间为 VN 字段非零（每 64 块 0x08-0x27）、turn 上界 0x7F（ChannelData 0x7FFE 可达）。
+- **语义契约（铁律）**：声明非 `None` 即承诺「`payload[0]` 不在区间内 ⇒ detect 必返回 None」。违反将产生**假阴**（真实流量被预筛跳过）。新增 detector 必须显式声明门或有意返回 `None` 并说明原因。
+- **影响面复述**：注册顺序未动（R11）；detect 路径零新增分配（位图注册期构建、循环内仅位测试）；空 payload 不参与预筛（各 detector 空载荷语义不变）；默认门全 `None` 的第三方 detector 行为不变。
+- **验证**：机制测试 5 项（位图边界/上界含 0xFF/门跳过与放行/空载荷不跳过/无门不跳过）+ 每 detector `test_first_byte_gate_covers_valid_sample` 36 项（合法样本首字节必须落在自声明门内，假阴防护）共 41 项新增，默认 263 / all-features 1064 / risk 308 全绿；clippy --all-features --all-targets 0 警告。基准（同机紧凑 A/B，`cargo bench --features quic -- detect_unknown_tcp_miss_100`）：门 OFF 190.6µs → ON 167.1µs/100 包（**-12.3%**）；新增平均场景基准 `detect_unknown_tcp_miss_varied_100`（100 互异首字节）175.4µs。注意该基准 100 包中仅前 ~19 包走 DPI 扫描（giveup=20 后 GuessEngine 接管，[lib.rs:352](file:///d:/rust_code/rDpi/src/lib.rs#L352)），扫描段实际收益约 -55%（折算每扫描包省 ~1.24µs）；跨 criterion 调用的机器噪声 ±7%，结论以同机 A/B 为准。

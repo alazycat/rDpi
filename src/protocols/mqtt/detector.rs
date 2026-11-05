@@ -30,6 +30,11 @@ impl ProtocolDetector for MqttDetector {
         "mqtt"
     }
 
+    /// 首字节门：MQTT CONNECT 包类型（首字节高 4 位 0x10-0x1F）。
+    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+        Some(&[(0x10u8, 0x1Fu8)])
+    }
+
     fn detect(&self, _payload: &[u8]) -> Option<DetectionResult> {
         // MQTT detection needs port context for confidence adjustment
         None
@@ -162,5 +167,19 @@ mod tests {
         let result = detector.detect_with_context(&packet, &ctx).unwrap();
         assert_eq!(result.protocol, Protocol::Mqtt);
         assert_eq!(result.confidence, Confidence::Dpi);
+    }
+
+    #[test]
+    fn test_first_byte_gate_covers_valid_sample() {
+        use crate::protocols::ProtocolDetector;
+        let detector = MqttDetector::new();
+        let gate = detector.first_byte_gate().expect("detector 应声明首字节门");
+        let sample = build_connect("test-device");
+        assert!(
+            gate.iter()
+                .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
+            "门区间不覆盖合法样本首字节 0x{:02X}",
+            sample[0]
+        );
     }
 }

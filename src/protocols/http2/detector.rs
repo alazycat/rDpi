@@ -26,6 +26,11 @@ impl ProtocolDetector for Http2Detector {
         "http2"
     }
 
+    /// 首字节门：HTTP/2 preface 以 "PRI"（0x50）起始。
+    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+        Some(&[(0x50u8, 0x50u8)])
+    }
+
     fn detect(&self, payload: &[u8]) -> Option<DetectionResult> {
         if !is_http2_preface(payload) {
             return None;
@@ -64,5 +69,19 @@ mod tests {
     fn test_http2_detector_empty() {
         let detector = Http2Detector::new();
         assert!(detector.detect(b"").is_none());
+    }
+
+    #[test]
+    fn test_first_byte_gate_covers_valid_sample() {
+        use crate::protocols::ProtocolDetector;
+        let detector = Http2Detector::new();
+        let gate = detector.first_byte_gate().expect("detector 应声明首字节门");
+        let sample = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+        assert!(
+            gate.iter()
+                .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
+            "门区间不覆盖合法样本首字节 0x{:02X}",
+            sample[0]
+        );
     }
 }

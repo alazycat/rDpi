@@ -29,6 +29,11 @@ impl ProtocolDetector for SmtpDetector {
         "smtp"
     }
 
+    /// 首字节门：SMTP 数字响应（0x32-0x35）与大写命令（0x41-0x5A）。
+    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+        Some(&[(0x32u8, 0x35u8), (0x41u8, 0x5Au8)])
+    }
+
     fn detect(&self, payload: &[u8]) -> Option<DetectionResult> {
         if payload.is_empty() {
             return None;
@@ -188,5 +193,19 @@ mod tests {
             argument: Some("FROM:<test@example.com>".to_string()),
         };
         assert_eq!(extract_hostname_from_command(&mail_cmd), None);
+    }
+
+    #[test]
+    fn test_first_byte_gate_covers_valid_sample() {
+        use crate::protocols::ProtocolDetector;
+        let detector = SmtpDetector::new();
+        let gate = detector.first_byte_gate().expect("detector 应声明首字节门");
+        let sample = b"220 mail.example.com ESMTP Postfix\r\n";
+        assert!(
+            gate.iter()
+                .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
+            "门区间不覆盖合法样本首字节 0x{:02X}",
+            sample[0]
+        );
     }
 }

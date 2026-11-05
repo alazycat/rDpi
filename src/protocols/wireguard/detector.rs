@@ -30,6 +30,11 @@ impl ProtocolDetector for WireGuardDetector {
         "wireguard"
     }
 
+    /// 首字节门：WireGuard 消息类型 1-4（0x01-0x04）。
+    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+        Some(&[(0x01u8, 0x04u8)])
+    }
+
     fn detect(&self, _payload: &[u8]) -> Option<DetectionResult> {
         // WireGuard detection needs port context
         None
@@ -137,5 +142,19 @@ mod tests {
         let result = detector.detect_with_context(&packet, &ctx).unwrap();
         assert_eq!(result.protocol, Protocol::WireGuard);
         assert_eq!(result.confidence, Confidence::Dpi);
+    }
+
+    #[test]
+    fn test_first_byte_gate_covers_valid_sample() {
+        use crate::protocols::ProtocolDetector;
+        let detector = WireGuardDetector::new();
+        let gate = detector.first_byte_gate().expect("detector 应声明首字节门");
+        let sample = build_wg_message(1, 140);
+        assert!(
+            gate.iter()
+                .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
+            "门区间不覆盖合法样本首字节 0x{:02X}",
+            sample[0]
+        );
     }
 }

@@ -34,6 +34,11 @@ impl crate::protocols::ProtocolDetector for SshDetector {
         "ssh"
     }
 
+    /// 首字节门：SSH banner 以 "SSH-" 起始（0x53）。
+    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+        Some(&[(0x53u8, 0x53u8)])
+    }
+
     fn detect(&self, payload: &[u8]) -> Option<crate::core::types::DetectionResult> {
         // Quick check: SSH prefix byte
         if !is_ssh_prefix(*payload.first()?) {
@@ -67,5 +72,19 @@ mod tests {
     fn test_ssh_detector_new() {
         let detector = SshDetector::new();
         assert_eq!(detector.name(), "ssh");
+    }
+
+    #[test]
+    fn test_first_byte_gate_covers_valid_sample() {
+        use crate::protocols::ProtocolDetector;
+        let detector = SshDetector::new();
+        let gate = detector.first_byte_gate().expect("detector 应声明首字节门");
+        let sample = b"SSH-2.0-OpenSSH_8.9\r\n";
+        assert!(
+            gate.iter()
+                .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
+            "门区间不覆盖合法样本首字节 0x{:02X}",
+            sample[0]
+        );
     }
 }

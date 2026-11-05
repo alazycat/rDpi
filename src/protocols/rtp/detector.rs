@@ -28,6 +28,11 @@ impl ProtocolDetector for RtpDetector {
         "rtp"
     }
 
+    /// 首字节门：RTP/RTCP 头部 Version=2（0x80-0xBF）。
+    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+        Some(&[(0x80u8, 0xBFu8)])
+    }
+
     fn detect(&self, payload: &[u8]) -> Option<DetectionResult> {
         let header = parse_rtp_header(payload)?;
 
@@ -101,5 +106,19 @@ mod tests {
         } else {
             panic!("Expected RTP metadata");
         }
+    }
+
+    #[test]
+    fn test_first_byte_gate_covers_valid_sample() {
+        use crate::protocols::ProtocolDetector;
+        let detector = RtpDetector::new();
+        let gate = detector.first_byte_gate().expect("detector 应声明首字节门");
+        let sample = make_rtp_packet(0, 1, 0x12345678);
+        assert!(
+            gate.iter()
+                .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
+            "门区间不覆盖合法样本首字节 0x{:02X}",
+            sample[0]
+        );
     }
 }

@@ -40,6 +40,11 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
         "tls"
     }
 
+    /// 首字节门：TLS 记录层 handshake content_type=0x16。
+    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+        Some(&[(0x16u8, 0x16u8)])
+    }
+
     fn detect(&self, payload: &[u8]) -> Option<crate::core::types::DetectionResult> {
         if !is_tls_record(payload) {
             return None;
@@ -109,5 +114,19 @@ mod tests {
     fn test_tls_detector_new() {
         let detector = TlsDetector::new();
         assert_eq!(detector.name(), "tls");
+    }
+
+    #[test]
+    fn test_first_byte_gate_covers_valid_sample() {
+        use crate::protocols::ProtocolDetector;
+        let detector = TlsDetector::new();
+        let gate = detector.first_byte_gate().expect("detector 应声明首字节门");
+        let sample = [0x16, 0x03, 0x01, 0x00, 0x2F];
+        assert!(
+            gate.iter()
+                .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
+            "门区间不覆盖合法样本首字节 0x{:02X}",
+            sample[0]
+        );
     }
 }

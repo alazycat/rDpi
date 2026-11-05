@@ -206,6 +206,37 @@ fn bench_unknown_miss(c: &mut Criterion) {
     });
 }
 
+/// 未识别 miss 平均场景：100 包首字节互异（F29 首字节门预筛的加权平均路径）。
+/// 上面的 detect_unknown_tcp_miss_100 用固定载荷——首字节恒为 0x42，只能测到
+/// 该单字节对应的跳过收益；本基准让首字节均匀铺开，反映真实流量的平均收益。
+fn bench_unknown_miss_varied(c: &mut Criterion) {
+    // 固定 body（与 build_unknown_payload 同一 LCG 流去掉首字节），首字节取
+    // 独立 LCG 流生成的 100 个互异值
+    let mut body = build_unknown_payload();
+    body.remove(0);
+    let mut state = 0xDEADBEEFu32;
+    let mut seen = std::collections::HashSet::new();
+    let mut packets = Vec::with_capacity(100);
+    while packets.len() < 100 {
+        state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+        let b = (state >> 24) as u8;
+        if seen.insert(b) {
+            let mut p = Vec::with_capacity(256);
+            p.push(b);
+            p.extend_from_slice(&body);
+            packets.push(build_tcp_packet(54321, 44444, &p));
+        }
+    }
+    c.bench_function("detect_unknown_tcp_miss_varied_100", |b| {
+        b.iter(|| {
+            let mut detector = Detector::new();
+            for pkt in &packets {
+                let _ = detector.detect(black_box(pkt));
+            }
+        });
+    });
+}
+
 // ============================================================================
 // QUIC 基准（quic feature 下编译）
 // ============================================================================
@@ -289,6 +320,20 @@ mod quic_benches {
             });
         });
     }
+
+    /// Initial 全解密稳态路径：单 Detector 连续 100 包（F28 密钥缓存命中路径，
+    /// Detector 实例在 iter 间复用以维持缓存，与冷路径 bench_quic_initial_decrypt 对照）
+    pub fn bench_quic_initial_decrypt_steady(c: &mut Criterion) {
+        let pkt = build_a2_initial();
+        c.bench_function("detect_quic_initial_decrypt_steady_100", |b| {
+            let mut detector = Detector::new();
+            b.iter(|| {
+                for _ in 0..100 {
+                    let _ = detector.detect(black_box(&pkt));
+                }
+            });
+        });
+    }
 }
 
 #[cfg(not(feature = "quic"))]
@@ -299,6 +344,7 @@ criterion_group!(
     bench_tls_detection,
     bench_steady_state,
     bench_unknown_miss,
+    bench_unknown_miss_varied,
     bench_detector_create
 );
 #[cfg(feature = "quic")]
@@ -309,8 +355,10 @@ criterion_group!(
     bench_tls_detection,
     bench_steady_state,
     bench_unknown_miss,
+    bench_unknown_miss_varied,
     bench_detector_create,
     quic_benches::bench_quic_header_only,
-    quic_benches::bench_quic_initial_decrypt
+    quic_benches::bench_quic_initial_decrypt,
+    quic_benches::bench_quic_initial_decrypt_steady
 );
 criterion_main!(benches);

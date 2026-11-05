@@ -53,6 +53,16 @@ impl ProtocolDetector for NtpDetector {
         "ntp"
     }
 
+    /// 首字节门：VN 字段（bit3-5）非零
+    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+        Some(&[
+            (0x08u8, 0x27u8),
+            (0x48u8, 0x67u8),
+            (0x88u8, 0xA7u8),
+            (0xC8u8, 0xE7u8),
+        ])
+    }
+
     fn detect(&self, payload: &[u8]) -> Option<crate::core::types::DetectionResult> {
         detect_ntp(payload)
     }
@@ -61,4 +71,23 @@ impl ProtocolDetector for NtpDetector {
 /// Register NTP detector with the protocol registry
 pub fn register(registry: &mut Registry) {
     registry.register(Box::new(NtpDetector::new()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_first_byte_gate_covers_valid_sample() {
+        use crate::protocols::ProtocolDetector;
+        let detector = NtpDetector::new();
+        let gate = detector.first_byte_gate().expect("detector 应声明首字节门");
+        let sample = [0x23u8, 0x00, 0x00, 0x00];
+        assert!(
+            gate.iter()
+                .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
+            "门区间不覆盖合法样本首字节 0x{:02X}",
+            sample[0]
+        );
+    }
 }

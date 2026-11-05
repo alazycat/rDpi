@@ -20,6 +20,11 @@ impl ProtocolDetector for LdapDetector {
     fn name(&self) -> &'static str {
         "ldap"
     }
+
+    /// 首字节门：LDAP 消息为 ASN.1 SEQUENCE（0x30）。
+    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+        Some(&[(0x30u8, 0x30u8)])
+    }
     fn detect(&self, p: &[u8]) -> Option<DetectionResult> {
         if is_ldap_bind(p) {
             Some(DetectionResult::new(Protocol::Ldap).with_confidence(Confidence::Dpi))
@@ -54,5 +59,19 @@ mod tests {
     fn test_empty() {
         let d = LdapDetector::new();
         assert!(d.detect(b"").is_none());
+    }
+
+    #[test]
+    fn test_first_byte_gate_covers_valid_sample() {
+        use crate::protocols::ProtocolDetector;
+        let detector = LdapDetector::new();
+        let gate = detector.first_byte_gate().expect("detector 应声明首字节门");
+        let sample = msg();
+        assert!(
+            gate.iter()
+                .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
+            "门区间不覆盖合法样本首字节 0x{:02X}",
+            sample[0]
+        );
     }
 }

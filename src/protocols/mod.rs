@@ -116,11 +116,63 @@ pub trait ProtocolDetector: Send + Sync {
         let _ = ctx;
         self.detect(payload)
     }
+
+    /// 首字节门声明（F29 miss 路径预筛，2026-11-05）
+    ///
+    /// 声明 `payload[0]` 的可能取值区间（闭区间对 `&(u8, u8)` 数组）。返回
+    /// `Some(ranges)` 时 Registry 在**注册期**预计算 skip 位图：miss 热路径上
+    /// `payload[0]` 不在任何区间内的包直接跳过本 detector，免执行判定逻辑。
+    ///
+    /// **语义契约**：返回非 `None` 即承诺——`payload[0]` 不在声明区间内时，
+    /// `detect()` / `detect_with_context()` 必返回 `None`。违反契约将引入假阴
+    /// （真实流量被预筛跳过）。返回 `None`（默认）= 首字节任意，不参与预筛，
+    /// 行为与未优化版本完全一致。
+    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+        None
+    }
+}
+
+/// 由门声明区间构建 skip 位图：区间外字节对应位**置位**（跳过），区间内清零。
+fn build_skip_bitmap(ranges: &[(u8, u8)]) -> [u64; 4] {
+    let mut map = [!0u64; 4];
+    for &(lo, hi) in ranges {
+        for b in lo..=hi {
+            map[(b >> 6) as usize] &= !(1u64 << (b & 63));
+        }
+    }
+    map
+}
+
+/// Registry 条目：detector + 注册期预计算的首字节 skip 位图（构造期成本，
+/// detect 路径仅一次位测试）
+struct RegistryEntry {
+    detector: Box<dyn ProtocolDetector>,
+    /// `payload[0]=b` 时 `skip[(b >> 6) as usize] & (1u64 << (b & 63))` 置位
+    /// 则本 detector 必然不命中，可安全跳过
+    skip: [u64; 4],
+}
+
+impl RegistryEntry {
+    fn new(detector: Box<dyn ProtocolDetector>) -> Self {
+        let skip = detector
+            .first_byte_gate()
+            .map_or([0u64; 4], build_skip_bitmap);
+        Self { detector, skip }
+    }
+
+    /// 空 payload 不参与预筛（各 detector 自行处理空载荷语义）
+    #[inline]
+    fn should_skip(&self, payload: &[u8]) -> bool {
+        match payload.first() {
+            Some(&b) => self.skip[(b >> 6) as usize] & (1u64 << (b & 63)) != 0,
+            None => false,
+        }
+    }
 }
 
 /// 协议注册表
 pub struct Registry {
-    detectors: Vec<Box<dyn ProtocolDetector>>,
+    detectors: Vec<RegistryEntry>,
 }
 
 impl Registry {
@@ -131,7 +183,7 @@ impl Registry {
     }
 
     pub fn register(&mut self, detector: Box<dyn ProtocolDetector>) {
-        self.detectors.push(detector);
+        self.detectors.push(RegistryEntry::new(detector));
     }
 
     pub fn detector_count(&self) -> usize {
@@ -139,8 +191,11 @@ impl Registry {
     }
 
     pub fn detect(&self, payload: &[u8]) -> Option<DetectionResult> {
-        for detector in &self.detectors {
-            if let Some(result) = detector.detect(payload) {
+        for entry in &self.detectors {
+            if entry.should_skip(payload) {
+                continue;
+            }
+            if let Some(result) = entry.detector.detect(payload) {
                 return Some(result);
             }
         }
@@ -161,8 +216,11 @@ impl Registry {
             is_http3_port,
         };
 
-        for detector in &self.detectors {
-            if let Some(result) = detector.detect_with_context(payload, &ctx) {
+        for entry in &self.detectors {
+            if entry.should_skip(payload) {
+                continue;
+            }
+            if let Some(result) = entry.detector.detect_with_context(payload, &ctx) {
                 return Some(result);
             }
         }
@@ -286,4 +344,88 @@ pub fn register_defaults(_registry: &mut Registry) {
     }
     #[cfg(feature = "storage")]
     nfs::register(_registry);
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+    use crate::core::types::{DetectionResult, Protocol};
+    use crate::protocols::ProtocolDetector;
+
+    /// 声明了门的假 detector：任何未被预筛跳过的 payload 都返回命中。
+    /// 用于验证 Registry 预筛机制本身（与真实协议判定无关）。
+    struct AlwaysMatch {
+        gate: Option<&'static [(u8, u8)]>,
+    }
+    impl ProtocolDetector for AlwaysMatch {
+        fn name(&self) -> &'static str {
+            "always_match"
+        }
+        fn detect(&self, _payload: &[u8]) -> Option<DetectionResult> {
+            Some(DetectionResult::new(Protocol::Http))
+        }
+        fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+            self.gate
+        }
+    }
+
+    #[test]
+    fn test_skip_bitmap_boundaries() {
+        let map = build_skip_bitmap(&[(0x10u8, 0x1Fu8)]);
+        // 区间内全部不跳过
+        for b in 0x10..=0x1Fu8 {
+            assert_eq!(map[(b >> 6) as usize] & (1u64 << (b & 63)), 0);
+        }
+        // 区间外（前后边界 + 跨 word）全部跳过
+        for b in [0x00u8, 0x0F, 0x20, 0x7F, 0xFF] {
+            assert_eq!(
+                map[(b >> 6) as usize] & (1u64 << (b & 63)),
+                1u64 << (b & 63)
+            );
+        }
+    }
+
+    #[test]
+    fn test_skip_bitmap_inclusive_upper_bound() {
+        // 区间上界含 0xFF 时不得提前终止迭代（RangeInclusive 语义）
+        let map = build_skip_bitmap(&[(0x80u8, 0xFFu8)]);
+        assert_eq!(map[(0xFF >> 6) as usize] & (1u64 << (0xFF & 63)), 0);
+        assert_eq!(
+            map[(0x7F >> 6) as usize] & (1u64 << (0x7F & 63)),
+            1u64 << (0x7F & 63)
+        );
+    }
+
+    #[test]
+    fn test_gate_skips_miss_and_allows_hit() {
+        let mut reg = Registry::new();
+        reg.register(Box::new(AlwaysMatch {
+            gate: Some(&[(0x53u8, 0x53u8)]),
+        }));
+        // 首字节在区间内 → 正常命中
+        assert!(reg.detect(b"SSH-2.0").is_some());
+        // 首字节在区间外 → 被预筛跳过（detector 本可命中但被跳过）
+        assert!(reg.detect(b"XYZ").is_none());
+        // detect_with_ports 同样生效
+        assert!(reg.detect_with_ports(b"XYZ", 1, 2).is_none());
+        assert!(reg.detect_with_ports(b"SSH-2.0", 1, 2).is_some());
+    }
+
+    #[test]
+    fn test_empty_payload_not_skipped() {
+        let mut reg = Registry::new();
+        reg.register(Box::new(AlwaysMatch {
+            gate: Some(&[(0x53u8, 0x53u8)]),
+        }));
+        // 空 payload 不参与预筛（各 detector 自行处理空载荷语义）
+        assert!(reg.detect(b"").is_some());
+    }
+
+    #[test]
+    fn test_no_gate_never_skipped() {
+        let mut reg = Registry::new();
+        reg.register(Box::new(AlwaysMatch { gate: None }));
+        assert!(reg.detect(&[0x00, 0x01, 0x02]).is_some());
+        assert!(reg.detect_with_ports(&[0xFF], 1, 2).is_some());
+    }
 }

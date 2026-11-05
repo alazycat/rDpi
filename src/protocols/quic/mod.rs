@@ -17,13 +17,19 @@ pub fn register(registry: &mut Registry) {
 }
 
 /// QUIC protocol detector
+///
+/// 内置每 Detector 的 Initial 密钥缓存（F28 性能优化，2026-11-05）：同一
+/// (version, side, DCID) 的 HKDF 派生 + AES 轮密钥扩展只做一次，同流后续
+/// Initial 包免重复派生。
 pub struct QuicDetector {
-    _private: (),
+    cache: crypto::InitialKeyCache,
 }
 
 impl QuicDetector {
     pub fn new() -> Self {
-        Self { _private: () }
+        Self {
+            cache: crypto::InitialKeyCache::new(),
+        }
     }
 }
 
@@ -79,12 +85,15 @@ type ExtractedTlsMeta = (
 ///
 /// 先按客户端方向解（ClientHello → SNI/ALPN/JA4/应用识别/Transport Parameters），
 /// 失败再按服务端方向解（ServerHello → 仅 ALPN）。解密失败/未启用 tls feature 时
-/// 返回 None，调用方降级为仅头部信息（性能：仅 Initial 包触发，两条方向路径为
-/// 常数次 AES 尝试）。
+/// 返回 None，调用方降级为仅头部信息（性能：仅 Initial 包触发，密钥缓存命中时
+/// 两个方向的失败尝试也只各消耗一次轻量 tag 比对链）。
 #[cfg(feature = "tls")]
-fn try_extract_tls_meta(payload: &[u8]) -> Option<ExtractedTlsMeta> {
+fn try_extract_tls_meta(
+    payload: &[u8],
+    cache: &crypto::InitialKeyCache,
+) -> Option<ExtractedTlsMeta> {
     // 客户端 Initial：CRYPTO 帧为 ClientHello
-    if let Some((ch, tp)) = parser::decrypt_client_meta(payload) {
+    if let Some((ch, tp)) = parser::decrypt_client_meta_with_cache(payload, cache) {
         let application = ch.sni.as_deref().and_then(crate::application::identify);
         // JA4 指纹与 TLS 路径同源（application::compute_ja4），ClientHelloInfo
         // 自带全部输入（version/ciphers/extensions/groups）
@@ -99,19 +108,27 @@ fn try_extract_tls_meta(payload: &[u8]) -> Option<ExtractedTlsMeta> {
         return Some((ch.sni, ch.alpn, ja4, application, tp));
     }
     // 服务端 Initial：CRYPTO 帧为 ServerHello（无 SNI/JA4/TP，仅 ALPN）
-    let alpn = parser::decrypt_server_alpn(payload)?;
+    let alpn = parser::decrypt_server_alpn_with_cache(payload, cache)?;
     Some((None, Some(alpn), None, None, None))
 }
 
 /// 非 tls feature 下无 ClientHello 提取能力（保持降级行为一致）
 #[cfg(not(feature = "tls"))]
-fn try_extract_tls_meta(_payload: &[u8]) -> Option<ExtractedTlsMeta> {
+fn try_extract_tls_meta(
+    _payload: &[u8],
+    _cache: &crypto::InitialKeyCache,
+) -> Option<ExtractedTlsMeta> {
     None
 }
 
 impl crate::protocols::ProtocolDetector for QuicDetector {
     fn name(&self) -> &'static str {
         "quic"
+    }
+
+    /// 首字节门：QUIC 长包头首字节 Form bit=1（0x80-0xFF）。
+    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+        Some(&[(0x80u8, 0xFFu8)])
     }
 
     fn detect(&self, payload: &[u8]) -> Option<DetectionResult> {
@@ -126,7 +143,7 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
 
         // 尝试解密提取 ClientHello（失败降级为 None）
         let (sni, alpn, ja4, application, transport_parameters) =
-            try_extract_tls_meta(payload).unwrap_or((None, None, None, None, None));
+            try_extract_tls_meta(payload, &self.cache).unwrap_or((None, None, None, None, None));
 
         // Build metadata - convert version to hex string format
         let metadata = QuicMetadata {
@@ -160,7 +177,7 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
 
         // 尝试解密 Initial 包提取 ClientHello（失败降级为 None，不影响判定）
         let (sni, alpn, ja4, application, transport_parameters) =
-            try_extract_tls_meta(payload).unwrap_or((None, None, None, None, None));
+            try_extract_tls_meta(payload, &self.cache).unwrap_or((None, None, None, None, None));
 
         let metadata = QuicMetadata {
             sni,
@@ -196,5 +213,19 @@ mod tests {
     fn test_quic_detector_new() {
         let detector = QuicDetector::new();
         assert_eq!(detector.name(), "quic");
+    }
+
+    #[test]
+    fn test_first_byte_gate_covers_valid_sample() {
+        use crate::protocols::ProtocolDetector;
+        let detector = QuicDetector::new();
+        let gate = detector.first_byte_gate().expect("detector 应声明首字节门");
+        let sample = [0xC0, 0x00, 0x00, 0x00, 0x01, 0x00];
+        assert!(
+            gate.iter()
+                .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
+            "门区间不覆盖合法样本首字节 0x{:02X}",
+            sample[0]
+        );
     }
 }

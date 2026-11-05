@@ -27,6 +27,11 @@ impl ProtocolDetector for MysqlDetector {
         "mysql"
     }
 
+    /// 首字节门：MySQL 握手包协议版本字节 0x0A。
+    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+        Some(&[(0x0Au8, 0x0Au8)])
+    }
+
     fn detect(&self, payload: &[u8]) -> Option<DetectionResult> {
         if let Some(metadata) = parse_mysql_handshake(payload) {
             return Some(
@@ -87,5 +92,19 @@ mod tests {
         // Not a MySQL packet
         assert!(detector.detect(b"GET / HTTP/1.1\r\n").is_none());
         assert!(detector.detect(b"220 OK\r\n").is_none());
+    }
+
+    #[test]
+    fn test_first_byte_gate_covers_valid_sample() {
+        use crate::protocols::ProtocolDetector;
+        let detector = MysqlDetector::new();
+        let gate = detector.first_byte_gate().expect("detector 应声明首字节门");
+        let sample = create_handshake_packet("8.0.33", "mysql_native_password");
+        assert!(
+            gate.iter()
+                .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
+            "门区间不覆盖合法样本首字节 0x{:02X}",
+            sample[0]
+        );
     }
 }

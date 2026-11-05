@@ -56,6 +56,11 @@ impl ProtocolDetector for DhcpDetector {
         "dhcp"
     }
 
+    /// 首字节门：opcode 0x01-0x02（BootRequest/BootReply）
+    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+        Some(&[(0x01u8, 0x02u8)])
+    }
+
     fn detect(&self, payload: &[u8]) -> Option<crate::core::types::DetectionResult> {
         detect_dhcp(payload)
     }
@@ -64,4 +69,23 @@ impl ProtocolDetector for DhcpDetector {
 /// Register DHCP detector with the protocol registry
 pub fn register(registry: &mut Registry) {
     registry.register(Box::new(DhcpDetector::new()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_first_byte_gate_covers_valid_sample() {
+        use crate::protocols::ProtocolDetector;
+        let detector = DhcpDetector::new();
+        let gate = detector.first_byte_gate().expect("detector 应声明首字节门");
+        let sample = vec![0x01u8; 244];
+        assert!(
+            gate.iter()
+                .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
+            "门区间不覆盖合法样本首字节 0x{:02X}",
+            sample[0]
+        );
+    }
 }

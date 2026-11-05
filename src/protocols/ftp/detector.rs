@@ -46,6 +46,11 @@ impl ProtocolDetector for FtpDetector {
         "ftp"
     }
 
+    /// 首字节门：FTP 数字响应（0x30-0x39）与大写命令动词（0x41-0x5A）。
+    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
+        Some(&[(0x30u8, 0x39u8), (0x41u8, 0x5Au8)])
+    }
+
     fn detect(&self, payload: &[u8]) -> Option<DetectionResult> {
         if payload.is_empty() {
             return None;
@@ -289,5 +294,19 @@ mod tests {
         // 无端口上下文的 detect() 保持现状：数字响应默认 FTP（注册顺序语义，R11）
         let result = detector.detect(b"220 mail.example.com ESMTP\r\n").unwrap();
         assert_eq!(result.protocol, Protocol::Ftp);
+    }
+
+    #[test]
+    fn test_first_byte_gate_covers_valid_sample() {
+        use crate::protocols::ProtocolDetector;
+        let detector = FtpDetector::new();
+        let gate = detector.first_byte_gate().expect("detector 应声明首字节门");
+        let sample = b"220 FTP server ready\r\n";
+        assert!(
+            gate.iter()
+                .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
+            "门区间不覆盖合法样本首字节 0x{:02X}",
+            sample[0]
+        );
     }
 }

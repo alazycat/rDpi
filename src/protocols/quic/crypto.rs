@@ -10,7 +10,7 @@
 //! 性能说明：解密仅在 QUIC Initial 包上触发（每流至多数个包），会有少量堆分配
 //! （AES 轮密钥为栈上数组，明文/密文缓冲约 1-2 KiB），量级可接受且失败即降级。
 
-use super::parser::{QUIC_VERSION_1, QUIC_VERSION_2};
+use super::parser::{QUIC_VERSION_1, QUIC_VERSION_2, QUIC_VERSION_DRAFT28, QUIC_VERSION_DRAFT29};
 
 /// AES S-box（FIPS-197 §5.1.1）
 const SBOX: [u8; 256] = [
@@ -241,8 +241,10 @@ fn ghash_update(table: &GhashTable, y: &mut [u8; 16], data: &[u8]) {
 
 /// AES-128-GCM 解密并校验认证标签（RFC 8439 §7）
 ///
-/// nonce 为 96 位；返回明文（堆分配，量级 = 单个 QUIC Initial 载荷）。
-/// 标签校验失败返回 None（认证不通过，数据不可信）。
+/// 生产解密路径已由 [`decrypt_candidates`] 的预计算候选方案取代（避免每候选
+/// 重复密钥扩展/GHASH 表构建/全量 GHASH）；本函数保留用于 RFC 8439 官方向量
+/// 单元测试与交叉验证。
+#[cfg(test)]
 pub(crate) fn aes128_gcm_decrypt(
     key: &[u8; 16],
     nonce: &[u8; 12],
@@ -399,6 +401,7 @@ fn initial_salt(version: u32) -> Option<&'static [u8; 20]> {
 }
 
 /// 派生的 QUIC Initial 保护密钥组（按包发送方向取对应 secret）
+#[derive(Clone)]
 pub(crate) struct InitialKeys {
     /// AEAD 密钥（"quic key"，16 字节）
     pub key: [u8; 16],
@@ -448,7 +451,7 @@ pub(crate) fn derive_initial_keys(version: u32, dcid: &[u8], side: Side) -> Opti
 /// 返回（去保护后的首字节, 原始 packet number, packet number 长度）。
 /// 采样点固定取 packet number 字段起点后 4 字节开始的 16 字节（长度本身受保护，无法预知）。
 fn remove_header_protection(
-    hp: &[u8; 16],
+    hp_rk: &[u8; 176],
     packet: &[u8],
     pn_offset: usize,
 ) -> Option<(u8, u64, usize)> {
@@ -458,7 +461,7 @@ fn remove_header_protection(
     }
     let mut sample = [0u8; 16];
     sample.copy_from_slice(&packet[pn_offset + 4..pn_offset + 20]);
-    let mask = aes128_encrypt_block(&key_expansion(hp), &sample);
+    let mask = aes128_encrypt_block(hp_rk, &sample);
 
     // 长头：首字节低 4 位受保护（RFC 9001 §5.4.2）
     let first = packet[0] ^ (mask[0] & 0x0f);
@@ -471,11 +474,12 @@ fn remove_header_protection(
     Some((first, pn, pn_len))
 }
 
-/// 尝试解密并去保护 QUIC Initial 包载荷（RFC 9001 §5.3/§5.4）
+/// 尝试解密并去保护 QUIC Initial 包载荷（RFC 9001 §5.3/§5.4）——无缓存直通路径
 ///
 /// 无流级 packet number 状态时，原始 pn 值（模 2^(8*pn_len)）即真实 pn 的低位。
 /// 握手期 largest_acked 很小，raw == 真实 pn 几乎恒成立；对 pn_len < 4 的情况
 /// 再尝试少数几个高位候选（tag 校验兜底），全部失败返回 None。
+/// 每流反复解密请走 [`decrypt_initial_payload_with`] + `InitialKeyCache`（免重复 HKDF）。
 pub(crate) fn decrypt_initial_payload(
     packet: &[u8],
     pn_offset: usize,
@@ -483,30 +487,139 @@ pub(crate) fn decrypt_initial_payload(
     dcid: &[u8],
     side: Side,
 ) -> Option<Vec<u8>> {
-    let keys = derive_initial_keys(version, dcid, side)?;
-    let (first, pn, pn_len) = remove_header_protection(&keys.hp, packet, pn_offset)?;
-
-    // 候选数量上限：pn_len=4 时 raw 即完整 pn（仅 1 个候选）；否则最多 4 个候选
-    let candidate_count = if pn_len == 4 { 1 } else { 4 };
-    let step = 1u64 << (8 * pn_len);
-    for k in 0..candidate_count {
-        // nonce 使用 pn 的低 32 位（RFC 9001 §5.3）
-        let pn32 = (pn.wrapping_add(k * step) & 0xffff_ffff) as u32;
-        if let Some(pt) = decrypt_with_pn(packet, pn_offset, pn_len, first, pn32, &keys) {
-            return Some(pt);
-        }
-    }
-    None
+    let pre = prepare_initial_keys(version, dcid, side)?;
+    decrypt_initial_payload_with(&pre, packet, pn_offset)
 }
 
-/// 以给定 packet number 解密一次（AAD = 去保护后的头部）
-fn decrypt_with_pn(
+/// 以预派生密钥解密 Initial 载荷（缓存命中路径：免 HKDF 派生 + AES 轮密钥扩展）
+pub(crate) fn decrypt_initial_payload_with(
+    pre: &PreparedInitialKeys,
+    packet: &[u8],
+    pn_offset: usize,
+) -> Option<Vec<u8>> {
+    let (first, pn, pn_len) = remove_header_protection(&pre.hp_rk, packet, pn_offset)?;
+    decrypt_candidates(pre, packet, pn_offset, pn_len, first, pn)
+}
+
+/// 预派生的 Initial 密钥组（含 AES 轮密钥）——性能优化（F28，2026-11-05）
+///
+/// Initial 密钥仅由 (version, side, DCID) 决定，与包内容无关；每 Detector 按
+/// 该三元组缓存本结构后，同一流后续 Initial 包免去 HKDF-SHA256 派生与两轮
+/// AES 密钥扩展。约 400B 的拷贝成本远低于重派生。
+#[derive(Clone)]
+pub(crate) struct PreparedInitialKeys {
+    keys: InitialKeys,
+    /// AEAD 密钥的 AES 轮密钥（key_expansion 结果）
+    key_rk: [u8; 176],
+    /// 头保护密钥的 AES 轮密钥
+    hp_rk: [u8; 176],
+}
+
+/// 派生 Initial 密钥并展开 AES 轮密钥（缓存未命中时调用）
+pub(crate) fn prepare_initial_keys(
+    version: u32,
+    dcid: &[u8],
+    side: Side,
+) -> Option<PreparedInitialKeys> {
+    let keys = derive_initial_keys(version, dcid, side)?;
+    let key_rk = key_expansion(&keys.key);
+    let hp_rk = key_expansion(&keys.hp);
+    Some(PreparedInitialKeys {
+        keys,
+        key_rk,
+        hp_rk,
+    })
+}
+
+/// 缓存键：版本索引(1B) + 方向(1B) + DCID 长度(1B) + DCID（≤20B，补零定长）
+type CacheKey = [u8; 23];
+
+fn cache_key(version: u32, side: Side, dcid: &[u8]) -> Option<CacheKey> {
+    let vidx = match version {
+        QUIC_VERSION_1 => 0u8,
+        QUIC_VERSION_2 => 1,
+        QUIC_VERSION_DRAFT29 => 2,
+        QUIC_VERSION_DRAFT28 => 3,
+        _ => return None, // 未知版本不入缓存（直通路径仍可解）
+    };
+    if dcid.len() > 20 {
+        return None; // RFC 9000 §5.1 上限 20B；超限走直通路径
+    }
+    let mut k = [0u8; 23];
+    k[0] = vidx;
+    k[1] = match side {
+        Side::Client => 0,
+        Side::Server => 1,
+    };
+    k[2] = dcid.len() as u8;
+    k[3..3 + dcid.len()].copy_from_slice(dcid);
+    Some(k)
+}
+
+/// 每 Detector 的 Initial 密钥缓存（性能优化 F28）
+///
+/// 命中即免 HKDF-SHA256 派生（4 次 expand-label）+ 2 次 AES 密钥扩展。
+/// 线程安全：ProtocolDetector 要求 Send+Sync；条目有界（[`INITIAL_KEY_CACHE_MAX`]，
+/// 超限整体清空——派生仅每流一次，清空后重建成本可摊销）。
+pub(crate) struct InitialKeyCache {
+    map: std::sync::Mutex<std::collections::HashMap<CacheKey, PreparedInitialKeys>>,
+}
+
+/// 缓存条目上限：常见活跃 QUIC 流数远低于此值
+const INITIAL_KEY_CACHE_MAX: usize = 1024;
+
+impl InitialKeyCache {
+    pub(crate) fn new() -> Self {
+        Self {
+            map: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// 命中返回克隆（约 400B，远小于重派生）；未命中派生并插入
+    pub(crate) fn get_or_derive(
+        &self,
+        version: u32,
+        dcid: &[u8],
+        side: Side,
+    ) -> Option<PreparedInitialKeys> {
+        let key = cache_key(version, side, dcid)?;
+        // 互斥锁中毒（持锁线程 panic）时降级为直通派生，不影响正确性
+        let mut map = self
+            .map
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(pre) = map.get(&key) {
+            return Some(pre.clone());
+        }
+        let pre = prepare_initial_keys(version, dcid, side)?;
+        if map.len() >= INITIAL_KEY_CACHE_MAX {
+            map.clear();
+        }
+        map.insert(key, pre.clone());
+        Some(pre)
+    }
+}
+
+/// 候选解密（RFC 9001 §5.4.1 候选生成）——性能关键（F28，2026-11-05）
+///
+/// **候选 0（raw pn）直接对真实 pn 字节做一次全量 GHASH + tag 比对**——握手期
+/// raw pn 几乎恒为真实 pn，该路径与逐候选全量解密的旧实现零差异（若走预检
+/// 机制则需额外付出权重链 H^w 的 w 次表乘，反而变慢）。
+///
+/// 仅当候选 0 miss 且 pn_len < 4 时才启动预检机制：pn 候选只改变两处——CTR
+/// nonce 与 AAD 末尾的 pn 字节；GHASH 对密文与长度块的吸收与两者均无关，且
+/// GF(2^128) 乘法线性 → AAD 末块变化对最终 GHASH 和的贡献恰为
+/// H^(密文块数+2) · Δ（该块之后还有全部密文块 + 1 个长度块）。于是"pn 置零
+/// 的 GHASH 和 + 两个 H^k 权重表"一次预计算后，每候选仅 1 次 GF 乘 + 1 次
+/// AES 块加密即可完成 tag 比对，命中才做全量 CTR 解密。最坏 4 候选从 4 次
+/// 全量解密（旧实现）降为 1 次全量 + 3 次轻量预检。
+fn decrypt_candidates(
+    pre: &PreparedInitialKeys,
     packet: &[u8],
     pn_offset: usize,
     pn_len: usize,
     first: u8,
-    pn: u32,
-    keys: &InitialKeys,
+    pn: u64,
 ) -> Option<Vec<u8>> {
     if pn_offset + pn_len + 16 > packet.len() {
         return None;
@@ -514,20 +627,140 @@ fn decrypt_with_pn(
     let ct = &packet[pn_offset + pn_len..packet.len() - 16];
     let mut tag = [0u8; 16];
     tag.copy_from_slice(&packet[packet.len() - 16..]);
+    let rk = pre.key_rk;
+    let pn32 = (pn & 0xffff_ffff) as u32;
 
-    // AAD = 未保护头部：首字节 + 版本/连接 ID/Token + 去保护的 packet number
+    let h = aes128_encrypt_block(&rk, &[0u8; 16]);
+    let table = GhashTable::new(&h);
+    let len_block: [u8; 16] = {
+        let aad_bits = ((pn_offset + pn_len) as u64) * 8;
+        let ct_bits = (ct.len() as u64) * 8;
+        let mut b = [0u8; 16];
+        b[..8].copy_from_slice(&aad_bits.to_be_bytes());
+        b[8..].copy_from_slice(&ct_bits.to_be_bytes());
+        b
+    };
+
+    // ---- 候选 0：真实 pn 直接全量 GHASH（常见命中路径，与旧实现同价） ----
     let mut aad = packet[..pn_offset + pn_len].to_vec();
     aad[0] = first;
-    aad[pn_offset..pn_offset + pn_len].copy_from_slice(&pn.to_be_bytes()[4 - pn_len..]);
-
-    // nonce = iv XOR 左填充 4 字节的 packet number
-    let mut nonce = keys.iv;
-    let pn_bytes = pn.to_be_bytes();
-    for i in 0..4 {
-        nonce[8 + i] ^= pn_bytes[i];
+    // 包内 pn 字节仍是受头保护的掩码值，写回去保护后的真实 pn
+    aad[pn_offset..pn_offset + pn_len].copy_from_slice(&pn32.to_be_bytes()[4 - pn_len..]);
+    let mut s = [0u8; 16];
+    ghash_update(&table, &mut s, &aad);
+    ghash_update(&table, &mut s, ct);
+    ghash_block(&table, &mut s, &len_block);
+    let j0 = candidate_j0(&pre.keys.iv, pn32);
+    let ek_j0 = aes128_encrypt_block(&rk, &j0);
+    if tag_eq(&ek_j0, &s, &tag) {
+        return Some(gcm_ctr_decrypt(&rk, &j0, ct));
+    }
+    if pn_len == 4 {
+        return None; // raw 即完整 pn，无其他候选
     }
 
-    aes128_gcm_decrypt(&keys.key, &nonce, &aad, ct, &tag)
+    // ---- 候选 1..=3：预检机制（仅在候选 0 miss 时才付出预计算成本） ----
+    let mut aad0 = aad;
+    aad0[pn_offset..pn_offset + pn_len].fill(0);
+    let mut s0 = [0u8; 16];
+    ghash_update(&table, &mut s0, &aad0);
+    ghash_update(&table, &mut s0, ct);
+    ghash_block(&table, &mut s0, &len_block);
+
+    // 权重表：块 b 对最终 GHASH 和的贡献权重为 H^(n-b)，n = AAD 块数 + 密文块数 + 1。
+    // pn 字段（≤4B）位于 AAD 末尾，至多横跨最后两个 AAD 块——预构建两个权重的乘法表。
+    let aad_blocks = aad0.len().div_ceil(16);
+    let ct_blocks = ct.len().div_ceil(16);
+    let n_blocks = aad_blocks + ct_blocks + 1;
+    let w_last = n_blocks - (aad_blocks - 1); // 最末 AAD 块的权重（密文块数 + 2）
+    let mut hk_last = h;
+    // h 已是 H^1，再乘 (w_last - 1) 次得 H^w_last
+    for _ in 0..(w_last - 1) {
+        hk_last = table.mul(&hk_last);
+    }
+    let t_last = GhashTable::new(&hk_last);
+    let hk_prev = table.mul(&hk_last); // 前一块权重 = 最末块权重 × H
+    let t_prev = GhashTable::new(&hk_prev);
+
+    // AAD 末块起点（pn 字段至多横跨 [aad_blocks-2, aad_blocks-1] 两个块）
+    let b_last = aad_blocks - 1;
+
+    let step = 1u64 << (8 * pn_len);
+    for k in 1..4u64 {
+        let pn_c = pn.wrapping_add(k * step) & 0xffff_ffff;
+        let pn_c32 = pn_c as u32;
+        // T 候选 = E_K(J0) XOR S0 ⊕ Σ H^(n-b)·Δ_b
+        let j0 = candidate_j0(&pre.keys.iv, pn_c32);
+        let ek_j0 = aes128_encrypt_block(&rk, &j0);
+        // 候选 pn 字节（big-endian，低位 pn_len 字节）逐字节归入其所在 AAD 块的 Δ
+        let mut d_last = [0u8; 16];
+        let mut d_prev = [0u8; 16];
+        let c_bytes = pn_c32.to_be_bytes();
+        for i in 0..pn_len {
+            let pos = pn_offset + i;
+            let off = pos % 16;
+            let byte = c_bytes[4 - pn_len + i];
+            if pos / 16 == b_last {
+                d_last[off] = byte;
+            } else {
+                d_prev[off] = byte;
+            }
+        }
+        let ds = t_last.mul(&d_last);
+        let mut s_c = s0;
+        for j in 0..16 {
+            s_c[j] ^= ds[j];
+        }
+        if d_prev != [0u8; 16] {
+            let dsp = t_prev.mul(&d_prev);
+            for j in 0..16 {
+                s_c[j] ^= dsp[j];
+            }
+        }
+        if tag_eq(&ek_j0, &s_c, &tag) {
+            return Some(gcm_ctr_decrypt(&rk, &j0, ct));
+        }
+    }
+    None
+}
+
+/// 候选 CTR nonce 对应的 J0 = nonce || 0x00000001，nonce = iv ⊕ 左填充 4B 的 pn
+/// （RFC 9001 §5.3 / RFC 8439 §7.1）
+#[inline]
+fn candidate_j0(iv: &[u8; 12], pn32: u32) -> [u8; 16] {
+    let mut j0 = [0u8; 16];
+    j0[..12].copy_from_slice(iv);
+    let pn_bytes = pn32.to_be_bytes();
+    for i in 0..4 {
+        j0[8 + i] ^= pn_bytes[i];
+    }
+    j0[15] = 1;
+    j0
+}
+
+/// tag 常量时间比对：T = E_K(J0) ⊕ S
+#[inline]
+fn tag_eq(ek_j0: &[u8; 16], s: &[u8; 16], tag: &[u8; 16]) -> bool {
+    let mut diff = 0u8;
+    for j in 0..16 {
+        diff |= ek_j0[j] ^ s[j] ^ tag[j];
+    }
+    diff == 0
+}
+
+/// CTR 解密（计数器从 inc32(J0) 起，RFC 8439 §7.2）
+fn gcm_ctr_decrypt(rk: &[u8; 176], j0: &[u8; 16], ct: &[u8]) -> Vec<u8> {
+    let mut counter = *j0;
+    inc32(&mut counter);
+    let mut pt = Vec::with_capacity(ct.len());
+    for chunk in ct.chunks(16) {
+        let ks = aes128_encrypt_block(rk, &counter);
+        for (i, b) in chunk.iter().enumerate() {
+            pt.push(b ^ ks[i]);
+        }
+        inc32(&mut counter);
+    }
+    pt
 }
 
 /// GCM 加密（用于 Retry 包完整性标签计算与单元测试夹具构造）
@@ -637,11 +870,23 @@ pub(crate) fn build_initial_packet(
     frames: &[u8],
     side: Side,
 ) -> Vec<u8> {
-    let keys = derive_initial_keys(version, dcid, side).unwrap();
-    const PN_LEN: usize = 4;
+    build_initial_packet_with_pn_len(version, dcid, pn, 4, frames, side)
+}
 
-    // 未保护头部：0xC3 = Long Header + Initial + pn_len=4
-    let first: u8 = 0xC3;
+/// 按指定 pn_len 构造受保护 Initial 包（测试支持：pn_len<4 覆盖多候选路径）
+#[cfg(test)]
+pub(crate) fn build_initial_packet_with_pn_len(
+    version: u32,
+    dcid: &[u8],
+    pn: u32,
+    pn_len: usize,
+    frames: &[u8],
+    side: Side,
+) -> Vec<u8> {
+    let keys = derive_initial_keys(version, dcid, side).unwrap();
+
+    // 未保护头部：Long Header + Initial，pn_len 编码在低 2 位（RFC 9000 §17.2）
+    let first: u8 = 0xC0 | ((pn_len - 1) as u8 & 0x03);
     let mut packet = vec![first];
     packet.extend_from_slice(&version.to_be_bytes());
     packet.push(dcid.len() as u8);
@@ -649,7 +894,7 @@ pub(crate) fn build_initial_packet(
     packet.push(0x00); // SCID 长度 0
     packet.push(0x00); // Token 长度 0
     // Length = pn + 载荷（帧 + 16 字节 tag）；小于 16384 时用 2 字节 varint
-    let payload_len = PN_LEN + frames.len() + 16;
+    let payload_len = pn_len + frames.len() + 16;
     assert!(
         payload_len <= 0x3fff,
         "test helper 仅支持 2 字节 varint Length"
@@ -658,19 +903,19 @@ pub(crate) fn build_initial_packet(
     packet.push((payload_len & 0xff) as u8);
     let pn_offset = packet.len();
 
-    // AAD = 未保护头部（含明文 pn）
+    // AAD = 未保护头部（含明文 pn，pn_len 字节，大端低位）
+    let pn_bytes = pn.to_be_bytes();
     let mut aad = packet.clone();
-    aad.extend_from_slice(&pn.to_be_bytes());
+    aad.extend_from_slice(&pn_bytes[4 - pn_len..]);
 
     // nonce = iv XOR pn
     let mut nonce = keys.iv;
-    let pn_bytes = pn.to_be_bytes();
     for i in 0..4 {
         nonce[8 + i] ^= pn_bytes[i];
     }
 
     // 写入明文 packet number（稍后被头保护掩码覆盖）
-    packet.extend_from_slice(&pn.to_be_bytes());
+    packet.extend_from_slice(&pn_bytes[4 - pn_len..]);
 
     let (ct, tag) = aes128_gcm_encrypt(&keys.key, &nonce, &aad, frames);
     packet.extend_from_slice(&ct);
@@ -681,7 +926,7 @@ pub(crate) fn build_initial_packet(
     sample.copy_from_slice(&packet[pn_offset + 4..pn_offset + 20]);
     let mask = aes128_encrypt_block(&key_expansion(&keys.hp), &sample);
     packet[0] ^= mask[0] & 0x0f;
-    for i in 0..4 {
+    for i in 0..pn_len {
         packet[pn_offset + i] ^= mask[1 + i];
     }
     packet
@@ -943,5 +1188,122 @@ mod tests {
         assert_eq!(to_hex(&keys.key), "cf3a5331653c364c88f0f379b6067e37");
         assert_eq!(to_hex(&keys.iv), "0ac1493ca1905853b0bba03e");
         assert_eq!(to_hex(&keys.hp), "c206b8d9b9f0f37644430b490eeaa314");
+    }
+
+    #[test]
+    fn test_initial_key_cache_hit_consistent() {
+        // 缓存命中应返回与直通派生一致的密钥组（F28 性能优化）
+        let cache = super::InitialKeyCache::new();
+        let dcid = hex("8394c8f03e515708");
+        let direct = super::prepare_initial_keys(QUIC_VERSION_1, &dcid, Side::Client).unwrap();
+        let cached = cache
+            .get_or_derive(QUIC_VERSION_1, &dcid, Side::Client)
+            .unwrap();
+        assert_eq!(direct.keys.key, cached.keys.key);
+        assert_eq!(direct.keys.iv, cached.keys.iv);
+        assert_eq!(direct.keys.hp, cached.keys.hp);
+        assert_eq!(direct.key_rk, cached.key_rk);
+        assert_eq!(direct.hp_rk, cached.hp_rk);
+    }
+
+    #[test]
+    fn test_initial_key_cache_keys_differ() {
+        // 不同 DCID / 方向 / 版本的缓存条目互不干扰
+        let cache = super::InitialKeyCache::new();
+        let dcid1 = hex("8394c8f03e515708");
+        let dcid2 = hex("0001020304050607");
+        let a = cache
+            .get_or_derive(QUIC_VERSION_1, &dcid1, Side::Client)
+            .unwrap();
+        let b = cache
+            .get_or_derive(QUIC_VERSION_1, &dcid1, Side::Server)
+            .unwrap();
+        let c = cache
+            .get_or_derive(QUIC_VERSION_1, &dcid2, Side::Client)
+            .unwrap();
+        let d = cache
+            .get_or_derive(super::super::QUIC_VERSION_DRAFT29, &dcid1, Side::Client)
+            .unwrap();
+        assert_ne!(a.keys.key, b.keys.key);
+        assert_ne!(a.keys.key, c.keys.key);
+        assert_ne!(a.keys.key, d.keys.key);
+    }
+
+    #[test]
+    fn test_initial_key_cache_bounded() {
+        // 超过上限整体清空：条目数有界，清空后仍能正确派生
+        let cache = super::InitialKeyCache::new();
+        for i in 0..1100u32 {
+            let dcid = i.to_be_bytes().to_vec();
+            cache
+                .get_or_derive(QUIC_VERSION_1, &dcid, Side::Client)
+                .unwrap();
+        }
+        // 上限条目 + 任何存活项，绝不超过上限
+        assert!(cache.map.lock().unwrap().len() <= super::INITIAL_KEY_CACHE_MAX);
+        // 清空后派生仍然正确（与直通一致）
+        let dcid = hex("8394c8f03e515708");
+        let direct = super::prepare_initial_keys(QUIC_VERSION_1, &dcid, Side::Client).unwrap();
+        let cached = cache
+            .get_or_derive(QUIC_VERSION_1, &dcid, Side::Client)
+            .unwrap();
+        assert_eq!(direct.keys.key, cached.keys.key);
+    }
+
+    #[test]
+    fn test_cache_hit_decrypt_matches_uncached() {
+        // 缓存路径与直通路径解密结果一致（含第二次缓存命中）
+        let dcid = hex("8394c8f03e515708");
+        let data = build_initial_packet(QUIC_VERSION_1, &dcid, 2, &vec![0u8; 512], Side::Client);
+        let cache = super::InitialKeyCache::new();
+        let uncached = decrypt_initial_payload(&data, 18, QUIC_VERSION_1, &dcid, Side::Client);
+        let cached = decrypt_initial_payload_with(
+            &cache
+                .get_or_derive(QUIC_VERSION_1, &dcid, Side::Client)
+                .unwrap(),
+            &data,
+            18,
+        );
+        assert!(uncached.is_some());
+        assert_eq!(uncached.unwrap(), cached.unwrap());
+        // 第二次走缓存命中路径，结果仍一致
+        let cached2 = decrypt_initial_payload_with(
+            &cache
+                .get_or_derive(QUIC_VERSION_1, &dcid, Side::Client)
+                .unwrap(),
+            &data,
+            18,
+        );
+        assert!(cached2.is_some());
+    }
+
+    #[test]
+    fn test_decrypt_candidates_pn_len_variants() {
+        // pn_len<4 的候选路径（含 AAD 跨块 Δ 修正）往返一致性：
+        // dcid 长度控制 pn_offset（pn_offset = 9 + dcid.len()），分别覆盖
+        // pn 字段单块收尾（aad_len % 16 ≥ pn_len）与跨块边界两种布局
+        let payload = vec![0x40u8, 0x04, 0x00, 0x01, 0x00, 0x00]; // PING 帧样例
+        let payload_padded = [payload.clone(), vec![0u8; 32]].concat(); // 保证采样点可用
+        for pn_len in [1usize, 2, 3] {
+            for dcid_len in [5usize, 7] {
+                let dcid: Vec<u8> = (0..dcid_len as u8).collect();
+                let data = build_initial_packet_with_pn_len(
+                    QUIC_VERSION_1,
+                    &dcid,
+                    2,
+                    pn_len,
+                    &payload_padded,
+                    Side::Client,
+                );
+                let pre = prepare_initial_keys(QUIC_VERSION_1, &dcid, Side::Client).unwrap();
+                let pt = decrypt_initial_payload_with(&pre, &data, 10 + dcid_len)
+                    .expect("pn_len<4 包应解密成功（候选 0 命中）");
+                assert_eq!(
+                    &pt[..payload.len()],
+                    &payload,
+                    "pn_len={pn_len} dcid_len={dcid_len}"
+                );
+            }
+        }
     }
 }
