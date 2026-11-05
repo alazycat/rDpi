@@ -4,7 +4,8 @@
 //! 触发条件：端口、SNI 子串、payload 子串。
 //!
 //! SNI 语义（R6）：`sni_contains` 匹配当前包 payload 中的 TLS ClientHello SNI
-//! （需同时启用 `rule` + `tls` feature；QUIC SNI 不在覆盖范围内）。
+//! （需同时启用 `rule` + `tls` feature）；启用 `quic` feature 后同样覆盖
+//! QUIC Initial 的 ClientHello SNI（解密后匹配，解密失败按无 SNI 处理）。
 //! 规则先于 DPI 判定，命中即返回，优先级高于内置 DPI。
 //!
 //! # Feature

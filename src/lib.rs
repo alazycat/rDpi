@@ -288,6 +288,12 @@ impl Detector {
                 });
                 #[cfg(feature = "tls")]
                 let sni = sni.or_else(|| protocols::tls::extract_sni(&parsed.payload));
+                #[cfg(all(feature = "quic", feature = "tls"))]
+                let sni = sni.or_else(|| {
+                    // QUIC Initial：解密 ClientHello 提取 SNI（非 Initial 包在
+                    // parse_initial_header 处快速拒绝，无额外开销）
+                    protocols::quic::decrypt_client_hello(&parsed.payload).and_then(|ch| ch.sni)
+                });
                 let rule_ctx = RuleContext {
                     src_port: parsed.src_port,
                     dst_port: parsed.dst_port,
