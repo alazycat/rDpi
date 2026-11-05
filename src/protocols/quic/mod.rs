@@ -33,6 +33,36 @@ impl Default for QuicDetector {
     }
 }
 
+impl QuicDetector {
+    /// 非 Initial 长包头识别（0-RTT 0xD0 / Handshake 0xE0 / Retry 0xF0 / VN version=0）
+    ///
+    /// 仅提取 version + DCID 元数据（这些包不含明文 ClientHello，无解密富化）。
+    /// VN 包（version=0）不要求 Fixed Bit；其余类型要求 Fixed Bit=1（RFC 8999 §5.1）。
+    fn detect_other_long_header(&self, payload: &[u8]) -> Option<DetectionResult> {
+        if !is_quic_long_header(payload) {
+            return None;
+        }
+        let version = parse_quic_version(payload)?;
+        if version != 0 && (payload[0] & 0x40) == 0 {
+            return None; // Fixed Bit 未置位：非法 QUIC 长包头
+        }
+        let dcid = parse_long_header_dcid(payload)?;
+        let metadata = QuicMetadata {
+            sni: None,
+            alpn: None,
+            ja4: None,
+            version: Some(format!("{:08x}", version)),
+            destination_connection_id: Some(dcid),
+            application: None,
+        };
+        Some(
+            DetectionResult::new(Protocol::Quic)
+                .with_metadata(Metadata::Quic(metadata))
+                .with_confidence(Confidence::Dpi),
+        )
+    }
+}
+
 use crate::core::types::{Application, DetectContext};
 
 /// Initial 解密富化结果：(sni, alpn, ja4, application)
@@ -84,7 +114,8 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
     fn detect(&self, payload: &[u8]) -> Option<DetectionResult> {
         // Quick check: QUIC Long Header Initial
         if !is_quic_initial(payload) {
-            return None;
+            // 非 Initial 长包头（0-RTT/Handshake/Retry/VN）也识别为 QUIC
+            return self.detect_other_long_header(payload);
         }
 
         // Parse QUIC header
@@ -114,7 +145,8 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
 
     fn detect_with_context(&self, payload: &[u8], ctx: &DetectContext) -> Option<DetectionResult> {
         if !is_quic_initial(payload) {
-            return None;
+            // 非 Initial 长包头不参与 HTTP/3 判定（端口+版本双重确认仅对 Initial 有效）
+            return self.detect_other_long_header(payload);
         }
 
         let info = parse_quic_initial(payload)?;

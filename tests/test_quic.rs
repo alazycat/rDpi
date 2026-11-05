@@ -569,3 +569,117 @@ fn test_decrypt_initial_tampered_payload_degrades_to_header_only() {
         panic!("expected Quic metadata");
     }
 }
+
+// ============================================================================
+// 非 Initial 长包头识别（0-RTT / Handshake / Retry / VN）
+// ============================================================================
+
+#[test]
+fn test_detect_handshake_packet() {
+    let detector = QuicDetector::new();
+    // Handshake：Long + Fixed + type=10 → 首字节 0xE0
+    let mut data = vec![0xE0, 0x00, 0x00, 0x00, 0x01, 0x08];
+    data.extend_from_slice(&[0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
+
+    let result = detector.detect(&data);
+    assert!(result.is_some());
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Quic);
+    assert_eq!(detection.confidence, Confidence::Dpi);
+    if let Metadata::Quic(meta) = detection.metadata {
+        assert_eq!(meta.version.as_deref(), Some("00000001"));
+        assert_eq!(
+            meta.destination_connection_id,
+            Some(vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88])
+        );
+        assert!(meta.sni.is_none());
+    } else {
+        panic!("expected Quic metadata");
+    }
+}
+
+#[test]
+fn test_detect_zero_rtt_packet() {
+    let detector = QuicDetector::new();
+    // 0-RTT：Long + Fixed + type=01 → 首字节 0xD0
+    let mut data = vec![0xD0, 0x6b, 0x33, 0x43, 0xcf, 0x04];
+    data.extend_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd]);
+
+    let result = detector.detect(&data);
+    assert!(result.is_some());
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Quic);
+    if let Metadata::Quic(meta) = detection.metadata {
+        assert_eq!(meta.version.as_deref(), Some("6b3343cf"));
+        assert_eq!(
+            meta.destination_connection_id,
+            Some(vec![0xaa, 0xbb, 0xcc, 0xdd])
+        );
+    } else {
+        panic!("expected Quic metadata");
+    }
+}
+
+#[test]
+fn test_detect_retry_packet() {
+    let detector = QuicDetector::new();
+    // Retry：Long + Fixed + type=11 → 首字节 0xF0（含 Retry Token + 完整性标签）
+    let mut data = vec![0xF0, 0x00, 0x00, 0x00, 0x01, 0x08];
+    data.extend_from_slice(&[0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16]);
+    data.extend_from_slice(&[0x00; 16]); // token + tag 占位（识别不读载荷）
+
+    let result = detector.detect(&data);
+    assert!(result.is_some());
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Quic);
+    if let Metadata::Quic(meta) = detection.metadata {
+        assert_eq!(meta.version.as_deref(), Some("00000001"));
+        assert_eq!(
+            meta.destination_connection_id,
+            Some(vec![0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16])
+        );
+    } else {
+        panic!("expected Quic metadata");
+    }
+}
+
+#[test]
+fn test_detect_version_negotiation_packet() {
+    let detector = QuicDetector::new();
+    // VN：version=0（Fixed Bit 不要求，用 0x80 掩码首字节模拟服务器未置位场景）
+    let mut data = vec![0x80, 0x00, 0x00, 0x00, 0x00, 0x08];
+    data.extend_from_slice(&[0x21, 0x43, 0x65, 0x87, 0xa9, 0xcb, 0xed, 0x0f]);
+
+    let result = detector.detect(&data);
+    assert!(result.is_some());
+    let detection = result.unwrap();
+    assert_eq!(detection.protocol, Protocol::Quic);
+    if let Metadata::Quic(meta) = detection.metadata {
+        assert_eq!(meta.version.as_deref(), Some("00000000"));
+        assert_eq!(
+            meta.destination_connection_id,
+            Some(vec![0x21, 0x43, 0x65, 0x87, 0xa9, 0xcb, 0xed, 0x0f])
+        );
+    } else {
+        panic!("expected Quic metadata");
+    }
+}
+
+#[test]
+fn test_long_header_fixed_bit_required_for_non_vn() {
+    let detector = QuicDetector::new();
+    // version != 0 但 Fixed Bit 未置位（0x80）：非法 QUIC 长包头 → 不识别
+    let data = [
+        0x80, 0x00, 0x00, 0x00, 0x01, 0x08, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    ];
+    assert!(detector.detect(&data).is_none());
+}
+
+#[test]
+fn test_dcid_length_over_20_rejected() {
+    let detector = QuicDetector::new();
+    // DCID 长度 21 超出协议上限 → 不识别
+    let mut data = vec![0xE0, 0x00, 0x00, 0x00, 0x01, 21];
+    data.extend_from_slice(&[0x00; 21]);
+    assert!(detector.detect(&data).is_none());
+}

@@ -68,6 +68,7 @@
 - **tls/parser.rs**：新增 `parse_server_hello_alpn`（msg_type 0x02 校验 + 字段布局自洽校验 + ALPN 扩展提取，复用私有 `parse_alpn_extension`）。
 - **mod.rs**：detect/detect_with_context 接线解密富化——先客户端方向（ClientHello → sni/alpn/**ja4** + SNI 应用识别），失败再服务端方向（ServerHello → 仅 alpn，无 SNI/JA4）；解密失败静默降级为仅头部信息。QuicMetadata 增 `alpn`/`ja4` 字段（types.rs），JA4 与 TLS 路径同源（application::compute_ja4）。
 - **rule / CLI 消费**（2026-11-05）：rule 引擎 `sni_contains` 覆盖 QUIC SNI（lib.rs 规则分支追加 Initial 解密回退，`rule`+`tls`+`quic` 三 feature）；CLI 域名列识别 `Metadata::Quic`（rdpi.rs）。
+- **非 Initial 长包头识别**（2026-11-05）：`detect_other_long_header`（mod.rs）覆盖 0-RTT（0xD0）/Handshake（0xE0）/Retry（0xF0）/VN（version=0，不要求 Fixed Bit）——仅提取 version+DCID（`is_quic_long_header`/`parse_long_header_dcid`，parser.rs），无解密富化；version≠0 时要求 Fixed Bit=1，DCID 长度上限 20 校验。此前这些包全部漏判落入 guess 兜底。
 - 测试：crypto.rs 内单测（各 RFC 官方向量 + 服务端向量）+ parser.rs 单测（A.2 端到端、服务端 Initial 构造/解密/ALPN、detect 级 alpn 富化、SH 独立解析与拒绝）+ tests/test_quic.rs 集成（RFC 9001 A.2 1200 字节样本 → SNI "example.com"/ALPN "alpn"，篡改 1 字节降级）。
 
 ## 5. application 模块

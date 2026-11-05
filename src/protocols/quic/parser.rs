@@ -53,6 +53,28 @@ pub fn is_quic_initial(data: &[u8]) -> bool {
     !data.is_empty() && (data[0] & 0xF0) == 0xC0
 }
 
+/// 判断是否为 QUIC 长包头（Header Form bit = 1）
+///
+/// 覆盖 Initial/0-RTT/Handshake/Retry/Version Negotiation 全部长包头类型。
+/// VN 包 version=0 且不要求 Fixed Bit；其余类型由调用方结合 version 判定。
+pub fn is_quic_long_header(data: &[u8]) -> bool {
+    data.len() >= 5 && (data[0] & 0x80) != 0
+}
+
+/// 解析长包头 DCID（offset 5：1 字节长度 + DCID，0-20 字节）
+///
+/// Initial/0-RTT/Handshake/Retry/VN 共用此前缀。
+pub fn parse_long_header_dcid(data: &[u8]) -> Option<Vec<u8>> {
+    if data.len() < 6 {
+        return None;
+    }
+    let len = data[5] as usize;
+    if len > 20 || data.len() < 6 + len {
+        return None;
+    }
+    Some(data[6..6 + len].to_vec())
+}
+
 /// Parse QUIC version from packet
 ///
 /// For Long Header packets, version is at offset 1-4 (4 bytes, big-endian).
