@@ -10,6 +10,8 @@
 //! 性能说明：解密仅在 QUIC Initial 包上触发（每流至多数个包），会有少量堆分配
 //! （AES 轮密钥为栈上数组，明文/密文缓冲约 1-2 KiB），量级可接受且失败即降级。
 
+use super::parser::{QUIC_VERSION_1, QUIC_VERSION_2};
+
 /// AES S-box（FIPS-197 §5.1.1）
 const SBOX: [u8; 256] = [
     0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
@@ -528,8 +530,7 @@ fn decrypt_with_pn(
     aes128_gcm_decrypt(&keys.key, &nonce, &aad, ct, &tag)
 }
 
-/// 测试专用：GCM 加密（仅用于单元测试构造 Initial 包夹具，不属于库 API）
-#[cfg(test)]
+/// GCM 加密（用于 Retry 包完整性标签计算与单元测试夹具构造）
 pub(crate) fn aes128_gcm_encrypt(
     key: &[u8; 16],
     nonce: &[u8; 12],
@@ -574,6 +575,54 @@ pub(crate) fn aes128_gcm_encrypt(
         tag[j] = ek_j0[j] ^ s[j];
     }
     (ct, tag)
+}
+
+/// QUIC v1 Retry 完整性 AEAD 密钥（RFC 9001 §5.8）
+///
+/// 常数经双独立实现交叉验证：quic-go internal/handshake/retry.go 与
+/// aioquic quic/packet.py 逐字节一致。
+const RETRY_KEY_V1: [u8; 16] = [
+    0xbe, 0x0c, 0x69, 0x0b, 0x9f, 0x66, 0x57, 0x5a, 0x1d, 0x76, 0x6b, 0x54, 0xe3, 0x68, 0xc8, 0x4e,
+];
+/// QUIC v1 Retry 完整性 AEAD nonce（RFC 9001 §5.8，固定 12 字节）
+const RETRY_NONCE_V1: [u8; 12] = [
+    0x46, 0x15, 0x99, 0xd3, 0x5d, 0x63, 0x2b, 0xf2, 0x23, 0x98, 0x25, 0xbb,
+];
+/// QUIC v2 Retry 完整性 AEAD 密钥（RFC 9369，同上双源交叉验证）
+const RETRY_KEY_V2: [u8; 16] = [
+    0x8f, 0xb4, 0xb0, 0x1b, 0x56, 0xac, 0x48, 0xe2, 0x60, 0xfb, 0xcb, 0xce, 0xad, 0x7c, 0xcc, 0x92,
+];
+/// QUIC v2 Retry 完整性 AEAD nonce（RFC 9369，固定 12 字节）
+const RETRY_NONCE_V2: [u8; 12] = [
+    0xd8, 0x69, 0x69, 0xbc, 0x2d, 0x7c, 0x6d, 0x99, 0x90, 0xef, 0xb0, 0x4a,
+];
+
+/// 计算 QUIC Retry 包完整性标签（RFC 9001 §5.8）
+///
+/// AES-128-GCM，空明文，AAD = Retry 伪包：
+/// `odcid_len(1B) || odcid || retry_packet_without_tag`（ODCID 为客户端视角的
+/// 原始目的连接 ID，即触发 Retry 的客户端 Initial 包的 DCID）。
+///
+/// 返回 None 表示版本不支持（仅覆盖 QUIC v1/v2 标准常数，draft 版本常数
+/// 随版本演进、不做校验）。
+pub(crate) fn retry_integrity_tag(
+    retry_without_tag: &[u8],
+    odcid: &[u8],
+    version: u32,
+) -> Option<[u8; 16]> {
+    let (key, nonce) = match version {
+        QUIC_VERSION_1 => (&RETRY_KEY_V1, &RETRY_NONCE_V1),
+        QUIC_VERSION_2 => (&RETRY_KEY_V2, &RETRY_NONCE_V2),
+        _ => return None,
+    };
+    // 伪包：odcid_len || odcid || retry_without_tag（长度字段用 u8，ODCID ≤ 20 字节天然满足）
+    let mut pseudo = Vec::with_capacity(1 + odcid.len() + retry_without_tag.len());
+    pseudo.push(odcid.len() as u8);
+    pseudo.extend_from_slice(odcid);
+    pseudo.extend_from_slice(retry_without_tag);
+
+    let (_, tag) = aes128_gcm_encrypt(key, nonce, &pseudo, &[]);
+    Some(tag)
 }
 
 /// 测试专用：构造一个完整的受保护 QUIC v1 Initial 包（固定 4 字节 packet number）

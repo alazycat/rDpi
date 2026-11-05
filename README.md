@@ -14,7 +14,7 @@ Rust Deep Packet Inspection library - 轻量级、高性能的深度包检测库
 - **元数据提取**: DNS 域名、HTTP 方法/路径/Host、TLS SNI/版本/证书、QUIC 版本/连接 ID/SNI/ALPN/JA4/Transport Parameters、SSH 版本等
 - **应用识别**: TLS SNI → 应用归属（反向 Trie 域名匹配）
 - **流管理**: 五元组追踪、超时清理、容量上限（满载先清超时流，再按最久未活跃逐出）
-- **风险分析**（`risk` feature）: TLS/DNS/HTTP/行为/证书/QUIC 风险处理器（0-RTT 观测、非标准 draft 版本）
+- **风险分析**（`risk` feature）: TLS/DNS/HTTP/行为/证书/QUIC 风险处理器（0-RTT 观测、非标准 draft 版本、Retry 完整性校验 RFC 9001 §5.8）
 - **规则引擎**（`rule` feature）: 自定义匹配规则，支持 JSON 加载
 - **零拷贝设计，最小化分配**
 
@@ -56,7 +56,7 @@ fn main() -> rdpi::error::Result<()> {
 | `tls` | ✅ | TLS 协议检测，提取 SNI、版本、证书 |
 | `ssh` | ❌ | SSH 协议检测，提取协议和软件版本 |
 | `smtp` | ❌ | SMTP 协议检测，提取主机名 |
-| `quic` | ❌ | QUIC 协议检测：长包头全类型识别（Initial/0-RTT/Handshake/Retry/VN）+ Initial 包解密提取 SNI/ALPN/JA4（手写 AES-GCM/HKDF，零新增依赖） |
+| `quic` | ❌ | QUIC 协议检测：长包头全类型识别（Initial/0-RTT/Handshake/Retry/VN）+ Initial 包解密提取 SNI/ALPN/JA4 + Retry 完整性校验（手写 AES-GCM/HKDF，零新增依赖） |
 | `mail` | ❌ | POP3/POP3S/IMAP/IMAPS 协议检测 |
 | `infra` | ❌ | NTP/DHCP/BGP/NetFlow/IKE/PTPv2/DHCPv6/VXLAN |
 | `snmp` | ❌ | SNMP v1/v2c 检测，完整 PDU 解析 |

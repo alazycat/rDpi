@@ -469,7 +469,7 @@ const EXTENSION_TYPE_QUIC_TRANSPORT_PARAMS: u16 = 0x0039;
 ///
 /// 遍历方式与 parse_client_hello_extensions_for_alpn 一致（record 头 +
 /// 握手头 + 各字段跳过）；扩展越界即停止。未找到返回 None。
-fn find_client_hello_extension<'a>(data: &'a [u8], wanted: u16) -> Option<&'a [u8]> {
+fn find_client_hello_extension(data: &[u8], wanted: u16) -> Option<&[u8]> {
     let mut offset = 5; // Skip TLS record header
     offset += 4; // Skip handshake header
     offset += 2; // Skip client version

@@ -145,6 +145,91 @@ pub fn parse_varint(data: &[u8]) -> Option<(u64, usize)> {
     Some((value, length))
 }
 
+/// QUIC Retry 包解析结果（RFC 9000 §17.2.5）
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuicRetryInfo {
+    /// QUIC 版本号
+    pub version: u32,
+    /// 包头 DCID 字段（= 触发 Retry 的客户端 Initial 包的 SCID）
+    pub dcid: Vec<u8>,
+    /// 包头 SCID 字段（客户端后续 Initial 必须改用该值作为 DCID）
+    pub scid: Vec<u8>,
+    /// Retry Token（头部之后、完整性标签之前的全部字节）
+    pub token: Vec<u8>,
+    /// 包尾 16 字节完整性标签（RFC 9001 §5.8）
+    pub integrity_tag: [u8; 16],
+}
+
+/// Retry 包尾完整性标签长度（RFC 9001 §5.8）
+const RETRY_INTEGRITY_TAG_SIZE: usize = 16;
+
+/// 解析 QUIC Retry 包（仅结构自洽校验，不做完整性验证）
+///
+/// Retry 长包头无 Length 字段：DCID/SCID 之后到包尾 16 字节标签之前的
+/// 全部字节均为 Retry Token。
+///
+/// 类型位按版本区分（RFC 9000 §17.2.5 / RFC 9369 §3.2）：
+/// - QUIC v1：`(first_byte & 0x30) >> 4 == 0b11`（首字节 0xF0）
+/// - QUIC v2：`(first_byte & 0x30) >> 4 == 0b00`（首字节 0xC0，类型映射重排）
+///
+/// draft 版本与 v2 类型位语义不匹配（避免与 v1 Initial 冲突），返回 None。
+pub fn parse_retry_packet(data: &[u8]) -> Option<QuicRetryInfo> {
+    let version = parse_quic_version(data)?;
+    let is_retry_type = match version {
+        QUIC_VERSION_1 => (data[0] & 0x30) == 0x30,
+        QUIC_VERSION_2 => (data[0] & 0x30) == 0x00,
+        _ => return None, // draft 版本类型位语义随草稿演进，不解析
+    };
+    if !is_quic_long_header(data) || (data[0] & 0x40) == 0 || !is_retry_type {
+        return None;
+    }
+
+    // DCID / SCID（各 1 字节长度前缀 + 0-20 字节）
+    let dcid = parse_long_header_dcid(data)?;
+    let dcid_len = dcid.len();
+    let scid_len_off = 6 + dcid_len;
+    if data.len() < scid_len_off + 1 {
+        return None;
+    }
+    let scid_len = data[scid_len_off] as usize;
+    if scid_len > 20 || data.len() < scid_len_off + 1 + scid_len + RETRY_INTEGRITY_TAG_SIZE {
+        return None;
+    }
+    let scid = data[scid_len_off + 1..scid_len_off + 1 + scid_len].to_vec();
+    let token_end = data.len() - RETRY_INTEGRITY_TAG_SIZE;
+    let token = data[scid_len_off + 1 + scid_len..token_end].to_vec();
+    let mut integrity_tag = [0u8; 16];
+    integrity_tag.copy_from_slice(&data[token_end..]);
+
+    Some(QuicRetryInfo {
+        version,
+        dcid,
+        scid,
+        token,
+        integrity_tag,
+    })
+}
+
+/// 校验 QUIC Retry 包完整性（RFC 9001 §5.8）
+///
+/// AES-128-GCM：空明文、固定版本常数 key/nonce、AAD = Retry 伪包
+/// （`odcid_len || odcid || retry_packet_without_tag`）。ODCID 为触发 Retry 的
+/// 客户端 Initial 包的 DCID（DPI 场景下取自同一流的 Initial 元数据）。
+///
+/// 返回值：
+/// - `Some(true)`：完整性标签匹配
+/// - `Some(false)`：标签不匹配（伪造/注入或非标准实现）
+/// - `None`：无法判定（格式非法、版本不支持、ODCID 缺失），调用方不得据此报警
+pub fn verify_retry_integrity(retry_packet: &[u8], odcid: &[u8]) -> Option<bool> {
+    if odcid.is_empty() {
+        return None;
+    }
+    let info = parse_retry_packet(retry_packet)?;
+    let without_tag = &retry_packet[..retry_packet.len() - RETRY_INTEGRITY_TAG_SIZE];
+    let expected = crypto::retry_integrity_tag(without_tag, odcid, info.version)?;
+    Some(expected == info.integrity_tag)
+}
+
 /// Parse a QUIC Initial packet
 ///
 /// Long Header format:
@@ -444,6 +529,100 @@ pub fn decrypt_server_alpn(data: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ==== Retry 包 golden 向量（独立实现交叉验证生成）====
+    // 生成方式：Node.js OpenSSL（crypto.createCipheriv aes-128-gcm）按 RFC 9001 §5.8
+    // 计算；key/nonce 常数与伪包构造经 quic-go retry.go 与 aioquic packet.py 双源核对。
+    // ODCID = 0102030405060708；DCID = 11223344；SCID = aabbccddeeff0102；
+    // Token = 0x20..0x43（36 字节）。
+    const RETRY_V1: &str = "f000000001041122334408aabbccddeeff0102202122232425262728292a2b2c2d2e2f\
+303132333435363738393a3b3c3d3e3f4041424355a0da97d3ec181617daab18fc9a0334";
+    const RETRY_V2: &str = "c06b3343cf041122334408aabbccddeeff0102202122232425262728292a2b2c2d2e2f\
+303132333435363738393a3b3c3d3e3f40414243c1c2be270155ab0b9726e21aca703b27";
+    const ODCID: &str = "0102030405060708";
+
+    #[test]
+    fn test_parse_retry_packet_v1() {
+        let data = hex(RETRY_V1);
+        let info = parse_retry_packet(&data).expect("v1 Retry 应可解析");
+        assert_eq!(info.version, QUIC_VERSION_1);
+        assert_eq!(info.dcid, vec![0x11, 0x22, 0x33, 0x44]);
+        assert_eq!(
+            info.scid,
+            vec![0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x02]
+        );
+        assert_eq!(info.token.len(), 36);
+        assert_eq!(info.token[0], 0x20);
+        assert_eq!(info.token[35], 0x43);
+        assert_eq!(
+            info.integrity_tag,
+            [
+                0x55, 0xa0, 0xda, 0x97, 0xd3, 0xec, 0x18, 0x16, 0x17, 0xda, 0xab, 0x18, 0xfc, 0x9a,
+                0x03, 0x34
+            ]
+        );
+    }
+
+    #[test]
+    fn test_verify_retry_integrity_v1_golden() {
+        assert_eq!(
+            verify_retry_integrity(&hex(RETRY_V1), &hex(ODCID)),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn test_verify_retry_integrity_v2_golden() {
+        // v2 Retry 首字节 0xC0（RFC 9369 类型位映射重排），不得与 v1 Initial 混淆
+        assert_eq!(
+            verify_retry_integrity(&hex(RETRY_V2), &hex(ODCID)),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn test_verify_retry_integrity_tampered() {
+        let mut data = hex(RETRY_V1);
+        let last = data.len() - 1;
+        data[last] ^= 0x01;
+        assert_eq!(verify_retry_integrity(&data, &hex(ODCID)), Some(false));
+    }
+
+    #[test]
+    fn test_verify_retry_integrity_wrong_odcid() {
+        // ODCID 不匹配（伪包不同）→ 标签必然不匹配
+        let wrong = hex("0102030405060709");
+        assert_eq!(verify_retry_integrity(&hex(RETRY_V1), &wrong), Some(false));
+    }
+
+    #[test]
+    fn test_verify_retry_integrity_unsupported_version() {
+        // draft-29 Retry：常数未定义，返回 None（不报警）
+        let mut data = vec![0xF0, 0xff, 0x00, 0x00, 0x1d, 0x04, 0x11, 0x22, 0x33, 0x44];
+        data.extend_from_slice(&[0x8b; 20]);
+        assert_eq!(verify_retry_integrity(&data, &hex(ODCID)), None);
+    }
+
+    #[test]
+    fn test_verify_retry_integrity_truncated() {
+        let data = hex(RETRY_V1);
+        // 完整包 71 字节 = 头部(19) + token(36) + tag(16)；截断到头部后不足 16 字节
+        assert_eq!(verify_retry_integrity(&data[..20], &hex(ODCID)), None);
+    }
+
+    #[test]
+    fn test_verify_retry_integrity_empty_odcid() {
+        assert_eq!(verify_retry_integrity(&hex(RETRY_V1), &[]), None);
+    }
+
+    #[test]
+    fn test_parse_retry_v1_initial_is_not_retry() {
+        // v1 首字节 0xC0（类型位 00）是 Initial 而非 Retry（v2 语义不得套用到 v1）
+        let data = hex(RETRY_V2);
+        let mut v1_initial = data.clone();
+        v1_initial[1..5].copy_from_slice(&QUIC_VERSION_1.to_be_bytes());
+        assert_eq!(parse_retry_packet(&v1_initial), None);
+    }
 
     #[test]
     fn test_is_quic_initial_valid() {

@@ -42,11 +42,13 @@ pub enum RiskFlag {
     /// 明文 HTTP 传输密码字段
     ClearTextCredentials,
 
-    // === QUIC 安全 (2) ===
+    // === QUIC 安全 (3) ===
     /// QUIC 0-RTT 包（早期数据可重放，可能被用于绕过防护）
     QuicZeroRtt,
     /// QUIC 使用非标准 draft 版本（draft-28/29）
     QuicNonStandardVersion,
+    /// QUIC Retry 包完整性标签校验失败（RFC 9001 §5.8，可能为伪造/注入）
+    QuicRetryIntegrityFail,
 
     // === 网络行为 (5) ===
     /// 单向流量（连接无响应）
@@ -126,6 +128,7 @@ impl RiskFlag {
             RiskFlag::ClearTextCredentials => RiskSeverity::Critical,
             RiskFlag::QuicZeroRtt => RiskSeverity::Medium,
             RiskFlag::QuicNonStandardVersion => RiskSeverity::Low,
+            RiskFlag::QuicRetryIntegrityFail => RiskSeverity::Medium,
             RiskFlag::UnidirectionalTraffic => RiskSeverity::Medium,
             RiskFlag::PeriodicFlow => RiskSeverity::Low,
             RiskFlag::ProbingAttempt => RiskSeverity::High,
@@ -155,6 +158,7 @@ impl RiskFlag {
             RiskFlag::ClearTextCredentials => "clear_text_credentials",
             RiskFlag::QuicZeroRtt => "quic_zero_rtt",
             RiskFlag::QuicNonStandardVersion => "quic_non_standard_version",
+            RiskFlag::QuicRetryIntegrityFail => "quic_retry_integrity_fail",
             RiskFlag::UnidirectionalTraffic => "unidirectional_traffic",
             RiskFlag::PeriodicFlow => "periodic_flow",
             RiskFlag::ProbingAttempt => "probing_attempt",
