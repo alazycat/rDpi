@@ -9,7 +9,7 @@ mod parser;
 pub use certificate::{CertInfo, is_certificate_message, parse_certificate};
 pub use parser::{
     ClientHelloInfo, extract_sni, extract_tls_version, is_client_hello, is_tls_record,
-    iter_tls_records, parse_client_hello,
+    iter_tls_records, parse_client_hello, parse_server_hello_alpn,
 };
 
 use crate::protocols::Registry;

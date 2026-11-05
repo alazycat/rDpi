@@ -321,7 +321,7 @@ fn initial_salt(version: u32) -> Option<&'static [u8; 20]> {
     }
 }
 
-/// 派生的 QUIC Initial 保护密钥组（客户端方向）
+/// 派生的 QUIC Initial 保护密钥组（按包发送方向取对应 secret）
 pub(crate) struct InitialKeys {
     /// AEAD 密钥（"quic key"，16 字节）
     pub key: [u8; 16],
@@ -331,22 +331,36 @@ pub(crate) struct InitialKeys {
     pub hp: [u8; 16],
 }
 
-/// 派生客户端 Initial 密钥（RFC 9001 §5.2）
+/// Initial 包发送方向（RFC 9001 §5.2：client/server 两个方向的 secret 均派生自
+/// 同一 initial_secret，仅 Expand-Label 后缀不同）
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Side {
+    /// 客户端发出的 Initial（"client in"）
+    Client,
+    /// 服务端发出的 Initial（"server in"）；其 DCID 字段即 ODCID（客户端所选 CID），
+    /// 因此从包头 DCID 即可派生服务端密钥。
+    Server,
+}
+
+/// 按方向派生 Initial 密钥（RFC 9001 §5.2）
 ///
-/// initial_secret = HKDF-Extract(salt, DCID)
-/// client_secret  = HKDF-Expand-Label(initial_secret, "client in", "", 32)
-/// key/iv/hp      = HKDF-Expand-Label(client_secret, "quic key"/"quic iv"/"quic hp", "", len)
-pub(crate) fn derive_initial_keys(version: u32, dcid: &[u8]) -> Option<InitialKeys> {
+/// initial_secret = HKDF-Extract(salt, ODCID)
+/// <方向>secret   = HKDF-Expand-Label(initial_secret, "<client|server> in", "", 32)
+/// key/iv/hp      = HKDF-Expand-Label(<方向>secret, "quic key"/"quic iv"/"quic hp", "", len)
+pub(crate) fn derive_initial_keys(version: u32, dcid: &[u8], side: Side) -> Option<InitialKeys> {
     let salt = initial_salt(version)?;
     let initial_secret = hkdf_extract(salt, dcid);
-    let client_secret = hkdf_expand_label(&initial_secret, "client in", &[], 32);
-    let key: [u8; 16] = hkdf_expand_label(&client_secret, "quic key", &[], 16)
+    let secret = match side {
+        Side::Client => hkdf_expand_label(&initial_secret, "client in", &[], 32),
+        Side::Server => hkdf_expand_label(&initial_secret, "server in", &[], 32),
+    };
+    let key: [u8; 16] = hkdf_expand_label(&secret, "quic key", &[], 16)
         .try_into()
         .ok()?;
-    let iv: [u8; 12] = hkdf_expand_label(&client_secret, "quic iv", &[], 12)
+    let iv: [u8; 12] = hkdf_expand_label(&secret, "quic iv", &[], 12)
         .try_into()
         .ok()?;
-    let hp: [u8; 16] = hkdf_expand_label(&client_secret, "quic hp", &[], 16)
+    let hp: [u8; 16] = hkdf_expand_label(&secret, "quic hp", &[], 16)
         .try_into()
         .ok()?;
     Some(InitialKeys { key, iv, hp })
@@ -390,8 +404,9 @@ pub(crate) fn decrypt_initial_payload(
     pn_offset: usize,
     version: u32,
     dcid: &[u8],
+    side: Side,
 ) -> Option<Vec<u8>> {
-    let keys = derive_initial_keys(version, dcid)?;
+    let keys = derive_initial_keys(version, dcid, side)?;
     let (first, pn, pn_len) = remove_header_protection(&keys.hp, packet, pn_offset)?;
 
     // 候选数量上限：pn_len=4 时 raw 即完整 pn（仅 1 个候选）；否则最多 4 个候选
@@ -490,8 +505,14 @@ pub(crate) fn aes128_gcm_encrypt(
 /// 结构对齐真实 Initial 包：首字节 0xC3 + Version + DCID + SCID + Token + Length
 /// （2 字节 varint，覆盖 Packet Number + 载荷）+ 受保护的 Packet Number + 密文 + Tag。
 #[cfg(test)]
-pub(crate) fn build_initial_packet(version: u32, dcid: &[u8], pn: u32, frames: &[u8]) -> Vec<u8> {
-    let keys = derive_initial_keys(version, dcid).unwrap();
+pub(crate) fn build_initial_packet(
+    version: u32,
+    dcid: &[u8],
+    pn: u32,
+    frames: &[u8],
+    side: Side,
+) -> Vec<u8> {
+    let keys = derive_initial_keys(version, dcid, side).unwrap();
     const PN_LEN: usize = 4;
 
     // 未保护头部：0xC3 = Long Header + Initial + pn_len=4
@@ -699,9 +720,20 @@ mod tests {
     fn test_derive_initial_keys_rfc9001_appendix_a1() {
         // RFC 9001 附录 A.1 官方向量（经独立来源交叉核对）
         let dcid = hex("8394c8f03e515708");
-        let keys = derive_initial_keys(super::super::QUIC_VERSION_1, &dcid).unwrap();
+        let keys = derive_initial_keys(super::super::QUIC_VERSION_1, &dcid, Side::Client).unwrap();
         assert_eq!(to_hex(&keys.key), "1f369613dd76d5467730efcbe3b1a22d");
         assert_eq!(to_hex(&keys.iv), "fa044b2f42a3fd3b46fb255c");
         assert_eq!(to_hex(&keys.hp), "9f50449e04a0e810283a1e9933adedd2");
+    }
+
+    #[test]
+    fn test_derive_initial_keys_server_side() {
+        // 服务端方向：RFC 9001 §5.2 未发布计算值，用独立 Python 实现
+        // （hashlib HMAC 逐标签展开）交叉核对生成期望值
+        let dcid = hex("8394c8f03e515708");
+        let keys = derive_initial_keys(super::super::QUIC_VERSION_1, &dcid, Side::Server).unwrap();
+        assert_eq!(to_hex(&keys.key), "cf3a5331653c364c88f0f379b6067e37");
+        assert_eq!(to_hex(&keys.iv), "0ac1493ca1905853b0bba03e");
+        assert_eq!(to_hex(&keys.hp), "c206b8d9b9f0f37644430b490eeaa314");
     }
 }

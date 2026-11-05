@@ -61,12 +61,13 @@
 
 注：quic/snmp/modbus/ntp/dhcp 目录无 detector.rs，通过 `register()` 暴露的 detector 完成检测，与 http/tls 的三分文件模式不同（**[根据代码推断]**：各 mod.rs 内含 detector 实现，未逐一核对行号）。
 
-### quic 模块（2026-11-04 扩展：Initial 解密）
+### quic 模块（2026-11-04 扩展：Initial 解密；2026-11-05 扩展：服务端方向）
 
-- **crypto.rs**：全手写密码学（零新增依赖）——AES-128 核心（仅加密方向，FIPS-197 向量）、GCM/GHASH（NIST SP 800-38D 向量）、HMAC-SHA256/HKDF（RFC 4231/5869 向量）、QUIC Initial 密钥派生 + 头保护移除 + 载荷 AEAD 解密（RFC 9001 §A.1 向量）；支持 QUIC v1/v2/draft-29/draft-28 四套 salt。
-- **parser.rs**：`decrypt_initial`（解密受保护载荷）、`parse_crypto_frames`（提取 CRYPTO 帧拼接）、`decrypt_client_hello`（feature=tls，CRYPTO 载荷套假 record 头复用 `tls::parse_client_hello`）。
-- **mod.rs**：detect/detect_with_context 接线解密富化——解出 ClientHello 后填 QuicMetadata.sni/alpn，SNI 走 `application::identify` 识别应用；解密失败静默降级为仅头部信息。QuicMetadata 新增 `alpn` 字段（types.rs）。
-- 测试：crypto.rs 内单测（各 RFC 官方向量）+ tests/test_quic.rs 端到端（RFC 9001 A.2 1200 字节样本 → SNI "example.com"/ALPN "alpn"，篡改 1 字节降级）。
+- **crypto.rs**：全手写密码学（零新增依赖）——AES-128 核心（仅加密方向，FIPS-197 向量）、GCM/GHASH（NIST SP 800-38D 向量）、HMAC-SHA256/HKDF（RFC 4231/5869 向量）、QUIC Initial 密钥派生 + 头保护移除 + 载荷 AEAD 解密（RFC 9001 §A.1 客户端方向向量 + §5.2 服务端方向经独立 Python 实现交叉核对）；支持 QUIC v1/v2/draft-29/draft-28 四套 salt；`Side::{Client,Server}` 双方向（server secret = "server in" label，密钥材料均取自包头 DCID 字段）。
+- **parser.rs**：`decrypt_initial`（客户端方向）、`decrypt_initial_server`（服务端方向，DCID 字段即 ODCID）、`parse_crypto_frames`（提取 CRYPTO 帧拼接）、`decrypt_client_hello`（feature=tls，套假 record 头复用 `tls::parse_client_hello`）、`decrypt_server_alpn`（feature=tls，复用 `tls::parse_server_hello_alpn`）。
+- **tls/parser.rs**：新增 `parse_server_hello_alpn`（msg_type 0x02 校验 + 字段布局自洽校验 + ALPN 扩展提取，复用私有 `parse_alpn_extension`）。
+- **mod.rs**：detect/detect_with_context 接线解密富化——先客户端方向（ClientHello → sni/alpn + SNI 应用识别），失败再服务端方向（ServerHello → 仅 alpn，无 SNI）；解密失败静默降级为仅头部信息。QuicMetadata 增 `alpn` 字段（types.rs）。
+- 测试：crypto.rs 内单测（各 RFC 官方向量 + 服务端向量）+ parser.rs 单测（A.2 端到端、服务端 Initial 构造/解密/ALPN、detect 级 alpn 富化、SH 独立解析与拒绝）+ tests/test_quic.rs 集成（RFC 9001 A.2 1200 字节样本 → SNI "example.com"/ALPN "alpn"，篡改 1 字节降级）。
 
 ## 5. application 模块
 

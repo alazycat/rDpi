@@ -239,7 +239,7 @@ pub fn version_to_string(version: u32) -> Option<String> {
     }
 }
 
-/// 解密 QUIC Initial 包，返回明文帧数据（RFC 9001 §5）
+/// 解密客户端方向 QUIC Initial 包，返回明文帧数据（RFC 9001 §5）
 ///
 /// 派生客户端 Initial 密钥（"client in"），移除头保护并做 AES-128-GCM 认证解密。
 /// 服务端 Initial 或标签校验失败返回 None（调用方降级为仅头部信息）。
@@ -250,7 +250,31 @@ pub fn decrypt_initial(data: &[u8]) -> Option<Vec<u8>> {
     // 包边界：Length 覆盖 Packet Number + Payload；越界/异常长度按实际数据截断
     let packet_len = usize::try_from(packet_len).ok()?;
     let end = (pn_offset + packet_len).min(data.len());
-    crypto::decrypt_initial_payload(&data[..end], pn_offset, info.version, &info.dcid)
+    crypto::decrypt_initial_payload(
+        &data[..end],
+        pn_offset,
+        info.version,
+        &info.dcid,
+        crypto::Side::Client,
+    )
+}
+
+/// 解密服务端方向 QUIC Initial 包，返回明文帧数据（RFC 9001 §5）
+///
+/// 服务端 Initial 的 DCID 字段即 ODCID（客户端所选 CID），因此直接从包头
+/// DCID 用 "server in" secret 派生密钥即可解密；其 CRYPTO 帧载荷为 ServerHello。
+/// 解密失败返回 None。
+pub fn decrypt_initial_server(data: &[u8]) -> Option<Vec<u8>> {
+    let (info, pn_offset, packet_len) = parse_initial_header(data)?;
+    let packet_len = usize::try_from(packet_len).ok()?;
+    let end = (pn_offset + packet_len).min(data.len());
+    crypto::decrypt_initial_payload(
+        &data[..end],
+        pn_offset,
+        info.version,
+        &info.dcid,
+        crypto::Side::Server,
+    )
 }
 
 /// 从解密后的 QUIC 帧数据中提取 CRYPTO 帧（帧类型 0x06）载荷
@@ -316,6 +340,30 @@ pub fn decrypt_client_hello(data: &[u8]) -> Option<crate::protocols::tls::Client
     record.extend_from_slice(&crypto);
 
     crate::protocols::tls::parse_client_hello(&record)
+}
+
+/// 解密服务端 Initial 包并从 CRYPTO 帧的 ServerHello 提取 ALPN（需要 tls feature）
+///
+/// 服务端 Initial 的 CRYPTO 帧载荷为 ServerHello（RFC 9000 §7.2：QUIC 握手强制
+/// 携带 ALPN）；ServerHello 无 SNI，故本函数仅返回 ALPN。
+#[cfg(feature = "tls")]
+pub fn decrypt_server_alpn(data: &[u8]) -> Option<String> {
+    let plaintext = decrypt_initial_server(data)?;
+    let crypto = parse_crypto_frames(&plaintext)?;
+
+    // 裸握手消息：type(1B) + length(3B)，ServerHello type = 0x02
+    if crypto.len() < 4 || crypto[0] != 0x02 {
+        return None;
+    }
+    let hs_len = crypto.len();
+    if hs_len > 0xffff {
+        return None;
+    }
+    let mut record = Vec::with_capacity(5 + hs_len);
+    record.extend_from_slice(&[0x16, 0x03, 0x03, (hs_len >> 8) as u8, (hs_len & 0xff) as u8]);
+    record.extend_from_slice(&crypto);
+
+    crate::protocols::tls::parse_server_hello_alpn(&record)
 }
 
 #[cfg(test)]
@@ -478,7 +526,7 @@ mod tests {
         // 官方样例：Length = 0x449e = 1182 = pn(4) + 载荷 + tag(16)
         let pad_len = 1182 - 4 - 16 - frame.len();
         let frames = [frame, vec![0u8; pad_len]].concat();
-        crypto::build_initial_packet(QUIC_VERSION_1, &dcid, 2, &frames)
+        crypto::build_initial_packet(QUIC_VERSION_1, &dcid, 2, &frames, crypto::Side::Client)
     }
 
     #[test]
@@ -508,6 +556,111 @@ mod tests {
         let packet = make_a2_sample_packet();
         println!("A2_FIXTURE_LEN={}", packet.len());
         println!("A2_FIXTURE={}", to_hex(&packet));
+    }
+
+    /// 构造最小 ServerHello（RFC 8446 §4.1.3，QUIC 形态：32B session_id_echo，
+    /// compression 0x00，仅 ALPN 扩展携带 "h3"）
+    fn make_server_hello() -> Vec<u8> {
+        let mut sh = Vec::new();
+        sh.push(0x02); // msg_type ServerHello
+        sh.extend_from_slice(&[0x00, 0x00, 0x00]); // 握手长度占位，最后回填
+        sh.extend_from_slice(&[0x03, 0x03]); // legacy_version
+        sh.extend_from_slice(&[0x11u8; 32]); // random
+        sh.push(32); // legacy_session_id_echo 长度
+        sh.extend_from_slice(&[0x22u8; 32]);
+        sh.extend_from_slice(&[0x13, 0x01]); // cipher_suite TLS_AES_128_GCM_SHA256
+        sh.extend_from_slice(&[0x01, 0x00]); // legacy_compression_methods: 1 种，0x00
+        // 扩展区：总长(2B) + ALPN 扩展（type 0x0010 + len 5 + 数据）
+        let ext_data: [u8; 5] = [0x00, 0x03, 0x02, 0x68, 0x33]; // list_len=3, name_len=2, "h3"
+        let exts_len = (4 + ext_data.len()) as u16;
+        sh.extend_from_slice(&exts_len.to_be_bytes());
+        sh.extend_from_slice(&[0x00, 0x10]);
+        sh.extend_from_slice(&[0x00, 0x05]);
+        sh.extend_from_slice(&ext_data);
+
+        // 回填握手长度（3 字节大端）
+        let hs_len = sh.len() - 4;
+        sh[1..4].copy_from_slice(&[(hs_len >> 16) as u8, (hs_len >> 8) as u8, hs_len as u8]);
+        sh
+    }
+
+    /// 构造服务端 Initial 包（服务端密钥加密，CRYPTO 帧 = ServerHello）
+    fn make_server_initial_packet() -> Vec<u8> {
+        let dcid = hex("8394c8f03e515708"); // 即 ODCID（服务端包 DCID = 客户端所选 CID）
+        let sh = make_server_hello();
+        // CRYPTO 帧：type 0x06 + offset(0x00) + length varint + ServerHello
+        let mut frame = vec![0x06, 0x00];
+        let hs_len = sh.len();
+        if hs_len < 64 {
+            frame.push(hs_len as u8);
+        } else {
+            // 2 字节 varint（hs_len < 16383）
+            frame.push(0x40 | ((hs_len >> 8) as u8));
+            frame.push((hs_len & 0xff) as u8);
+        }
+        frame.extend_from_slice(&sh);
+        crypto::build_initial_packet(QUIC_VERSION_1, &dcid, 1, &frame, crypto::Side::Server)
+    }
+
+    #[test]
+    fn test_decrypt_server_initial_and_extract_alpn() {
+        let packet = make_server_initial_packet();
+
+        // 客户端密钥无法解密服务端包（tag 校验失败）
+        assert!(decrypt_initial(&packet).is_none());
+
+        // 服务端密钥解密成功，CRYPTO 帧 = ServerHello
+        let plaintext =
+            decrypt_initial_server(&packet).expect("服务端 Initial 应能以服务端密钥解密");
+        let crypto = parse_crypto_frames(&plaintext).expect("应提取出 CRYPTO 帧载荷");
+        assert_eq!(crypto[0], 0x02); // ServerHello
+
+        // 端到端：解密 → CRYPTO 帧 → TLS ServerHello → ALPN
+        #[cfg(feature = "tls")]
+        {
+            let alpn = decrypt_server_alpn(&packet).expect("应解析出 ServerHello ALPN");
+            assert_eq!(alpn, "h3");
+        }
+    }
+
+    /// 检测器级：服务端 Initial 经 detect() 富化出 ALPN（sni 保持 None）
+    #[test]
+    #[cfg(feature = "tls")]
+    fn test_detect_server_initial_yields_alpn() {
+        use super::super::QuicDetector;
+        use crate::core::types::{Confidence, Metadata, Protocol};
+        use crate::protocols::ProtocolDetector;
+
+        let packet = make_server_initial_packet();
+        let result = QuicDetector::new().detect(&packet).expect("应识别为 QUIC");
+        assert_eq!(result.protocol, Protocol::Quic);
+        assert_eq!(result.confidence, Confidence::Dpi);
+        match result.metadata {
+            Metadata::Quic(meta) => {
+                assert!(meta.sni.is_none(), "ServerHello 无 SNI");
+                assert_eq!(meta.alpn.as_deref(), Some("h3"));
+            }
+            other => panic!("期望 Quic 元数据，实际 {:?}", other),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "tls")]
+    fn test_parse_server_hello_alpn_standalone() {
+        let sh = make_server_hello();
+        let mut record = vec![0x16, 0x03, 0x03, (sh.len() >> 8) as u8, sh.len() as u8];
+        record.extend_from_slice(&sh);
+        assert_eq!(
+            crate::protocols::tls::parse_server_hello_alpn(&record).as_deref(),
+            Some("h3")
+        );
+
+        // 非 ServerHello（ClientHello type 0x01）拒绝
+        let mut ch = sh;
+        ch[0] = 0x01;
+        let mut rec2 = vec![0x16, 0x03, 0x03, (ch.len() >> 8) as u8, ch.len() as u8];
+        rec2.extend_from_slice(&ch);
+        assert!(crate::protocols::tls::parse_server_hello_alpn(&rec2).is_none());
     }
 
     #[test]

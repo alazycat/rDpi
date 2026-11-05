@@ -35,17 +35,23 @@ impl Default for QuicDetector {
 
 use crate::core::types::{Application, DetectContext};
 
-/// 尝试解密 Initial 包提取 TLS ClientHello 元数据（SNI, ALPN, 应用识别）
+/// 尝试解密 Initial 包提取 TLS 元数据（SNI, ALPN, 应用识别）
 ///
-/// 仅在 QUIC v1 上生效；解密失败/非 ClientHello/未启用 tls feature 时返回 None，
-/// 调用方降级为仅头部信息（性能：仅 Initial 包触发，失败路径为常数次 AES 尝试）。
+/// 先按客户端方向解（ClientHello → SNI/ALPN/应用识别），失败再按服务端方向
+/// 解（ServerHello → 仅 ALPN）。解密失败/未启用 tls feature 时返回 None，
+/// 调用方降级为仅头部信息（性能：仅 Initial 包触发，两条方向路径为常数次 AES 尝试）。
 #[cfg(feature = "tls")]
 fn try_extract_tls_meta(
     payload: &[u8],
 ) -> Option<(Option<String>, Option<String>, Option<Application>)> {
-    let ch = parser::decrypt_client_hello(payload)?;
-    let application = ch.sni.as_deref().and_then(crate::application::identify);
-    Some((ch.sni, ch.alpn, application))
+    // 客户端 Initial：CRYPTO 帧为 ClientHello
+    if let Some(ch) = parser::decrypt_client_hello(payload) {
+        let application = ch.sni.as_deref().and_then(crate::application::identify);
+        return Some((ch.sni, ch.alpn, application));
+    }
+    // 服务端 Initial：CRYPTO 帧为 ServerHello（无 SNI，仅 ALPN）
+    let alpn = parser::decrypt_server_alpn(payload)?;
+    Some((None, Some(alpn), None))
 }
 
 /// 非 tls feature 下无 ClientHello 提取能力（保持降级行为一致）

@@ -256,6 +256,61 @@ fn parse_sni_extension(data: &[u8]) -> Option<String> {
     String::from_utf8(name_bytes.to_vec()).ok()
 }
 
+/// 解析 TLS ServerHello 提取 ALPN（QUIC 服务端 Initial 富化用）
+///
+/// 输入格式与 [`parse_client_hello`] 一致：5 字节 record 头 + 握手消息。
+/// ServerHello（msg_type 0x02，RFC 8446 §4.1.3）依次为 legacy_version(2B)、
+/// random(32B)、legacy_session_id_echo、cipher_suite(2B)、
+/// legacy_compression_methods、Extensions(2B 长度 + 列表)。
+/// 仅提取 ALPN 扩展（0x0010）——QUIC ServerHello 必带 ALPN，且无 SNI 可取。
+pub fn parse_server_hello_alpn(data: &[u8]) -> Option<String> {
+    // record 头(5B) + 握手头(4B) + legacy_version(2B) + random(32B) + sid_len(1B)
+    if data.len() < 44 || data[0] != 0x16 || data[5] != 0x02 {
+        return None;
+    }
+    // 握手消息长度自洽校验（3 字节大端）
+    let hs_len = ((data[6] as usize) << 16) | ((data[7] as usize) << 8) | data[8] as usize;
+    if 9 + hs_len > data.len() {
+        return None;
+    }
+
+    let mut offset = 9;
+    offset += 2; // legacy_version
+    offset += 32; // random
+    // legacy_session_id_echo：长度 0-32
+    let sid_len = data[offset] as usize;
+    offset += 1 + sid_len;
+    if sid_len > 32 || offset + 4 > data.len() {
+        return None;
+    }
+    offset += 2; // cipher_suite
+    // legacy_compression_methods：TLS 1.3 必为 1 字节 0x00
+    let comp_len = data[offset] as usize;
+    offset += 1;
+    if comp_len != 1 || offset + comp_len + 2 > 9 + hs_len {
+        return None;
+    }
+    offset += comp_len;
+
+    // extensions：2 字节总长 + 列表
+    let exts_len = u16_from_be(&data[offset..offset + 2]) as usize;
+    offset += 2;
+    let end = (offset + exts_len).min(9 + hs_len);
+    while offset + 4 <= end {
+        let ext_type = u16_from_be(&data[offset..offset + 2]);
+        let ext_len = u16_from_be(&data[offset + 2..offset + 4]) as usize;
+        offset += 4;
+        if offset + ext_len > end {
+            return None;
+        }
+        if ext_type == 0x0010 {
+            return parse_alpn_extension(&data[offset..offset + ext_len]);
+        }
+        offset += ext_len;
+    }
+    None
+}
+
 /// 解析 ALPN 扩展
 ///
 /// ALPN 扩展格式:
