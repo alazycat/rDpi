@@ -764,3 +764,145 @@ fn test_detector_tls_ja4s_enrich_once() {
         assert_eq!(meta.ja4s.as_deref(), Some("t1302h2_1302_60694de2240d"));
     }
 }
+
+// ============================================================================
+// JA4X 证书指纹测试（F32）
+// ============================================================================
+
+/// 追加单 CN 属性的 Name（SEQUENCE { SET { SEQUENCE { OID 2.5.4.3, UTF8String } } }）
+fn append_dn_cn(data: &mut Vec<u8>, cn: &str) {
+    let mut attr = Vec::new();
+    attr.extend_from_slice(&[0x06, 0x03, 0x55, 0x04, 0x03]); // OID commonName
+    attr.push(0x0C); // UTF8String
+    attr.push(cn.len() as u8);
+    attr.extend_from_slice(cn.as_bytes());
+
+    let mut seq = vec![0x30, attr.len() as u8];
+    seq.extend_from_slice(&attr);
+    let mut set = vec![0x31, seq.len() as u8];
+    set.extend_from_slice(&seq);
+    let mut dn = vec![0x30, set.len() as u8];
+    dn.extend_from_slice(&set);
+    data.extend_from_slice(&dn);
+}
+
+/// 构造 TLS Certificate 记录（简化 v3 证书：issuer/subject 均为单 CN 属性、无扩展）
+fn make_certificate_record() -> Vec<u8> {
+    let mut tbs_inner = Vec::new();
+    tbs_inner.extend_from_slice(&[0xA0, 0x03, 0x02, 0x01, 0x02]); // version [0] v3
+    tbs_inner.extend_from_slice(&[0x02, 0x01, 0x01]); // serialNumber INTEGER 1
+    // signature SEQUENCE { OID 1.2.840.113549.1.1.11 }
+    tbs_inner.extend_from_slice(&[
+        0x30, 0x0D, 0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B, 0x05, 0x00,
+    ]);
+    append_dn_cn(&mut tbs_inner, "CA Inc"); // issuer
+    // validity SEQUENCE { UTCTime, UTCTime }
+    tbs_inner.extend_from_slice(&[
+        0x30, 0x1E, 0x17, 0x0D, b'2', b'4', b'0', b'3', b'0', b'9', b'1', b'2', b'0', b'0', b'0',
+        b'0', b'Z', 0x17, 0x0D, b'2', b'5', b'0', b'3', b'0', b'9', b'1', b'2', b'0', b'0', b'0',
+        b'0', b'Z',
+    ]);
+    append_dn_cn(&mut tbs_inner, "example.com"); // subject
+
+    let mut tbs = vec![0x30, 0x00];
+    tbs.extend_from_slice(&tbs_inner);
+    tbs[1] = (tbs.len() - 2) as u8;
+
+    let mut cert = vec![0x30, 0x00];
+    cert.extend_from_slice(&tbs);
+    cert[1] = (cert.len() - 2) as u8;
+
+    // TLS 记录封装：Handshake Certificate(0x0B) + 证书列表
+    let mut handshake = Vec::new();
+    handshake.push(0x0B); // Certificate
+    handshake.extend_from_slice(&[0x00, 0x00, (cert.len() + 6) as u8]); // handshake length
+    handshake.extend_from_slice(&[0x00, 0x00, cert.len() as u8]); // list length
+    handshake.extend_from_slice(&[0x00, 0x00, cert.len() as u8]); // cert entry length
+    handshake.extend_from_slice(&cert);
+
+    let mut record = Vec::new();
+    record.push(0x16); // Handshake
+    record.push(0x03);
+    record.push(0x03);
+    record.extend_from_slice(&((handshake.len()) as u16).to_be_bytes());
+    record.extend_from_slice(&handshake);
+    record
+}
+
+/// 纯 Certificate 记录的服务端流：定型 TLS + 证书字段含 JA4X
+/// golden 向量：sha256("550403")[:12] 两段 + 空扩展全零段（PowerShell .NET SHA256 交叉验证）
+#[test]
+fn test_tls_detector_certificate_yields_ja4x() {
+    let detector = TlsDetector::new();
+    let record = make_certificate_record();
+
+    let result = detector.detect(&record).expect("应识别为 TLS");
+    assert_eq!(result.protocol, Protocol::Tls);
+    if let Metadata::Tls(meta) = result.metadata {
+        assert_eq!(meta.cert_subject.as_deref(), Some("example.com"));
+        assert_eq!(meta.cert_issuer.as_deref(), Some("CA Inc"));
+        assert_eq!(
+            meta.cert_ja4x.as_deref(),
+            Some("7022c563de38_7022c563de38_000000000000")
+        );
+        assert!(meta.ja4.is_none());
+        assert!(meta.ja4s.is_none(), "证书记录不含 ServerHello");
+    } else {
+        panic!("Expected TLS metadata");
+    }
+}
+
+/// 一次性富化语义（ADR-0004）：定型 TLS 流的后续包携带 Certificate 时补算 JA4X，
+/// 已有元数据（SNI）保持不覆盖；后续包 JA4X 持久
+#[test]
+fn test_detector_tls_ja4x_enrich_once() {
+    let mut detector = rdpi::Detector::new();
+
+    // 先用 ClientHello 定型 TLS 流（此时无证书字段）
+    let ch_packet = build_tcp_packet(
+        [10, 0, 0, 1],
+        54321,
+        [10, 0, 0, 2],
+        443,
+        &make_client_hello_with_sni("example.com"),
+    );
+    let r1 = detector.detect(&ch_packet).unwrap().unwrap();
+    if let Metadata::Tls(ref meta) = r1.metadata {
+        assert!(meta.cert_ja4x.is_none());
+    }
+
+    // 同一流后续包携带 Certificate → 富化补算 JA4X
+    let cert_packet = build_tcp_packet(
+        [10, 0, 0, 1],
+        54321,
+        [10, 0, 0, 2],
+        443,
+        &make_certificate_record(),
+    );
+    let r2 = detector.detect(&cert_packet).unwrap().unwrap();
+    if let Metadata::Tls(ref meta) = r2.metadata {
+        assert_eq!(
+            meta.cert_ja4x.as_deref(),
+            Some("7022c563de38_7022c563de38_000000000000"),
+            "富化路径应补算 JA4X"
+        );
+        assert_eq!(meta.sni.as_deref(), Some("example.com"), "SNI 保持");
+    }
+
+    // 再来一个应用数据包：JA4X 保持
+    let app_packet = build_tcp_packet(
+        [10, 0, 0, 1],
+        54321,
+        [10, 0, 0, 2],
+        443,
+        &[0x17, 0x03, 0x03, 0x00, 0x00],
+    );
+    let r3 = detector.detect(&app_packet).unwrap().unwrap();
+    if let Metadata::Tls(ref meta) = r3.metadata {
+        assert_eq!(
+            meta.cert_ja4x.as_deref(),
+            Some("7022c563de38_7022c563de38_000000000000"),
+            "回显包应携带已保存的 JA4X"
+        );
+    }
+}

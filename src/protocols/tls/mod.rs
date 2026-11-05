@@ -123,6 +123,7 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
                 tls_meta.cert_issuer = cert_info.issuer;
                 tls_meta.cert_valid_from = cert_info.not_before;
                 tls_meta.cert_valid_to = cert_info.not_after;
+                tls_meta.cert_ja4x = cert_info.ja4x;
             }
         }
 
@@ -130,6 +131,7 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
         if tls_meta.sni.is_none()
             && tls_meta.version.is_none()
             && tls_meta.cert_subject.is_none()
+            && tls_meta.cert_ja4x.is_none()
             && tls_meta.ja4s.is_none()
         {
             return None;

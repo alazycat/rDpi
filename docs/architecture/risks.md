@@ -239,3 +239,15 @@
   - Metadata：`HttpMetadata.ja4h`（types.rs）。
 - **测试**：compute_ja4h 7 项（基础 GET/POST+cookie+referer+语言 golden 向量、cookie 顺序不敏感、头序敏感、版本编码、语言补齐、伪头部排除）；parse_header_lines 3 项；Detector 级 4 项（请求携带/响应 None/cookie 语义/全链路回显持久）。**golden 向量经 PowerShell .NET SHA256 独立实现交叉验证**（同 F30 做法）。共 14 项新增，默认 288 / all-features 1090 / risk 333 全绿；clippy --all-features --all-targets 0 警告。
 - **已知边界**：头部区域跨 TCP 分段仅解析当前包内完整行（与 SNI 同策略）；识别仅在流首请求包发生（流协议一次定型），中间流已定型后新请求不再重算——与流模型语义一致。
+
+## F32【中】JA4X X.509 证书指纹（2026-11-05，新功能开发）—— ✅ 已完成
+
+- **背景**：JA4 家族第四个成员（JA4 客户端 TLS + JA4S 服务端 TLS（F30）+ JA4H 客户端 HTTP（F31）已有）。JA4X 基于证书内 issuer/subject DN 的 OID 序列与扩展 OID 序列指纹化证书本身，复用既有 asn1 BER 解析与 F3 证书富化路径，无新依赖。
+- **规格来源**：FoxIO 官方 [rust/ja4x](https://github.com/FoxIO-LLC/ja4)（权威实现，ja4x.py 语义等价），格式 `{issuer哈希12hex}_{subject哈希12hex}_{扩展哈希12hex}`。每段为 SHA-256 前 12 位，输入为 OID **DER 内容字节**的小写 hex 逗号拼接（如 commonName 2.5.4.3 → "550403"），按证书 DER 出现顺序不排序；issuer/subject 取 Name 全部 AttributeTypeAndValue（含国家/组织，不过滤）；扩展取 TBSCertificate `[3]` 中各 Extension 的 extnID；**空列表记 12 个 0**（官方 hash12 语义，区别于 JA4/JA4S 的 sha256("")）。
+- **实现**：
+  - [application/ja4.rs](file:///d:/rust_code/rDpi/src/application/ja4.rs) `compute_ja4x(issuer_oids, subject_oids, extension_oids)` + `hash12_oids`（与 ja4/ja4s/ja4h 同文件）。
+  - [tls/certificate.rs](file:///d:/rust_code/rDpi/src/protocols/tls/certificate.rs) `extract_dn` 扩展为同时返回 OID 内容字节列表（单次遍历）；新增 `extract_extension_oids`（`[3] EXPLICIT` 双层解封装：A3 → SEQUENCE OF → Extension → extnID）；`CertInfo.ja4x` 解析期一次算好。
+  - 接入：tls detector 识别路径（tls/mod.rs，`cert_ja4x` 计入非空判定）+ [lib.rs](file:///d:/rust_code/rDpi/src/lib.rs) `enrich_tls_cert` 回显一次性富化（对齐 ADR-0004，协议不重检）。
+  - Metadata：`TlsMetadata.cert_ja4x`（types.rs，json feature 随 derive 序列化）。
+- **测试**：compute_ja4x 4 项（**官方 FoxIO rust/ja4x hash12 黄金向量** `hash12("551d0f,551d25,551d11")="aae71e8db6d7"`、空列表全零、DN OID 编码、顺序敏感）；certificate.rs 2 项（CN-only golden 向量、v3 扩展证书）；tests/test_tls.rs 2 项（纯 Certificate 记录定型 TLS + cert_ja4x、enrich 一次性富化 + SNI 保持 + 回显持久）。golden 向量经 PowerShell .NET SHA256 独立交叉验证。共 8 项新增，默认 296 / all-features 1098 / risk 341 全绿；clippy --all-features --all-targets 0 警告。
+- **已知边界**：扩展 OID 跨包分段随整个证书解析失败而放弃（与既有证书解析同策略）；QUIC 证书在加密握手包内，本路径不覆盖（QUIC 侧无证书解析）；多值 RDN（SET 内多属性）按属性顺序逐个收集，与官方 tshark 抽取的计数口径一致。测试构造器教训：DER 长度 ≥ 0x80 必须用长格式（`0x81` 前缀），单字节直写 0x8x 会被解码器按 long-form 误读（`0x8a` = 长 10 字节）。

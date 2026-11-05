@@ -260,6 +260,8 @@ pub struct TlsMetadata {
     pub cert_valid_from: Option<u64>,
     /// 证书有效期截止 (Unix timestamp)
     pub cert_valid_to: Option<u64>,
+    /// JA4X 证书指纹（issuer/subject/扩展 OID 哈希，仅证书解析路径产出）
+    pub cert_ja4x: Option<String>,
 }
 
 /// HTTP 元数据

@@ -119,6 +119,7 @@ mod tests {
             cert_issuer: i.map(String::from),
             cert_valid_from: f,
             cert_valid_to: t,
+            cert_ja4x: None,
         }));
         f2
     }

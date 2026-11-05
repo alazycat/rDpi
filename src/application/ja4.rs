@@ -270,6 +270,47 @@ pub fn compute_ja4h(method: &str, version: &str, headers: &[(String, String)]) -
     )
 }
 
+// ==== JA4X：X.509 证书指纹（FoxIO JA4+ 家族，对应官方 ja4x.py / rust/ja4x）====
+
+/// 计算 JA4X X.509 证书指纹
+///
+/// 格式：`{issuer哈希12hex}_{subject哈希12hex}_{扩展哈希12hex}`
+///
+/// 官方语义（FoxIO rust/ja4x 权威实现）：
+/// - 每段为 SHA-256 前 12 位 hex，输入为 OID **DER 内容字节**的小写 hex 串
+///   逗号拼接（如 commonName 2.5.4.3 → "550403"），按证书 DER 中出现顺序；
+/// - issuer/subject 取 Name 中全部 AttributeTypeAndValue 的 OID（含国家/组织），
+///   扩展取 TBSCertificate `[3]` 中各 Extension 的 OID，均不排序、不过滤；
+/// - 空列表记 12 个 0（区别于 JA4/JA4S 的 sha256("") 语义——官方 hash12 明确空串返回零）；
+/// - 不含签名算法、公钥、扩展值，仅 OID 结构本身是指纹信号。
+///
+/// # 参数
+///
+/// * `issuer_oids` - issuer Name 的 OID 内容字节列表（DER 顺序）
+/// * `subject_oids` - subject Name 的 OID 内容字节列表（DER 顺序）
+/// * `extension_oids` - 证书扩展 OID 内容字节列表（DER 顺序）
+pub fn compute_ja4x(
+    issuer_oids: &[Vec<u8>],
+    subject_oids: &[Vec<u8>],
+    extension_oids: &[Vec<u8>],
+) -> String {
+    format!(
+        "{}_{}_{}",
+        hash12_oids(issuer_oids),
+        hash12_oids(subject_oids),
+        hash12_oids(extension_oids)
+    )
+}
+
+/// OID 列表 → 12 位哈希段：DER 内容字节 hex 逗号拼接后 SHA-256 截断；空列表为 12 个 0
+fn hash12_oids(oids: &[Vec<u8>]) -> String {
+    if oids.is_empty() {
+        return "000000000000".to_string();
+    }
+    let joined = oids.iter().map(hex::encode).collect::<Vec<_>>().join(",");
+    trunc_hash_hex(joined.as_bytes(), 12)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -517,5 +558,56 @@ mod tests {
         );
         // HTTP/2 版本码 20；参与哈希头部 0 个（sha256("")）；cookie 仍参与字段/值哈希
         assert_eq!(ja4h, "ge20cn000000_e3b0c44298fc_ca978112ca1b_42144f3939c3");
+    }
+
+    // ==== JA4X ====
+
+    /// 官方向量（FoxIO rust/ja4x hash12 单测）：扩展 OID "551d0f,551d25,551d11"
+    /// → aae71e8db6d7（本机 PowerShell .NET SHA256 独立交叉验证一致）
+    #[test]
+    fn test_ja4x_official_vector() {
+        let oids: Vec<Vec<u8>> = ["551d0f", "551d25", "551d11"]
+            .iter()
+            .map(|s| hex::decode(s).unwrap())
+            .collect();
+        assert_eq!(
+            compute_ja4x(&[], &[], &oids),
+            "000000000000_000000000000_aae71e8db6d7"
+        );
+    }
+
+    /// 空列表 → 12 个 0（官方 hash12 空串语义，区别于 JA4/JA4S 的 sha256("")）
+    #[test]
+    fn test_ja4x_empty_is_zeros() {
+        assert_eq!(
+            compute_ja4x(&[], &[], &[]),
+            "000000000000_000000000000_000000000000"
+        );
+    }
+
+    /// DN OID 输入编码：DER 内容字节 hex 逗号拼接
+    /// （sha256("550403")[:12]="7022c563de38"、"550406,55040a,550403"→"a373a9f83c6b"，
+    /// PowerShell .NET SHA256 独立交叉验证）
+    #[test]
+    fn test_ja4x_dn_oid_encoding() {
+        let cn = vec![0x55, 0x04, 0x03]; // 2.5.4.3 commonName
+        let s = std::slice::from_ref(&cn);
+        let ja4x = compute_ja4x(s, s, &[]);
+        assert_eq!(ja4x, "7022c563de38_7022c563de38_000000000000");
+
+        let c = vec![0x55, 0x04, 0x06]; // 2.5.4.6 countryName
+        let o = vec![0x55, 0x04, 0x0a]; // 2.5.4.10 organizationName
+        let cn2 = vec![0x55, 0x04, 0x03];
+        let ja4x = compute_ja4x(&[c, o.clone(), cn2], &[o], &[]);
+        assert!(ja4x.starts_with("a373a9f83c6b_"), "{}", ja4x);
+        assert!(ja4x.ends_with("_000000000000"));
+    }
+
+    /// 顺序敏感：OID 集合相同但顺序不同 → 哈希不同（JA4X 不排序）
+    #[test]
+    fn test_ja4x_order_sensitive() {
+        let a = vec![vec![0x55, 0x04, 0x06], vec![0x55, 0x04, 0x0a]];
+        let b = vec![vec![0x55, 0x04, 0x0a], vec![0x55, 0x04, 0x06]];
+        assert_ne!(compute_ja4x(&a, &[], &[]), compute_ja4x(&b, &[], &[]));
     }
 }

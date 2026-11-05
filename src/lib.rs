@@ -489,6 +489,7 @@ impl Detector {
             tls.cert_issuer = cert.issuer;
             tls.cert_valid_from = cert.not_before;
             tls.cert_valid_to = cert.not_after;
+            tls.cert_ja4x = cert.ja4x;
         }
     }
 

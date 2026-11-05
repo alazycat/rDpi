@@ -151,6 +151,7 @@ mod tests {
             cert_issuer: None,
             cert_valid_from: None,
             cert_valid_to: None,
+            cert_ja4x: None,
         }));
         flow
     }

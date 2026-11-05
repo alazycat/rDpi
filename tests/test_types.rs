@@ -139,6 +139,7 @@ fn test_tls_metadata_with_application() {
         cert_issuer: None,
         cert_valid_from: None,
         cert_valid_to: None,
+        cert_ja4x: None,
     };
 }
 
@@ -165,6 +166,7 @@ mod json_tests {
             cert_issuer: None,
             cert_valid_from: None,
             cert_valid_to: None,
+            cert_ja4x: None,
         });
         let det = DetectionResult::new(Protocol::Tls).with_metadata(metadata);
         let v = serde_json::to_value(&det).unwrap();
@@ -371,6 +373,7 @@ fn test_detection_result_app_protocol_from_tls() {
         cert_issuer: None,
         cert_valid_from: None,
         cert_valid_to: None,
+        cert_ja4x: None,
     });
     let result = DetectionResult::new(Protocol::Tls).with_metadata(metadata);
     assert_eq!(result.app_protocol, Some(Application::YouTube));

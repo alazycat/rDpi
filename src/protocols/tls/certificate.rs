@@ -12,6 +12,8 @@ pub struct CertInfo {
     pub issuer: Option<String>,
     pub not_before: Option<u64>, // Unix timestamp
     pub not_after: Option<u64>,  // Unix timestamp
+    /// JA4X 证书指纹（issuer/subject/扩展 OID 哈希，F32）
+    pub ja4x: Option<String>,
 }
 
 /// Check if a TLS record contains a Certificate handshake message (type 0x0B)
@@ -95,28 +97,46 @@ fn parse_x509_certificate(data: &[u8]) -> Option<CertInfo> {
     tbs.decode_tlv()?;
 
     // 4. issuer — SEQUENCE of SET of SEQUENCE
-    let issuer = extract_dn(&mut tbs);
+    let (issuer, issuer_oids) = extract_dn(&mut tbs);
 
     // 5. validity — SEQUENCE { Time, Time }
     let (not_before, not_after) = extract_validity(&mut tbs)?;
 
     // 6. subject — SEQUENCE of SET of SEQUENCE
-    let subject = extract_dn(&mut tbs);
+    let (subject, subject_oids) = extract_dn(&mut tbs);
+
+    // 7. extensions [3] EXPLICIT（v3 证书可选）— 仅收集扩展 OID（JA4X 输入）
+    let extension_oids = extract_extension_oids(&mut tbs);
+
+    // JA4X 证书指纹（F32）：解析期一次算好，消费方直接写入元数据
+    let ja4x = Some(crate::application::compute_ja4x(
+        &issuer_oids,
+        &subject_oids,
+        &extension_oids,
+    ));
 
     Some(CertInfo {
         subject,
         issuer,
         not_before,
         not_after,
+        ja4x,
     })
 }
 
 /// Extract Distinguished Name (CN=..., O=...) from a SEQUENCE of SETs
-fn extract_dn(reader: &mut BerReader) -> Option<String> {
-    let (_, dn_value) = reader.decode_tlv()?;
+///
+/// 返回 `(字符串形式, OID 内容字节列表)`——OID 列表按 DER 出现顺序，
+/// 供 JA4X 指纹哈希使用（F32）。
+fn extract_dn(reader: &mut BerReader) -> (Option<String>, Vec<Vec<u8>>) {
+    let (_, dn_value) = match reader.decode_tlv() {
+        Some(v) => v,
+        None => return (None, Vec::new()),
+    };
     let mut dn_reader = BerReader::new(dn_value);
 
     let mut parts = Vec::new();
+    let mut oids = Vec::new();
 
     // Name is SEQUENCE of SET (each SET contains one SEQUENCE { OID, value })
     while !dn_reader.is_empty() {
@@ -126,27 +146,30 @@ fn extract_dn(reader: &mut BerReader) -> Option<String> {
             // SEQUENCE { OID, value }
             if let Some((_, attr_value)) = set_reader.decode_tlv() {
                 let mut attr_reader = BerReader::new(attr_value);
-                // OID
-                if let Some(_oid) = attr_reader.decode_value() {
-                    // Value: PrintableString, UTF8String, T61String, etc.
-                    if let Some((val_tag, val_data)) = attr_reader.decode_tlv()
-                        && val_tag.class == crate::asn1::types::Asn1Class::Universal
-                    {
-                        match val_tag.number {
-                            0x0C | 0x13 => {
-                                // UTF8String (0x0C) or PrintableString (0x13)
-                                if let Ok(s) = std::str::from_utf8(val_data) {
-                                    parts.push(s.to_string());
-                                }
+                // OID：内容字节即 JA4X 哈希输入（如 2.5.4.3 → 55 04 03）
+                if let Some((oid_tag, oid_bytes)) = attr_reader.decode_tlv()
+                    && oid_tag.number == 0x06
+                {
+                    oids.push(oid_bytes.to_vec());
+                }
+                // Value: PrintableString, UTF8String, T61String, etc.
+                if let Some((val_tag, val_data)) = attr_reader.decode_tlv()
+                    && val_tag.class == crate::asn1::types::Asn1Class::Universal
+                {
+                    match val_tag.number {
+                        0x0C | 0x13 => {
+                            // UTF8String (0x0C) or PrintableString (0x13)
+                            if let Ok(s) = std::str::from_utf8(val_data) {
+                                parts.push(s.to_string());
                             }
-                            0x14 => {
-                                // T61String / TeletexString
-                                if let Ok(s) = std::str::from_utf8(val_data) {
-                                    parts.push(s.to_string());
-                                }
-                            }
-                            _ => {}
                         }
+                        0x14 => {
+                            // T61String / TeletexString
+                            if let Ok(s) = std::str::from_utf8(val_data) {
+                                parts.push(s.to_string());
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -155,11 +178,54 @@ fn extract_dn(reader: &mut BerReader) -> Option<String> {
         }
     }
 
-    if parts.is_empty() {
+    let subject = if parts.is_empty() {
         None
     } else {
         Some(parts.join(", "))
+    };
+    (subject, oids)
+}
+
+/// Extract extension OIDs from TBSCertificate `[3] EXPLICIT`（v3 证书可选）
+///
+/// `[3]` → SEQUENCE OF Extension，每个 Extension = SEQUENCE { OID, critical?, extnValue }。
+/// 仅收集 OID 内容字节（DER 顺序），后续字段跳过。
+fn extract_extension_oids(reader: &mut BerReader) -> Vec<Vec<u8>> {
+    // 未到 `[3]`（0xA3：context-specific + constructed + tag 3）则无扩展
+    if reader.peek_byte() != Some(0xA3) {
+        return Vec::new();
     }
+    // [3] EXPLICIT：A3 的内容是 SEQUENCE OF Extension，需先解开这层 SEQUENCE
+    let (_, ext_value) = match reader.decode_tlv() {
+        Some(v) => v,
+        None => return Vec::new(),
+    };
+    let mut seq_reader = BerReader::new(ext_value);
+    let (_, entries_value) = match seq_reader.decode_tlv() {
+        Some(v) => v,
+        None => return Vec::new(),
+    };
+
+    // entries_value 即各 Extension TLV 的拼接，逐个解出 extnID OID
+    let mut entry_reader = BerReader::new(entries_value);
+    let mut oids = Vec::new();
+    while !entry_reader.is_empty() {
+        // Extension = SEQUENCE { OID, critical BOOLEAN?, extnValue OCTET STRING }
+        match entry_reader.decode_tlv() {
+            Some((_, ext_entry)) => {
+                let mut oid_reader = BerReader::new(ext_entry);
+                if let Some((tag, oid_bytes)) = oid_reader.decode_tlv()
+                    && tag.class == crate::asn1::types::Asn1Class::Universal
+                    && tag.number == 0x06
+                {
+                    oids.push(oid_bytes.to_vec());
+                }
+                // critical / extnValue 无指纹价值，跳过
+            }
+            None => break,
+        }
+    }
+    oids
 }
 
 /// Extract validity (notBefore, notAfter) as Unix timestamps
@@ -399,5 +465,104 @@ mod tests {
         let data = build_tls_cert("myserver.local", "myserver.local", 365);
         let info = parse_certificate(&data).unwrap();
         assert_eq!(info.subject, info.issuer);
+    }
+
+    /// 构建 v3 证书（含 [3] 扩展段）：ext_oids 为各扩展的 OID 内容字节
+    fn build_tls_cert_with_extensions(ext_oids: &[&[u8]]) -> Vec<u8> {
+        // DER 长度编码：< 0x80 短格式，否则 0x81 长格式前缀
+        // （单字节直接写 0x8x 会被解码器按 long-form 误读）
+        let mut tbs_body = build_tbs_inner("example.com", "CA Inc");
+        append_extensions(&mut tbs_body, ext_oids);
+
+        let mut tbs = vec![0x30];
+        push_der_len(&mut tbs, tbs_body.len());
+        tbs.extend_from_slice(&tbs_body);
+
+        let mut cert = vec![0x30];
+        push_der_len(&mut cert, tbs.len());
+        cert.extend_from_slice(&tbs);
+
+        let mut msg = Vec::new();
+        msg.push(0x16);
+        msg.push(0x03);
+        msg.push(0x03);
+        msg.extend_from_slice(&((cert.len() + 7) as u16).to_be_bytes());
+        msg.push(0x0B);
+        msg.extend_from_slice(&[0x00, 0x00, (cert.len() + 6) as u8]);
+        msg.extend_from_slice(&[0x00, 0x00, cert.len() as u8]);
+        msg.extend_from_slice(&[0x00, 0x00, cert.len() as u8]);
+        msg.extend_from_slice(&cert);
+        msg
+    }
+
+    /// 追加 DER 长度字段（测试构造器用，长度 < 256）
+    fn push_der_len(buf: &mut Vec<u8>, len: usize) {
+        assert!(len < 0x100);
+        if len < 0x80 {
+            buf.push(len as u8);
+        } else {
+            buf.push(0x81);
+            buf.push(len as u8);
+        }
+    }
+
+    /// 追加 [3] EXPLICIT { SEQUENCE OF Extension { OID, extnValue } }
+    fn append_extensions(data: &mut Vec<u8>, ext_oids: &[&[u8]]) {
+        let mut entries = Vec::new();
+        for oid in ext_oids {
+            let mut entry = Vec::new();
+            entry.push(0x06); // OID
+            entry.push(oid.len() as u8);
+            entry.extend_from_slice(oid);
+            // extnValue OCTET STRING（内容本身是 DER，此处仅占位）
+            entry.extend_from_slice(&[0x04, 0x03, 0x30, 0x01, 0x00]);
+
+            entries.push(0x30);
+            entries.push(entry.len() as u8);
+            entries.extend_from_slice(&entry);
+        }
+        // [3] EXPLICIT 内容为 SEQUENCE OF Extension
+        let mut seq = Vec::new();
+        seq.push(0x30);
+        seq.push(entries.len() as u8);
+        seq.extend_from_slice(&entries);
+
+        data.push(0xA3); // [3] constructed
+        data.push(seq.len() as u8);
+        data.extend_from_slice(&seq);
+    }
+
+    /// JA4X：DN 仅含 CN（550403）、无扩展 → sha256("550403") 两段 + 全零扩展段
+    /// （golden 向量经 PowerShell .NET SHA256 独立交叉验证）
+    #[test]
+    fn test_parse_certificate_ja4x() {
+        let data = build_tls_cert("example.com", "CA Inc", 365);
+        let info = parse_certificate(&data).unwrap();
+        assert_eq!(
+            info.ja4x.as_deref(),
+            Some("7022c563de38_7022c563de38_000000000000")
+        );
+    }
+
+    /// JA4X：v3 证书扩展 OID 收集（keyUsage/EKU/SAN）
+    /// 扩展段哈希复用官方向量 "551d0f,551d25,551d11" → aae71e8db6d7
+    #[test]
+    fn test_parse_certificate_ja4x_with_extensions() {
+        let data = build_tls_cert_with_extensions(&[
+            &[0x55, 0x1d, 0x0f], // 2.5.29.15 keyUsage
+            &[0x55, 0x1d, 0x25], // 2.5.29.37 extendedKeyUsage
+            &[0x55, 0x1d, 0x11], // 2.5.29.17 subjectAltName
+        ]);
+        let info = parse_certificate(&data);
+        eprintln!(
+            "DEBUG is_cert_msg={} info={:?}",
+            is_certificate_message(&data),
+            info.is_some()
+        );
+        let info = info.unwrap();
+        assert_eq!(
+            info.ja4x.as_deref(),
+            Some("7022c563de38_7022c563de38_aae71e8db6d7")
+        );
     }
 }
