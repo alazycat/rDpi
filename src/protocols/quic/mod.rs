@@ -35,30 +35,44 @@ impl Default for QuicDetector {
 
 use crate::core::types::{Application, DetectContext};
 
-/// 尝试解密 Initial 包提取 TLS 元数据（SNI, ALPN, 应用识别）
+/// Initial 解密富化结果：(sni, alpn, ja4, application)
+type ExtractedTlsMeta = (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<Application>,
+);
+
+/// 尝试解密 Initial 包提取 TLS 元数据（SNI, ALPN, JA4, 应用识别）
 ///
-/// 先按客户端方向解（ClientHello → SNI/ALPN/应用识别），失败再按服务端方向
+/// 先按客户端方向解（ClientHello → SNI/ALPN/JA4/应用识别），失败再按服务端方向
 /// 解（ServerHello → 仅 ALPN）。解密失败/未启用 tls feature 时返回 None，
 /// 调用方降级为仅头部信息（性能：仅 Initial 包触发，两条方向路径为常数次 AES 尝试）。
 #[cfg(feature = "tls")]
-fn try_extract_tls_meta(
-    payload: &[u8],
-) -> Option<(Option<String>, Option<String>, Option<Application>)> {
+fn try_extract_tls_meta(payload: &[u8]) -> Option<ExtractedTlsMeta> {
     // 客户端 Initial：CRYPTO 帧为 ClientHello
     if let Some(ch) = parser::decrypt_client_hello(payload) {
         let application = ch.sni.as_deref().and_then(crate::application::identify);
-        return Some((ch.sni, ch.alpn, application));
+        // JA4 指纹与 TLS 路径同源（application::compute_ja4），ClientHelloInfo
+        // 自带全部输入（version/ciphers/extensions/groups）
+        let ja4 = ch.version.as_ref().map(|ver| {
+            crate::application::compute_ja4(
+                ver,
+                &ch.cipher_suites,
+                &ch.extensions,
+                &ch.supported_groups,
+            )
+        });
+        return Some((ch.sni, ch.alpn, ja4, application));
     }
-    // 服务端 Initial：CRYPTO 帧为 ServerHello（无 SNI，仅 ALPN）
+    // 服务端 Initial：CRYPTO 帧为 ServerHello（无 SNI/JA4，仅 ALPN）
     let alpn = parser::decrypt_server_alpn(payload)?;
-    Some((None, Some(alpn), None))
+    Some((None, Some(alpn), None, None))
 }
 
 /// 非 tls feature 下无 ClientHello 提取能力（保持降级行为一致）
 #[cfg(not(feature = "tls"))]
-fn try_extract_tls_meta(
-    _payload: &[u8],
-) -> Option<(Option<String>, Option<String>, Option<Application>)> {
+fn try_extract_tls_meta(_payload: &[u8]) -> Option<ExtractedTlsMeta> {
     None
 }
 
@@ -77,7 +91,8 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
         let info = parse_quic_initial(payload)?;
 
         // 尝试解密提取 ClientHello（失败降级为 None）
-        let (sni, alpn, application) = try_extract_tls_meta(payload).unwrap_or((None, None, None));
+        let (sni, alpn, ja4, application) =
+            try_extract_tls_meta(payload).unwrap_or((None, None, None, None));
 
         // Build metadata - convert version to hex string format
         let metadata = QuicMetadata {
@@ -86,6 +101,7 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
             destination_connection_id: Some(info.dcid),
             application,
             alpn,
+            ja4,
         };
 
         // Report QUIC with high confidence since we successfully parsed an Initial packet
@@ -107,7 +123,8 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
         let is_standard_version = matches!(info.version, QUIC_VERSION_1 | QUIC_VERSION_2);
 
         // 尝试解密 Initial 包提取 ClientHello（失败降级为 None，不影响判定）
-        let (sni, alpn, application) = try_extract_tls_meta(payload).unwrap_or((None, None, None));
+        let (sni, alpn, ja4, application) =
+            try_extract_tls_meta(payload).unwrap_or((None, None, None, None));
 
         let metadata = QuicMetadata {
             sni,
@@ -115,6 +132,7 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
             destination_connection_id: Some(info.dcid),
             application,
             alpn,
+            ja4,
         };
 
         // HTTP/3 判断：UDP 443 + 标准版本
