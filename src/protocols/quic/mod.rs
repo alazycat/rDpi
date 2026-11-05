@@ -57,6 +57,7 @@ impl QuicDetector {
             sni: None,
             alpn: None,
             ja4: None,
+            ja4s: None,
             version: Some(format!("{:08x}", version)),
             destination_connection_id: Some(dcid),
             application: None,
@@ -72,21 +73,22 @@ impl QuicDetector {
 
 use crate::core::types::{Application, DetectContext, QuicTransportParams};
 
-/// Initial 解密富化结果：(sni, alpn, ja4, application, transport_parameters)
+/// Initial 解密富化结果：(sni, alpn, ja4, application, transport_parameters, ja4s)
 type ExtractedTlsMeta = (
     Option<String>,
     Option<String>,
     Option<String>,
     Option<Application>,
     Option<QuicTransportParams>,
+    Option<String>,
 );
 
-/// 尝试解密 Initial 包提取 TLS 元数据（SNI, ALPN, JA4, 应用识别, Transport Parameters）
+/// 尝试解密 Initial 包提取 TLS 元数据（SNI, ALPN, JA4, 应用识别, TP, JA4S）
 ///
 /// 先按客户端方向解（ClientHello → SNI/ALPN/JA4/应用识别/Transport Parameters），
-/// 失败再按服务端方向解（ServerHello → 仅 ALPN）。解密失败/未启用 tls feature 时
-/// 返回 None，调用方降级为仅头部信息（性能：仅 Initial 包触发，密钥缓存命中时
-/// 两个方向的失败尝试也只各消耗一次轻量 tag 比对链）。
+/// 失败再按服务端方向解（ServerHello → ALPN + JA4S 服务端指纹，前缀 q）。
+/// 解密失败/未启用 tls feature 时返回 None，调用方降级为仅头部信息（性能：仅
+/// Initial 包触发，密钥缓存命中时两个方向的失败尝试也只各消耗一次轻量 tag 比对链）。
 #[cfg(feature = "tls")]
 fn try_extract_tls_meta(
     payload: &[u8],
@@ -105,11 +107,19 @@ fn try_extract_tls_meta(
                 &ch.supported_groups,
             )
         });
-        return Some((ch.sni, ch.alpn, ja4, application, tp));
+        return Some((ch.sni, ch.alpn, ja4, application, tp, None));
     }
-    // 服务端 Initial：CRYPTO 帧为 ServerHello（无 SNI/JA4/TP，仅 ALPN）
-    let alpn = parser::decrypt_server_alpn_with_cache(payload, cache)?;
-    Some((None, Some(alpn), None, None, None))
+    // 服务端 Initial：CRYPTO 帧为 ServerHello（无 SNI/JA4/TP；ALPN + JA4S，前缀 q）
+    let sh = parser::decrypt_server_hello_meta_with_cache(payload, cache)?;
+    let ja4s = Some(crate::application::compute_ja4s(
+        true,
+        sh.legacy_version,
+        sh.supported_version,
+        sh.cipher_suite,
+        &sh.extensions,
+        sh.alpn.as_deref(),
+    ));
+    Some((None, sh.alpn, None, None, None, ja4s))
 }
 
 /// 非 tls feature 下无 ClientHello 提取能力（保持降级行为一致）
@@ -142,8 +152,9 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
         let info = parse_quic_initial(payload)?;
 
         // 尝试解密提取 ClientHello（失败降级为 None）
-        let (sni, alpn, ja4, application, transport_parameters) =
-            try_extract_tls_meta(payload, &self.cache).unwrap_or((None, None, None, None, None));
+        let (sni, alpn, ja4, application, transport_parameters, ja4s) =
+            try_extract_tls_meta(payload, &self.cache)
+                .unwrap_or((None, None, None, None, None, None));
 
         // Build metadata - convert version to hex string format
         let metadata = QuicMetadata {
@@ -153,6 +164,7 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
             application,
             alpn,
             ja4,
+            ja4s,
             transport_parameters,
         };
 
@@ -176,8 +188,9 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
         let is_standard_version = matches!(info.version, QUIC_VERSION_1 | QUIC_VERSION_2);
 
         // 尝试解密 Initial 包提取 ClientHello（失败降级为 None，不影响判定）
-        let (sni, alpn, ja4, application, transport_parameters) =
-            try_extract_tls_meta(payload, &self.cache).unwrap_or((None, None, None, None, None));
+        let (sni, alpn, ja4, application, transport_parameters, ja4s) =
+            try_extract_tls_meta(payload, &self.cache)
+                .unwrap_or((None, None, None, None, None, None));
 
         let metadata = QuicMetadata {
             sni,
@@ -186,6 +199,7 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
             application,
             alpn,
             ja4,
+            ja4s,
             transport_parameters,
         };
 

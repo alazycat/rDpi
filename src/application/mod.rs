@@ -6,7 +6,7 @@ mod ja4;
 mod mappings;
 mod trie;
 
-pub use ja4::compute_ja4;
+pub use ja4::{compute_ja4, compute_ja4s};
 pub use mappings::DOMAIN_MAPPINGS;
 pub use trie::ReverseTrie;
 

@@ -213,3 +213,17 @@
 - **语义契约（铁律）**：声明非 `None` 即承诺「`payload[0]` 不在区间内 ⇒ detect 必返回 None」。违反将产生**假阴**（真实流量被预筛跳过）。新增 detector 必须显式声明门或有意返回 `None` 并说明原因。
 - **影响面复述**：注册顺序未动（R11）；detect 路径零新增分配（位图注册期构建、循环内仅位测试）；空 payload 不参与预筛（各 detector 空载荷语义不变）；默认门全 `None` 的第三方 detector 行为不变。
 - **验证**：机制测试 5 项（位图边界/上界含 0xFF/门跳过与放行/空载荷不跳过/无门不跳过）+ 每 detector `test_first_byte_gate_covers_valid_sample` 36 项（合法样本首字节必须落在自声明门内，假阴防护）共 41 项新增，默认 263 / all-features 1064 / risk 308 全绿；clippy --all-features --all-targets 0 警告。基准（同机紧凑 A/B，`cargo bench --features quic -- detect_unknown_tcp_miss_100`）：门 OFF 190.6µs → ON 167.1µs/100 包（**-12.3%**）；新增平均场景基准 `detect_unknown_tcp_miss_varied_100`（100 互异首字节）175.4µs。注意该基准 100 包中仅前 ~19 包走 DPI 扫描（giveup=20 后 GuessEngine 接管，[lib.rs:352](file:///d:/rust_code/rDpi/src/lib.rs#L352)），扫描段实际收益约 -55%（折算每扫描包省 ~1.24µs）；跨 criterion 调用的机器噪声 ±7%，结论以同机 A/B 为准。
+
+## F30【中】JA4S 服务端 TLS 指纹（2026-11-05，新功能开发）—— ✅ 已完成
+
+- **背景**：JA4 客户端指纹已有（application/ja4.rs），但服务端无对应指纹。FoxIO JA4+ 家族的 JA4S 基于 ServerHello（服务端对 ClientHello 的应答：从客户端列表中**选定**的一个 cipher + 服务端自己的扩展集合），与 JA4 配对可定位「客户端软件 ↔ 服务端软件」组合。
+- **规格来源**：FoxIO 官方 [ja4.py](https://github.com/FoxIO-LLC/ja4) `to_ja4s` + common.py（BSD-3/FoxIO 许可），格式 `{t|q}{版本2位}{扩展数2位}{alpn 2字符}_{cipher 4hex}_{sha256扩展串前12hex}`。与客户端 JA4 的关键差异：扩展按服务端发送顺序哈希**不排序**、**不过滤 GREASE**（官方 to_ja4s 路径无 GREASE 过滤，区别于 to_ja4；flowscope 参考实现过滤 GREASE，此处以官方 ja4.py 为准）；版本优先 supported_versions 扩展（GREASE 防御性忽略）回退 legacy_version；无 ALPN 记 `00`、>2 字符取首尾（`http/1.1`→`h1`）、首字符非 ASCII 记 `99`；空扩展列表哈希为固定 12 个 0。
+- **实现**：
+  - [tls/parser.rs](file:///d:/rust_code/rDpi/src/protocols/tls/parser.rs) `parse_server_hello` → `ServerHelloInfo{legacy_version, cipher_suite, extensions, alpn, supported_version}`（RFC 8446 §4.1.3 结构自洽校验；`parse_server_hello_alpn` 改为其 ALPN 单字段视图）。
+  - [tls/mod.rs](file:///d:/rust_code/rDpi/src/protocols/tls/mod.rs) TLS detector 记录循环新增 ServerHello 分支：提取协商版本/ALPN/JA4S。**影响面**：纯 ServerHello 的服务端流自此可定型为 Tls（此前服务端明文首包无 CH/Certificate 时返回 None，TLS 1.3 下证书已加密、服务端流实际永远无法 DPI 定型——此为补识别缺口非扩大误报面：0x16 + msg_type=2 + 结构校验，特异性极高）；注册顺序未动（R11）；TLS 门 0x16 已覆盖 ServerHello（门契约不变）。
+  - [application/ja4.rs](file:///d:/rust_code/rDpi/src/application/ja4.rs) `compute_ja4s`（与客户端 compute_ja4 同文件同风格）。
+  - [quic/parser.rs](file:///d:/rust_code/rDpi/src/protocols/quic/parser.rs) `decrypt_server_hello_meta[_with_cache]`：服务端 Initial 解密后从 CRYPTO 帧还原 ServerHello 全字段（复用 F28 密钥缓存）；`try_extract_tls_meta` 元组扩至 6 项（sni/alpn/ja4/application/tp/ja4s），QUIC 服务端方向产出 q 前缀 JA4S。
+  - [lib.rs](file:///d:/rust_code/rDpi/src/lib.rs) `enrich_tls_ja4s`：已定型 TLS 流回显路径对 ServerHello 记录做一次性富化（对齐 enrich_tls_cert 先例，ADR-0004 协议不重检）。
+  - Metadata：`TlsMetadata.ja4s` / `QuicMetadata.ja4s`（types.rs）。
+- **测试**：compute_ja4s 6 项（TCP/QUIC golden 向量、顺序敏感性、版本全表、ALPN 编码、GREASE 回退+空列表）；parse_server_hello 2 项（字段/拒绝）；Detector 全链路 2 项（反向服务端流定型+回显持久、一次性富化不覆盖 SNI）；QUIC 2 项（decrypt_server_hello_meta 字段、检测级 ja4s=q1302h3_1301_…）。**golden 向量 SHA-256 前缀经 PowerShell .NET SHA256 独立实现交叉验证**（同 QUIC Retry 向量做法）。共 12 项新增，默认 274 / all-features 1076 / risk 319 全绿；clippy --all-features --all-targets 0 警告。
+- **已知边界**：TCP ServerHello 跨 TCP 分段无重组支持（尽力而为，与 ClientHello 同策略）；QUIC 服务端 Initial 在服务端→客户端方向为独立流（FlowKey 按五元组方向），JA4 落客户端流、JA4S 落服务端流，与 FoxIO 方向语义一致。

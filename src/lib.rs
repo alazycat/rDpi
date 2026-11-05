@@ -406,6 +406,11 @@ impl Detector {
             #[cfg(feature = "tls")]
             Self::enrich_tls_cert(flow, &parsed.payload);
 
+            // JA4S：已定型 TLS 流在后续包收到 ServerHello 记录时，
+            // 一次性补算服务端指纹（写回 flow.metadata，回显自动携带）
+            #[cfg(feature = "tls")]
+            Self::enrich_tls_ja4s(flow, &parsed.payload);
+
             // HTTP/2 定型流：首个请求 HEADERS 帧常在 preface 之后的独立包到达，
             // 一次性提取 :authority/:method/:path（写回 flow.metadata，回显自动携带）
             #[cfg(feature = "proto3")]
@@ -484,6 +489,35 @@ impl Detector {
             tls.cert_issuer = cert.issuer;
             tls.cert_valid_from = cert.not_before;
             tls.cert_valid_to = cert.not_after;
+        }
+    }
+
+    /// TLS 流 JA4S 一次性富化（对齐 enrich_tls_cert 先例，ADR-0004）
+    ///
+    /// 定型 TLS 流（服务端方向或合包场景）的载荷中定位首个 ServerHello 记录，
+    /// 计算服务端指纹写回 flow.metadata。协议不重检；ja4s 已填充直接返回。
+    #[cfg(feature = "tls")]
+    fn enrich_tls_ja4s(flow: &mut Flow, payload: &[u8]) {
+        let needs_enrich = matches!(
+            flow.metadata,
+            Some(Metadata::Tls(ref tls)) if tls.ja4s.is_none()
+        );
+        if !needs_enrich || flow.protocol != Some(Protocol::Tls) {
+            return;
+        }
+        // 连体记录场景下 ServerHello 可能不在段首——遍历段内记录定位
+        if let Some(sh) =
+            protocols::tls::iter_tls_records(payload).find_map(protocols::tls::parse_server_hello)
+            && let Some(Metadata::Tls(ref mut tls)) = flow.metadata
+        {
+            tls.ja4s = Some(crate::application::compute_ja4s(
+                false,
+                sh.legacy_version,
+                sh.supported_version,
+                sh.cipher_suite,
+                &sh.extensions,
+                sh.alpn.as_deref(),
+            ));
         }
     }
 

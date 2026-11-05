@@ -112,6 +112,7 @@ mod tests {
             version: Some("1.3".into()),
             application: None,
             ja4: None,
+            ja4s: None,
             cipher_suites: vec![],
             alpn: None,
             cert_subject: s.map(String::from),

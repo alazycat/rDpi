@@ -134,6 +134,7 @@ mod tests {
             sni: None,
             alpn: None,
             ja4: None,
+            ja4s: None,
             version: Some("00000001".to_string()),
             destination_connection_id: Some(ODCID.to_vec()),
             application: None,

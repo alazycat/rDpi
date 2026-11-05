@@ -559,22 +559,33 @@ fn client_meta_from_plaintext(
 #[cfg(feature = "tls")]
 pub fn decrypt_server_alpn(data: &[u8]) -> Option<String> {
     let plaintext = decrypt_initial_server(data)?;
-    server_alpn_from_plaintext(plaintext)
+    server_hello_from_plaintext(plaintext).and_then(|sh| sh.alpn)
 }
 
-/// 带每 Detector 密钥缓存的 [`decrypt_server_alpn`]（性能优化路径 F28）
+/// 解密服务端 Initial 包并提取完整 ServerHello 字段（需要 tls feature）
+///
+/// 供 JA4S 服务端指纹计算使用：协商版本/选定密码套件/扩展列表/ALPN。
 #[cfg(feature = "tls")]
-pub(crate) fn decrypt_server_alpn_with_cache(
+pub fn decrypt_server_hello_meta(data: &[u8]) -> Option<crate::protocols::tls::ServerHelloInfo> {
+    let plaintext = decrypt_initial_server(data)?;
+    server_hello_from_plaintext(plaintext)
+}
+
+/// 带每 Detector 密钥缓存的 [`decrypt_server_hello_meta`]
+#[cfg(feature = "tls")]
+pub(crate) fn decrypt_server_hello_meta_with_cache(
     data: &[u8],
     cache: &crypto::InitialKeyCache,
-) -> Option<String> {
+) -> Option<crate::protocols::tls::ServerHelloInfo> {
     let plaintext = decrypt_initial_server_with_cache(data, cache)?;
-    server_alpn_from_plaintext(plaintext)
+    server_hello_from_plaintext(plaintext)
 }
 
-/// 从解密后的服务端 Initial 明文提取 ALPN（共享后段）
+/// 从解密后的服务端 Initial 明文提取 ServerHello（共享后段）
 #[cfg(feature = "tls")]
-fn server_alpn_from_plaintext(plaintext: Vec<u8>) -> Option<String> {
+fn server_hello_from_plaintext(
+    plaintext: Vec<u8>,
+) -> Option<crate::protocols::tls::ServerHelloInfo> {
     let crypto = parse_crypto_frames(&plaintext)?;
 
     // 裸握手消息：type(1B) + length(3B)，ServerHello type = 0x02
@@ -589,7 +600,7 @@ fn server_alpn_from_plaintext(plaintext: Vec<u8>) -> Option<String> {
     record.extend_from_slice(&[0x16, 0x03, 0x03, (hs_len >> 8) as u8, (hs_len & 0xff) as u8]);
     record.extend_from_slice(&crypto);
 
-    crate::protocols::tls::parse_server_hello_alpn(&record)
+    crate::protocols::tls::parse_server_hello(&record)
 }
 
 #[cfg(test)]
@@ -944,7 +955,7 @@ mod tests {
     }
 
     /// 构造最小 ServerHello（RFC 8446 §4.1.3，QUIC 形态：32B session_id_echo，
-    /// compression 0x00，仅 ALPN 扩展携带 "h3"）
+    /// compression 0x00，扩展 = ALPN "h3" + supported_versions TLS 1.3）
     fn make_server_hello() -> Vec<u8> {
         let mut sh = Vec::new();
         sh.push(0x02); // msg_type ServerHello
@@ -955,13 +966,17 @@ mod tests {
         sh.extend_from_slice(&[0x22u8; 32]);
         sh.extend_from_slice(&[0x13, 0x01]); // cipher_suite TLS_AES_128_GCM_SHA256
         sh.extend_from_slice(&[0x01, 0x00]); // legacy_compression_methods: 1 种，0x00
-        // 扩展区：总长(2B) + ALPN 扩展（type 0x0010 + len 5 + 数据）
-        let ext_data: [u8; 5] = [0x00, 0x03, 0x02, 0x68, 0x33]; // list_len=3, name_len=2, "h3"
-        let exts_len = (4 + ext_data.len()) as u16;
+        // 扩展区：ALPN（type 0x0010）+ supported_versions（type 0x002b）
+        let alpn_data: [u8; 5] = [0x00, 0x03, 0x02, 0x68, 0x33]; // list_len=3, name_len=2, "h3"
+        let sv_data: [u8; 2] = [0x03, 0x04]; // TLS 1.3
+        let exts_len = (4 + alpn_data.len() + 4 + sv_data.len()) as u16;
         sh.extend_from_slice(&exts_len.to_be_bytes());
         sh.extend_from_slice(&[0x00, 0x10]);
         sh.extend_from_slice(&[0x00, 0x05]);
-        sh.extend_from_slice(&ext_data);
+        sh.extend_from_slice(&alpn_data);
+        sh.extend_from_slice(&[0x00, 0x2b]);
+        sh.extend_from_slice(&[0x00, 0x02]);
+        sh.extend_from_slice(&sv_data);
 
         // 回填握手长度（3 字节大端）
         let hs_len = sh.len() - 4;
@@ -1011,6 +1026,18 @@ mod tests {
     /// 检测器级：服务端 Initial 经 detect() 富化出 ALPN（sni 保持 None）
     #[test]
     #[cfg(feature = "tls")]
+    fn test_decrypt_server_hello_meta_fields() {
+        let packet = make_server_initial_packet();
+        let sh = decrypt_server_hello_meta(&packet).expect("应解密出完整 ServerHello");
+        assert_eq!(sh.legacy_version, 0x0303);
+        assert_eq!(sh.supported_version, Some(0x0304));
+        assert_eq!(sh.cipher_suite, 0x1301);
+        assert_eq!(sh.alpn.as_deref(), Some("h3"));
+        assert_eq!(sh.extensions, vec![0x0010, 0x002b]);
+    }
+
+    #[test]
+    #[cfg(feature = "tls")]
     fn test_detect_server_initial_yields_alpn() {
         use super::super::QuicDetector;
         use crate::core::types::{Confidence, Metadata, Protocol};
@@ -1024,6 +1051,12 @@ mod tests {
             Metadata::Quic(meta) => {
                 assert!(meta.sni.is_none(), "ServerHello 无 SNI");
                 assert_eq!(meta.alpn.as_deref(), Some("h3"));
+                // JA4S：q 前缀 + TLS 1.3 + 2 扩展 + h3 | 1301 | sha256("0x0010,0x002b")[:12]
+                assert_eq!(
+                    meta.ja4s.as_deref(),
+                    Some("q1302h3_1301_77012567d328"),
+                    "服务端 Initial 应产出 JA4S 服务端指纹"
+                );
             }
             other => panic!("期望 Quic 元数据，实际 {:?}", other),
         }

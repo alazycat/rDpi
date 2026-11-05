@@ -256,14 +256,29 @@ fn parse_sni_extension(data: &[u8]) -> Option<String> {
     String::from_utf8(name_bytes.to_vec()).ok()
 }
 
-/// 解析 TLS ServerHello 提取 ALPN（QUIC 服务端 Initial 富化用）
+/// TLS ServerHello 解析结果（JA4S 服务端指纹与 QUIC 服务端富化共用）
+#[derive(Debug, Clone)]
+pub struct ServerHelloInfo {
+    /// 握手头 legacy_version 字段（TLS 1.3 下固定 0x0303）
+    pub legacy_version: u16,
+    /// 服务器选定的密码套件（ServerHello 仅一个）
+    pub cipher_suite: u16,
+    /// 扩展类型列表（按服务端发送顺序——JA4S 语义：顺序本身是指纹信号）
+    pub extensions: Vec<u16>,
+    /// ALPN 协商结果（如 "h2", "h3"）
+    pub alpn: Option<String>,
+    /// supported_versions 扩展中的协商版本（TLS 1.3 ServerHello 携带 0x0304）
+    pub supported_version: Option<u16>,
+}
+
+/// 解析 TLS ServerHello
 ///
 /// 输入格式与 [`parse_client_hello`] 一致：5 字节 record 头 + 握手消息。
 /// ServerHello（msg_type 0x02，RFC 8446 §4.1.3）依次为 legacy_version(2B)、
 /// random(32B)、legacy_session_id_echo、cipher_suite(2B)、
 /// legacy_compression_methods、Extensions(2B 长度 + 列表)。
-/// 仅提取 ALPN 扩展（0x0010）——QUIC ServerHello 必带 ALPN，且无 SNI 可取。
-pub fn parse_server_hello_alpn(data: &[u8]) -> Option<String> {
+/// 提取 JA4S 全部输入（版本/密码套件/扩展列表/ALPN）；无 SNI 可取。
+pub fn parse_server_hello(data: &[u8]) -> Option<ServerHelloInfo> {
     // record 头(5B) + 握手头(4B) + legacy_version(2B) + random(32B) + sid_len(1B)
     if data.len() < 44 || data[0] != 0x16 || data[5] != 0x02 {
         return None;
@@ -274,8 +289,9 @@ pub fn parse_server_hello_alpn(data: &[u8]) -> Option<String> {
         return None;
     }
 
-    let mut offset = 9;
-    offset += 2; // legacy_version
+    let legacy_version = u16_from_be(&data[9..11]);
+
+    let mut offset = 11;
     offset += 32; // random
     // legacy_session_id_echo：长度 0-32
     let sid_len = data[offset] as usize;
@@ -283,7 +299,8 @@ pub fn parse_server_hello_alpn(data: &[u8]) -> Option<String> {
     if sid_len > 32 || offset + 4 > data.len() {
         return None;
     }
-    offset += 2; // cipher_suite
+    let cipher_suite = u16_from_be(&data[offset..offset + 2]);
+    offset += 2;
     // legacy_compression_methods：TLS 1.3 必为 1 字节 0x00
     let comp_len = data[offset] as usize;
     offset += 1;
@@ -296,6 +313,9 @@ pub fn parse_server_hello_alpn(data: &[u8]) -> Option<String> {
     let exts_len = u16_from_be(&data[offset..offset + 2]) as usize;
     offset += 2;
     let end = (offset + exts_len).min(9 + hs_len);
+    let mut extensions = Vec::new();
+    let mut alpn: Option<String> = None;
+    let mut supported_version: Option<u16> = None;
     while offset + 4 <= end {
         let ext_type = u16_from_be(&data[offset..offset + 2]);
         let ext_len = u16_from_be(&data[offset + 2..offset + 4]) as usize;
@@ -303,12 +323,34 @@ pub fn parse_server_hello_alpn(data: &[u8]) -> Option<String> {
         if offset + ext_len > end {
             return None;
         }
-        if ext_type == 0x0010 {
-            return parse_alpn_extension(&data[offset..offset + ext_len]);
+        extensions.push(ext_type);
+        match ext_type {
+            0x0010 => {
+                alpn = parse_alpn_extension(&data[offset..offset + ext_len]);
+            }
+            // supported_versions（ServerHello 中为单个 2B 版本值）
+            0x002b if ext_len >= 2 => {
+                supported_version = Some(u16_from_be(&data[offset..offset + 2]));
+            }
+            _ => {}
         }
         offset += ext_len;
     }
-    None
+
+    Some(ServerHelloInfo {
+        legacy_version,
+        cipher_suite,
+        extensions,
+        alpn,
+        supported_version,
+    })
+}
+
+/// 解析 TLS ServerHello 提取 ALPN（QUIC 服务端 Initial 富化用）
+///
+/// [`parse_server_hello`] 的 ALPN 单字段视图；无 ALPN 扩展时返回 None。
+pub fn parse_server_hello_alpn(data: &[u8]) -> Option<String> {
+    parse_server_hello(data).and_then(|sh| sh.alpn)
 }
 
 /// 解析 ALPN 扩展
@@ -318,7 +360,6 @@ pub fn parse_server_hello_alpn(data: &[u8]) -> Option<String> {
 /// - Protocol Entry:
 ///   - Protocol Name Length (1B)
 ///   - Protocol Name (variable)
-#[allow(dead_code)]
 fn parse_alpn_extension(data: &[u8]) -> Option<String> {
     if data.len() < 3 {
         return None;

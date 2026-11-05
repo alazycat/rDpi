@@ -144,6 +144,7 @@ mod tests {
             version: version.map(|v| v.to_string()),
             application: None,
             ja4: None,
+            ja4s: None,
             cipher_suites,
             alpn: None,
             cert_subject: None,

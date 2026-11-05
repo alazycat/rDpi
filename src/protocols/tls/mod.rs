@@ -8,14 +8,26 @@ mod parser;
 
 pub use certificate::{CertInfo, is_certificate_message, parse_certificate};
 pub use parser::{
-    ClientHelloInfo, extract_quic_transport_parameters, extract_sni, extract_tls_version,
-    is_client_hello, is_tls_record, iter_tls_records, parse_client_hello, parse_server_hello_alpn,
+    ClientHelloInfo, ServerHelloInfo, extract_quic_transport_parameters, extract_sni,
+    extract_tls_version, is_client_hello, is_tls_record, iter_tls_records, parse_client_hello,
+    parse_server_hello, parse_server_hello_alpn,
 };
 
 use crate::protocols::Registry;
 
 pub fn register(registry: &mut Registry) {
     registry.register(Box::new(TlsDetector::new()));
+}
+
+/// 协商版本 u16 → 版本字符串（ServerHello 元数据展示用，GREASE 值返回 None）
+fn negotiated_version_string(version: Option<u16>) -> Option<String> {
+    match version {
+        Some(0x0301) => Some("TLS 1.0".to_string()),
+        Some(0x0302) => Some("TLS 1.1".to_string()),
+        Some(0x0303) => Some("TLS 1.2".to_string()),
+        Some(0x0304) => Some("TLS 1.3".to_string()),
+        _ => None,
+    }
 }
 
 /// TLS protocol detector
@@ -79,6 +91,28 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
                     )
                 });
                 tls_meta.ja4 = ja4;
+            } else if let Some(ref sh) = parse_server_hello(record) {
+                // ServerHello（msg_type 0x02）：服务端流首个明文记录（TLS 1.3 下
+                // 证书已加密，明文只有 ServerHello）。提取协商版本 + JA4S。
+                // 影响面：纯 ServerHello 的服务端流自此可定型为 TLS（此前无
+                // ClientHello/Certificate 时返回 None，服务端流靠 guess 回退）。
+                if tls_meta.version.is_none() {
+                    tls_meta.version = negotiated_version_string(sh.supported_version)
+                        .or_else(|| negotiated_version_string(Some(sh.legacy_version)));
+                }
+                if tls_meta.alpn.is_none() {
+                    tls_meta.alpn = sh.alpn.clone();
+                }
+                if tls_meta.ja4s.is_none() {
+                    tls_meta.ja4s = Some(crate::application::compute_ja4s(
+                        false,
+                        sh.legacy_version,
+                        sh.supported_version,
+                        sh.cipher_suite,
+                        &sh.extensions,
+                        sh.alpn.as_deref(),
+                    ));
+                }
             }
 
             // Try Certificate message for cert fields (even if ClientHello was found)
@@ -92,8 +126,12 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
             }
         }
 
-        // Return None if nothing matched (neither ClientHello nor Certificate)
-        if tls_meta.sni.is_none() && tls_meta.version.is_none() && tls_meta.cert_subject.is_none() {
+        // Return None if nothing matched (no ClientHello / ServerHello / Certificate)
+        if tls_meta.sni.is_none()
+            && tls_meta.version.is_none()
+            && tls_meta.cert_subject.is_none()
+            && tls_meta.ja4s.is_none()
+        {
             return None;
         }
 

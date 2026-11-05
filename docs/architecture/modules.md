@@ -64,9 +64,9 @@
 ### quic 模块（2026-11-04 扩展：Initial 解密；2026-11-05 扩展：服务端方向 / Retry 完整性校验）
 
 - **crypto.rs**：全手写密码学（零新增依赖）——AES-128 核心（仅加密方向，FIPS-197 向量）、GCM/GHASH（NIST SP 800-38D 向量；GHASH 为 Shoup 式 4-bit 查表乘法 `GhashTable`，8 KiB 栈上表，release 实测较逐位实现 150 倍加速，逐位版保留为测试 oracle）、HMAC-SHA256/HKDF（RFC 4231/5869 向量）、QUIC Initial 密钥派生 + 头保护移除 + 载荷 AEAD 解密（RFC 9001 §A.1 客户端方向向量 + §5.2 服务端方向经独立 Python 实现交叉核对）；支持 QUIC v1/v2/draft-29/draft-28 四套 salt；`Side::{Client,Server}` 双方向（server secret = "server in" label，密钥材料均取自包头 DCID 字段）。
-- **parser.rs**：`decrypt_initial`（客户端方向）、`decrypt_initial_server`（服务端方向，DCID 字段即 ODCID）、`parse_crypto_frames`（提取 CRYPTO 帧拼接）、`decrypt_client_hello`（feature=tls，套假 record 头复用 `tls::parse_client_hello`）、`decrypt_server_alpn`（feature=tls，复用 `tls::parse_server_hello_alpn`）。
-- **tls/parser.rs**：新增 `parse_server_hello_alpn`（msg_type 0x02 校验 + 字段布局自洽校验 + ALPN 扩展提取，复用私有 `parse_alpn_extension`）。
-- **mod.rs**：detect/detect_with_context 接线解密富化——先客户端方向（ClientHello → sni/alpn/**ja4** + SNI 应用识别），失败再服务端方向（ServerHello → 仅 alpn，无 SNI/JA4）；解密失败静默降级为仅头部信息。QuicMetadata 增 `alpn`/`ja4` 字段（types.rs），JA4 与 TLS 路径同源（application::compute_ja4）。
+- **parser.rs**：`decrypt_initial`（客户端方向）、`decrypt_initial_server`（服务端方向，DCID 字段即 ODCID）、`parse_crypto_frames`（提取 CRYPTO 帧拼接）、`decrypt_client_hello`（feature=tls，套假 record 头复用 `tls::parse_client_hello`）、`decrypt_server_alpn`（feature=tls，复用 `tls::parse_server_hello_alpn`）、`decrypt_server_hello_meta[_with_cache]`（feature=tls，F30：还原 ServerHello 全字段供 JA4S）。
+- **tls/parser.rs**：`parse_server_hello`（F30，2026-11-05：msg_type 0x02 校验 + 字段布局自洽校验 + 全字段提取 legacy_version/cipher_suite/extensions/alpn/supported_version → `ServerHelloInfo`；`parse_server_hello_alpn` 改为其 ALPN 单字段视图）。
+- **mod.rs**：detect/detect_with_context 接线解密富化——先客户端方向（ClientHello → sni/alpn/**ja4** + SNI 应用识别），失败再服务端方向（ServerHello → alpn + **ja4s**（q 前缀，F30），无 SNI/JA4/TP）；解密失败静默降级为仅头部信息。QuicMetadata 增 `alpn`/`ja4`/`ja4s` 字段（types.rs），JA4 与 TLS 路径同源（application::compute_ja4）。
 - **rule / CLI 消费**（2026-11-05）：rule 引擎 `sni_contains` 覆盖 QUIC SNI（lib.rs 规则分支追加 Initial 解密回退，`rule`+`tls`+`quic` 三 feature）；CLI 域名列识别 `Metadata::Quic`（rdpi.rs）。
 - **Transport Parameters 提取**（2026-11-05）：tls/parser.rs 增 `extract_quic_transport_parameters`（通用 `find_client_hello_extension` 遍历器按类型取扩展值，0x0039）；quic/parser.rs 增 `parse_transport_parameters`（RFC 9000 §18.2：varint ID + varint 长度 + 值，仅收录数值型参数 max_idle_timeout/max_udp_payload_size/initial_max_data/initial_max_streams_bidi/initial_max_streams_uni → `QuicTransportParams`，字节值参数跳过）；`decrypt_client_meta` 与 `decrypt_client_hello` 共用单次解密链路（前者多返回 TP）；QuicMetadata 增 `transport_parameters` 字段（types.rs）。无扩展/解析失败/解密失败时该字段为 None，不影响其余元数据。注意：RFC 9000 varint 仅 1/2/4/8 字节形式、最大值 2⁶²−1（首字节前缀占 2 位）。A.2 官方样例自带 0x0039 扩展（50 字节），全链路断言官方值。
 - **非 Initial 长包头识别**（2026-11-05）：`detect_other_long_header`（mod.rs）覆盖 0-RTT（0xD0）/Handshake（0xE0）/Retry（0xF0）/VN（version=0，不要求 Fixed Bit）——仅提取 version+DCID（`is_quic_long_header`/`parse_long_header_dcid`，parser.rs），无解密富化；version≠0 时要求 Fixed Bit=1，DCID 长度上限 20 校验。此前这些包全部漏判落入 guess 兜底。
@@ -85,7 +85,7 @@
 
 - `identify(sni)`：惰性初始化 `ReverseTrie` 查域名后缀（application/mod.rs:17-20）。
 - `mappings.rs`：域名后缀→`Application` 映射表（mappings.rs:5-220，覆盖 YouTube/Netflix/Bilibili/抖音/微信/Telegram 等）。
-- `ja4.rs`：JA4 TLS 指纹 `tlsNN.{ciphers12}.{extensions12}.{groups6}` + SHA256 截断（ja4.rs:18-48, 57-58）。
+- `ja4.rs`：JA4 TLS 指纹 `tlsNN.{ciphers12}.{extensions12}.{groups6}` + SHA256 截断（ja4.rs:18-48, 57-58）；`compute_ja4s`（F30，2026-11-05）：JA4S 服务端指纹 `{t|q}{版本2位}{扩展数2位}{alpn 2字符}_{cipher 4hex}_{sha256("0x%04x"逗号串)[:12]}`，对齐 FoxIO 官方 ja4.py to_ja4s（扩展不排序/不过滤 GREASE），golden 向量经 PowerShell .NET SHA256 交叉验证。
 
 ## 6. risk 模块（feature=risk）
 

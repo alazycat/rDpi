@@ -246,6 +246,8 @@ pub struct TlsMetadata {
     pub application: Option<Application>,
     /// JA4 TLS 指纹哈希
     pub ja4: Option<String>,
+    /// JA4S 服务端指纹（来自 ServerHello；客户端流为 None）
+    pub ja4s: Option<String>,
     /// 客户端通告的密码套件列表 (IANA IDs)
     pub cipher_suites: Vec<u16>,
     /// ALPN 协商协议 (如 "h2", "http/1.1")
@@ -341,6 +343,8 @@ pub struct QuicMetadata {
     pub alpn: Option<String>,
     /// JA4 指纹（与 TLS 路径同源，application::compute_ja4）
     pub ja4: Option<String>,
+    /// JA4S 服务端指纹（前缀 q，来自服务端 Initial 解密的 ServerHello）
+    pub ja4s: Option<String>,
     /// QUIC 版本 (如 "00000001" for v1)
     pub version: Option<String>,
     /// 目的连接 ID

@@ -2,7 +2,7 @@ use rdpi::core::types::{Confidence, Metadata, Protocol};
 use rdpi::protocols::ProtocolDetector;
 use rdpi::protocols::tls::{
     TlsDetector, extract_sni, extract_tls_version, is_client_hello, is_tls_record,
-    parse_client_hello,
+    parse_client_hello, parse_server_hello,
 };
 
 // ============================================================================
@@ -526,5 +526,241 @@ fn test_tls_unknown_domain_no_application() {
         assert!(meta.application.is_none());
     } else {
         panic!("Expected TLS metadata");
+    }
+}
+
+// ============================================================================
+// ServerHello / JA4S Tests
+// ============================================================================
+
+/// 构造 TLS 1.3 形态 ServerHello record（legacy 0x0303 + supported_versions
+/// 0x0304 + cipher 0x1302 + ALPN "h2" + 扩展 [0x002b, 0x0010]）
+fn make_server_hello_tls13() -> Vec<u8> {
+    let mut sh = Vec::new();
+    sh.push(0x02); // msg_type ServerHello
+    sh.extend_from_slice(&[0x00, 0x00, 0x00]); // 握手长度占位，最后回填
+    sh.extend_from_slice(&[0x03, 0x03]); // legacy_version
+    sh.extend_from_slice(&[0x11u8; 32]); // random
+    sh.push(32); // legacy_session_id_echo 长度
+    sh.extend_from_slice(&[0x22u8; 32]);
+    sh.extend_from_slice(&[0x13, 0x02]); // cipher_suite TLS_AES_256_GCM_SHA384
+    sh.extend_from_slice(&[0x01, 0x00]); // legacy_compression_methods
+    // 扩展区：总长(2B) + supported_versions(0x002b) + ALPN(0x0010)
+    let sv_data: [u8; 2] = [0x03, 0x04]; // TLS 1.3
+    let alpn_data: [u8; 5] = [0x00, 0x03, 0x02, 0x68, 0x32]; // "h2"
+    let exts_len = (4 + sv_data.len() + 4 + alpn_data.len()) as u16;
+    sh.extend_from_slice(&exts_len.to_be_bytes());
+    sh.extend_from_slice(&[0x00, 0x2b, 0x00, 0x02]);
+    sh.extend_from_slice(&sv_data);
+    sh.extend_from_slice(&[0x00, 0x10, 0x00, 0x05]);
+    sh.extend_from_slice(&alpn_data);
+
+    let hs_len = sh.len() - 4;
+    sh[1..4].copy_from_slice(&[(hs_len >> 16) as u8, (hs_len >> 8) as u8, hs_len as u8]);
+    let mut record = vec![0x16, 0x03, 0x03, (sh.len() >> 8) as u8, sh.len() as u8];
+    record.extend_from_slice(&sh);
+    record
+}
+
+#[test]
+fn test_parse_server_hello_fields() {
+    let record = make_server_hello_tls13();
+    let sh = parse_server_hello(&record).expect("ServerHello 应可解析");
+    assert_eq!(sh.legacy_version, 0x0303);
+    assert_eq!(sh.supported_version, Some(0x0304));
+    assert_eq!(sh.cipher_suite, 0x1302);
+    assert_eq!(sh.alpn.as_deref(), Some("h2"));
+    // 扩展按服务端发送顺序保留
+    assert_eq!(sh.extensions, vec![0x002b, 0x0010]);
+}
+
+#[test]
+fn test_parse_server_hello_rejects_non_server_hello() {
+    // ClientHello（msg_type 0x01）拒绝
+    let record = make_server_hello_tls13();
+    let mut ch = record.clone();
+    ch[5] = 0x01;
+    assert!(parse_server_hello(&ch).is_none());
+
+    // 非 TLS 记录拒绝
+    assert!(parse_server_hello(b"GET / HTTP/1.1\r\n").is_none());
+
+    // 截断载荷拒绝
+    let truncated = &record[..40];
+    assert!(parse_server_hello(truncated).is_none());
+}
+
+/// 纯 ServerHello 的服务端流可定型为 TLS 并携带 JA4S（TLS 1.3 明文只有 ServerHello）
+#[test]
+fn test_tls_detector_server_hello_yields_ja4s() {
+    let detector = TlsDetector::new();
+    let record = make_server_hello_tls13();
+
+    let result = detector.detect(&record).expect("应识别为 TLS");
+    assert_eq!(result.protocol, Protocol::Tls);
+    if let Metadata::Tls(meta) = result.metadata {
+        assert_eq!(meta.version, Some("TLS 1.3".to_string()));
+        assert_eq!(meta.alpn.as_deref(), Some("h2"));
+        // golden 向量：t + 13 + 02 扩展 + h2 | 1302 | sha256("0x002b,0x0010")[:12]
+        assert_eq!(meta.ja4s.as_deref(), Some("t1302h2_1302_60694de2240d"));
+        assert!(meta.sni.is_none(), "ServerHello 无 SNI");
+        assert!(meta.ja4.is_none(), "服务端流无客户端 JA4");
+    } else {
+        panic!("Expected TLS metadata");
+    }
+}
+
+/// 构造完整以太网+IPv4+TCP 包（手工字节数组，风格对齐 test_guess.rs）
+fn build_tcp_packet(
+    src_ip: [u8; 4],
+    src_port: u16,
+    dst_ip: [u8; 4],
+    dst_port: u16,
+    payload: &[u8],
+) -> Vec<u8> {
+    let total_len = 14 + 20 + 20 + payload.len();
+    let mut pkt = Vec::with_capacity(total_len);
+
+    // Ethernet header (14 bytes)
+    pkt.extend_from_slice(&[0x00; 6]);
+    pkt.extend_from_slice(&[0xff; 6]);
+    pkt.extend_from_slice(&[0x08, 0x00]);
+
+    // IPv4 header (20 bytes)
+    pkt.push(0x45);
+    pkt.push(0x00);
+    pkt.extend_from_slice(&(total_len as u16 - 14).to_be_bytes());
+    pkt.extend_from_slice(&[0x00, 0x01]);
+    pkt.extend_from_slice(&[0x00, 0x00]);
+    pkt.push(0x40);
+    pkt.push(0x06); // protocol: TCP
+    pkt.extend_from_slice(&[0x00, 0x00]);
+    pkt.extend_from_slice(&src_ip);
+    pkt.extend_from_slice(&dst_ip);
+
+    // TCP header (20 bytes, data offset=5)
+    pkt.extend_from_slice(&src_port.to_be_bytes());
+    pkt.extend_from_slice(&dst_port.to_be_bytes());
+    pkt.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // seq
+    pkt.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // ack
+    pkt.push(0x50); // data offset=5
+    pkt.push(0x18); // flags PSH|ACK
+    pkt.extend_from_slice(&[0xff, 0xff]); // window
+    pkt.extend_from_slice(&[0x00, 0x00]); // checksum
+    pkt.extend_from_slice(&[0x00, 0x00]); // urgent pointer
+
+    pkt.extend_from_slice(payload);
+    pkt
+}
+
+/// Detector 全链路：客户端 CH 流与服务端 SH 流各自定型，回显包元数据不丢（F7）
+#[test]
+fn test_detector_tls_server_flow_ja4s_persists_across_echo() {
+    let mut detector = rdpi::Detector::new();
+
+    // 客户端→服务端：ClientHello 定型
+    let client_packet = build_tcp_packet(
+        [10, 0, 0, 1],
+        54321,
+        [10, 0, 0, 2],
+        443,
+        &make_client_hello_with_sni("example.com"),
+    );
+    let r1 = detector.detect(&client_packet).unwrap().unwrap();
+    assert_eq!(r1.protocol, Protocol::Tls);
+    if let Metadata::Tls(ref meta) = r1.metadata {
+        assert_eq!(meta.sni.as_deref(), Some("example.com"));
+        assert!(meta.ja4s.is_none(), "客户端流不应携带 JA4S");
+    }
+
+    // 服务端→客户端（反向流）：纯 ServerHello 定型（TLS 1.3 明文首包）
+    let server_packet = build_tcp_packet(
+        [10, 0, 0, 2],
+        443,
+        [10, 0, 0, 1],
+        54321,
+        &make_server_hello_tls13(),
+    );
+    let r2 = detector.detect(&server_packet).unwrap().unwrap();
+    assert_eq!(r2.protocol, Protocol::Tls);
+    if let Metadata::Tls(ref meta) = r2.metadata {
+        assert_eq!(
+            meta.ja4s.as_deref(),
+            Some("t1302h2_1302_60694de2240d"),
+            "服务端流首包即携带 JA4S"
+        );
+        assert_eq!(meta.version.as_deref(), Some("TLS 1.3"));
+    } else {
+        panic!("Expected TLS metadata");
+    }
+
+    // 服务端流回显包（AppData 空记录）：元数据（含 JA4S）不被抹掉（F7 语义）
+    let echo_packet = build_tcp_packet(
+        [10, 0, 0, 2],
+        443,
+        [10, 0, 0, 1],
+        54321,
+        &[0x17, 0x03, 0x03, 0x00, 0x00],
+    );
+    let r3 = detector.detect(&echo_packet).unwrap().unwrap();
+    assert_eq!(r3.protocol, Protocol::Tls);
+    if let Metadata::Tls(ref meta) = r3.metadata {
+        assert_eq!(
+            meta.ja4s.as_deref(),
+            Some("t1302h2_1302_60694de2240d"),
+            "回显包应携带已保存的 JA4S"
+        );
+    }
+}
+
+/// 一次性富化语义（ADR-0004）：定型 TLS 流后续包收到 ServerHello 时补算 JA4S，
+/// 且已有元数据（SNI）保持不覆盖
+#[test]
+fn test_detector_tls_ja4s_enrich_once() {
+    let mut detector = rdpi::Detector::new();
+
+    // 先用 ClientHello 定型 TLS 流（此时无 JA4S）
+    let ch_packet = build_tcp_packet(
+        [10, 0, 0, 1],
+        54321,
+        [10, 0, 0, 2],
+        443,
+        &make_client_hello_with_sni("example.com"),
+    );
+    let r1 = detector.detect(&ch_packet).unwrap().unwrap();
+    if let Metadata::Tls(ref meta) = r1.metadata {
+        assert!(meta.ja4s.is_none());
+    }
+
+    // 同一流后续包携带 ServerHello → 富化补算 JA4S
+    let sh_packet = build_tcp_packet(
+        [10, 0, 0, 1],
+        54321,
+        [10, 0, 0, 2],
+        443,
+        &make_server_hello_tls13(),
+    );
+    let r2 = detector.detect(&sh_packet).unwrap().unwrap();
+    if let Metadata::Tls(ref meta) = r2.metadata {
+        assert_eq!(
+            meta.ja4s.as_deref(),
+            Some("t1302h2_1302_60694de2240d"),
+            "富化路径应补算 JA4S"
+        );
+        // SNI 保持富化前的值（元数据合并非覆盖）
+        assert_eq!(meta.sni.as_deref(), Some("example.com"));
+    }
+
+    // 再来一个不含 ServerHello 的包：JA4S 保持
+    let app_packet = build_tcp_packet(
+        [10, 0, 0, 1],
+        54321,
+        [10, 0, 0, 2],
+        443,
+        &[0x17, 0x03, 0x03, 0x00, 0x00],
+    );
+    let r3 = detector.detect(&app_packet).unwrap().unwrap();
+    if let Metadata::Tls(ref meta) = r3.metadata {
+        assert_eq!(meta.ja4s.as_deref(), Some("t1302h2_1302_60694de2240d"));
     }
 }

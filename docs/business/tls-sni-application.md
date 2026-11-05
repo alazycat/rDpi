@@ -123,3 +123,22 @@ Detector::detect(packet)                                   lib.rs:221
 | P8 | 同一 TCP 段内 ClientHello+Certificate 连体时证书字段能否解析 | 构造连体 payload，断言 cert 字段 |
 | P9 | flow.risks 是否随包数无界重复累计 | 同一 TLS 流喂 10 包，数 flow.risks.len() |
 | P10 | JA4 在 version=None 时为 None、在 TLS1.3 时非空 | 单元断言 |
+
+## 9. JA4S 服务端指纹（F30，2026-11-05 新功能）
+
+JA4 的服务端对应物：基于 ServerHello（服务端从客户端列表中**选定**的一个 cipher + 服务端自己的扩展集合），与 JA4 配对定位「客户端软件 ↔ 服务端软件」组合。
+
+```text
+ServerHello 采集路径（三条，互相独立）：
+ ① TCP 服务端流首包（TLS 1.3 明文只有 ServerHello，证书已加密）
+    └─ TlsDetector 记录循环 parse_server_hello 分支       tls/mod.rs（F30 新增）
+ ② TCP 已定型 TLS 流的后续包 → enrich_tls_ja4s 一次性富化  lib.rs（对齐 ADR-0004）
+ ③ QUIC 服务端 Initial 解密 → q 前缀变体                   quic/parser.rs decrypt_server_hello_meta
+    └─ CRYPTO 帧 → 假 record 头 → tls::parse_server_hello（复用 F28 密钥缓存）
+方向语义：FlowKey 按五元组方向 → JA4 落客户端流、JA4S 落服务端流（与 FoxIO 一致）
+
+JA4S 格式（FoxIO 官方 ja4.py to_ja4s）：{t|q}{版本2位}{扩展数2位}{alpn 2字符}_{cipher 4hex}_{sha256[:12]}
+  ├─ 扩展按服务端发送顺序哈希，不排序、不过滤 GREASE（区别于客户端 JA4）
+  ├─ cipher 为服务端选定套件的明文 4 hex（非哈希）
+  └─ golden 向量经 PowerShell .NET SHA256 独立实现交叉验证（application/ja4.rs 测试）
+```
