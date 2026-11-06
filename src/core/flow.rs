@@ -3,7 +3,7 @@
 //! This module contains flow tracking and management functionality.
 
 use crate::core::types::*;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
 /// 流状态
@@ -44,6 +44,100 @@ impl Default for FlowStats {
     }
 }
 
+/// 每方向 TCP 重组缓冲上限（防止乱序攻击导致无界内存）
+const TCP_REASSEMBLY_MAX_PENDING_BYTES: usize = 256 * 1024;
+
+/// 单向 TCP 字节流重组器
+///
+/// 按序列号把乱序段暂存，连续后一次性交付；重传/重叠段裁剪为未交付部分。
+/// 无 SYN 的 mid-stream 流以首个数据段为基线（更早的段按重传处理丢弃）。
+#[derive(Debug, Clone, Default)]
+pub struct TcpReassembler {
+    next_seq: Option<u32>,
+    pending: BTreeMap<u32, Vec<u8>>,
+    pending_bytes: usize,
+}
+
+impl TcpReassembler {
+    /// 创建空重组器
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 推入一个 TCP 段，返回本段触发的连续可交付字节
+    pub fn push(&mut self, seq: u32, flags: u8, payload: &[u8]) -> Vec<u8> {
+        let syn = flags & 0x02 != 0;
+        if syn {
+            self.next_seq = Some(seq.wrapping_add(1));
+        }
+        if payload.is_empty() {
+            return Vec::new();
+        }
+
+        // SYN 带载荷时，载荷从 seq+1 开始（SYN 自身消耗一个序列号）。
+        let data_seq = if syn { seq.wrapping_add(1) } else { seq };
+        let next = match self.next_seq {
+            Some(next) => next,
+            None => {
+                self.next_seq = Some(data_seq);
+                data_seq
+            }
+        };
+
+        let mut out = Vec::new();
+        let diff = data_seq.wrapping_sub(next) as i32;
+        if diff == 0 {
+            out.extend_from_slice(payload);
+            self.next_seq = Some(next.wrapping_add(payload.len() as u32));
+        } else if diff > 0 {
+            self.insert_pending(data_seq, payload);
+        } else {
+            // 重传/重叠：跳过已交付前缀，只交付剩余新字节。
+            let overlap = (-diff) as usize;
+            if overlap < payload.len() {
+                let fresh = &payload[overlap..];
+                out.extend_from_slice(fresh);
+                self.next_seq = Some(next.wrapping_add(fresh.len() as u32));
+            }
+        }
+
+        self.drain_pending(&mut out);
+        out
+    }
+
+    fn insert_pending(&mut self, seq: u32, payload: &[u8]) {
+        if self.pending_bytes + payload.len() > TCP_REASSEMBLY_MAX_PENDING_BYTES {
+            return;
+        }
+        if self.pending.contains_key(&seq) {
+            return;
+        }
+        self.pending.insert(seq, payload.to_vec());
+        self.pending_bytes += payload.len();
+    }
+
+    fn drain_pending(&mut self, out: &mut Vec<u8>) {
+        while let Some(next) = self.next_seq {
+            let Some((&seq, _)) = self.pending.iter().next() else {
+                break;
+            };
+            let diff = seq.wrapping_sub(next) as i32;
+            if diff > 0 {
+                break;
+            }
+            let data = self.pending.remove(&seq).unwrap();
+            self.pending_bytes -= data.len();
+            let overlap = if diff < 0 { (-diff) as usize } else { 0 };
+            if overlap >= data.len() {
+                continue;
+            }
+            let fresh = &data[overlap..];
+            out.extend_from_slice(fresh);
+            self.next_seq = Some(next.wrapping_add(fresh.len() as u32));
+        }
+    }
+}
+
 /// 单条流
 ///
 /// 包含流的键、协议、统计和元数据。
@@ -79,6 +173,8 @@ pub struct Flow {
     pub protocol_stack: ProtocolStack,
     /// 有状态 dissector 的 per-flow 状态（P1）
     pub dissector_state: DissectorState,
+    /// TCP 每方向重组器（P1：乱序/重传；[Forward, Reverse]）
+    pub tcp_reassembly: [TcpReassembler; 2],
     /// 已观察包计数（用于 Giveup 机制）
     pub packets_seen: u32,
     /// 仅 DPI 模式（不做猜测）
@@ -164,6 +260,7 @@ impl Flow {
             metadata: None,
             protocol_stack: ProtocolStack::new(),
             dissector_state: DissectorState::None,
+            tcp_reassembly: [TcpReassembler::new(), TcpReassembler::new()],
             packets_seen: 0,
             dpi_only: false,
             ja4t: None,

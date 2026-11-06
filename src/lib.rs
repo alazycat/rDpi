@@ -652,11 +652,34 @@ impl Detector {
             return Ok(Some(result));
         }
 
-        // 有状态 dissector：当前 HTTP / DNS-over-TCP 均为 TCP 专用。
+        // 有状态 dissector：当前 HTTP / DNS-over-TCP / TLS 均为 TCP 专用。
         if parsed.transport == TransportProto::Tcp {
+            // 先做 TCP 序列号重组，再把连续字节交给有状态 dissector。
+            let stateful_payload = match parsed.tcp.as_ref() {
+                Some(tcp) => {
+                    let idx = match direction {
+                        Direction::Forward => 0,
+                        Direction::Reverse => 1,
+                    };
+                    flow.tcp_reassembly[idx].push(tcp.seq, tcp.flags, &parsed.payload)
+                }
+                None => parsed.payload.clone(),
+            };
+            if stateful_payload.is_empty() {
+                // 纯 ACK / 重传 / 乱序等待：没有新的连续字节。
+                if let Some(protocol) = flow.protocol {
+                    let mut replay = DetectionResult::new(protocol);
+                    replay.protocol_stack = flow.protocol_stack;
+                    if let Some(ref metadata) = flow.metadata {
+                        replay.metadata = metadata.clone();
+                    }
+                    return Ok(Some(replay));
+                }
+                return Ok(None);
+            }
             let stateful = self.registry.process_stateful(
                 &mut flow.dissector_state,
-                &parsed.payload,
+                &stateful_payload,
                 direction,
                 parsed.src_port,
                 parsed.dst_port,

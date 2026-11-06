@@ -106,11 +106,13 @@ fn make_l3_udp_packet(payload: &[u8]) -> Vec<u8> {
     make_l3_udp_packet_between([192, 168, 1, 1], 12345, [10, 0, 0, 1], 53, payload)
 }
 
-fn make_l3_tcp_packet_between(
+fn make_l3_tcp_packet_with_seq(
     src: [u8; 4],
     src_port: u16,
     dst: [u8; 4],
     dst_port: u16,
+    seq: u32,
+    flags: u8,
     payload: &[u8],
 ) -> Vec<u8> {
     let total_len = (20 + 20 + payload.len()) as u16;
@@ -139,16 +141,16 @@ fn make_l3_tcp_packet_between(
         (src_port & 0xff) as u8,
         (dst_port >> 8) as u8,
         (dst_port & 0xff) as u8,
-        0x00,
-        0x00,
-        0x00,
-        0x01, // seq
+        (seq >> 24) as u8,
+        (seq >> 16) as u8,
+        (seq >> 8) as u8,
+        (seq & 0xff) as u8,
         0x00,
         0x00,
         0x00,
         0x00, // ack
         0x50, // data offset = 5 * 4
-        0x18, // PSH | ACK
+        flags,
         0xff,
         0xff, // window
         0x00,
@@ -427,18 +429,22 @@ fn process_l3_packet_upgrades_partial_to_classified() {
 #[test]
 fn http_request_split_across_tcp_packets_is_reassembled() {
     let mut detector = Detector::new();
-    let first = make_l3_tcp_packet_between(
+    let first = make_l3_tcp_packet_with_seq(
         [192, 168, 1, 1],
         12345,
         [10, 0, 0, 1],
         80,
+        1_000,
+        0x18,
         b"GET /index.html HTTP/1.1\r\nHost: exa",
     );
-    let second = make_l3_tcp_packet_between(
+    let second = make_l3_tcp_packet_with_seq(
         [192, 168, 1, 1],
         12345,
         [10, 0, 0, 1],
         80,
+        1_000 + b"GET /index.html HTTP/1.1\r\nHost: exa".len() as u32,
+        0x18,
         b"mple.com\r\n\r\n",
     );
     let parsed = parse_l3_packet(&first).unwrap();
@@ -482,10 +488,24 @@ fn dns_over_tcp_reassembles_split_message() {
     let query = make_dns_query_payload();
     let framed = frame_dns_over_tcp(&query);
     let split = 2 + query.len() / 2;
-    let first_packet =
-        make_l3_tcp_packet_between([192, 168, 1, 1], 23456, [10, 0, 0, 1], 53, &framed[..split]);
-    let second_packet =
-        make_l3_tcp_packet_between([192, 168, 1, 1], 23456, [10, 0, 0, 1], 53, &framed[split..]);
+    let first_packet = make_l3_tcp_packet_with_seq(
+        [192, 168, 1, 1],
+        23456,
+        [10, 0, 0, 1],
+        53,
+        2_000,
+        0x18,
+        &framed[..split],
+    );
+    let second_packet = make_l3_tcp_packet_with_seq(
+        [192, 168, 1, 1],
+        23456,
+        [10, 0, 0, 1],
+        53,
+        2_000 + split as u32,
+        0x18,
+        &framed[split..],
+    );
     let parsed = parse_l3_packet(&first_packet).unwrap();
     let packet_key = FlowKey {
         src_ip: parsed.src_ip,
@@ -521,10 +541,24 @@ fn dns_over_tcp_buffers_split_length_prefix() {
     let mut detector = Detector::new();
     let query = make_dns_query_payload();
     let framed = frame_dns_over_tcp(&query);
-    let first_packet =
-        make_l3_tcp_packet_between([192, 168, 1, 1], 23457, [10, 0, 0, 1], 53, &framed[..1]);
-    let second_packet =
-        make_l3_tcp_packet_between([192, 168, 1, 1], 23457, [10, 0, 0, 1], 53, &framed[1..]);
+    let first_packet = make_l3_tcp_packet_with_seq(
+        [192, 168, 1, 1],
+        23457,
+        [10, 0, 0, 1],
+        53,
+        3_000,
+        0x18,
+        &framed[..1],
+    );
+    let second_packet = make_l3_tcp_packet_with_seq(
+        [192, 168, 1, 1],
+        23457,
+        [10, 0, 0, 1],
+        53,
+        3_001,
+        0x18,
+        &framed[1..],
+    );
     let parsed = parse_l3_packet(&first_packet).unwrap();
     let packet_key = FlowKey {
         src_ip: parsed.src_ip,
@@ -559,10 +593,24 @@ fn tls_client_hello_split_across_tcp_packets_is_reassembled() {
     let mut detector = Detector::new();
     let hello = make_tls_client_hello_with_sni("example.com");
     let split = 7; // record header + 2 bytes of handshake header
-    let first_packet =
-        make_l3_tcp_packet_between([192, 168, 1, 1], 12345, [10, 0, 0, 1], 443, &hello[..split]);
-    let second_packet =
-        make_l3_tcp_packet_between([192, 168, 1, 1], 12345, [10, 0, 0, 1], 443, &hello[split..]);
+    let first_packet = make_l3_tcp_packet_with_seq(
+        [192, 168, 1, 1],
+        12345,
+        [10, 0, 0, 1],
+        443,
+        4_000,
+        0x18,
+        &hello[..split],
+    );
+    let second_packet = make_l3_tcp_packet_with_seq(
+        [192, 168, 1, 1],
+        12345,
+        [10, 0, 0, 1],
+        443,
+        4_000 + split as u32,
+        0x18,
+        &hello[split..],
+    );
     let parsed = parse_l3_packet(&first_packet).unwrap();
     let packet_key = FlowKey {
         src_ip: parsed.src_ip,
@@ -596,10 +644,24 @@ fn tls_record_header_split_across_tcp_packets_is_reassembled() {
     let mut detector = Detector::new();
     let hello = make_tls_client_hello_with_sni("example.com");
     let split = 3; // inside the 5-byte TLS record header
-    let first_packet =
-        make_l3_tcp_packet_between([192, 168, 1, 1], 12346, [10, 0, 0, 1], 443, &hello[..split]);
-    let second_packet =
-        make_l3_tcp_packet_between([192, 168, 1, 1], 12346, [10, 0, 0, 1], 443, &hello[split..]);
+    let first_packet = make_l3_tcp_packet_with_seq(
+        [192, 168, 1, 1],
+        12346,
+        [10, 0, 0, 1],
+        443,
+        5_000,
+        0x18,
+        &hello[..split],
+    );
+    let second_packet = make_l3_tcp_packet_with_seq(
+        [192, 168, 1, 1],
+        12346,
+        [10, 0, 0, 1],
+        443,
+        5_000 + split as u32,
+        0x18,
+        &hello[split..],
+    );
     let parsed = parse_l3_packet(&first_packet).unwrap();
     let packet_key = FlowKey {
         src_ip: parsed.src_ip,
@@ -624,6 +686,147 @@ fn tls_record_header_split_across_tcp_packets_is_reassembled() {
     match second.metadata {
         Metadata::Tls(meta) => assert_eq!(meta.sni.as_deref(), Some("example.com")),
         _ => panic!("expected TLS metadata"),
+    }
+}
+
+#[test]
+fn tcp_out_of_order_segments_are_reassembled_before_http() {
+    let mut detector = Detector::new();
+    let request = b"GET /index.html HTTP/1.1\r\nHost: example.com\r\n\r\n";
+    let split = request.len() / 2;
+    let first_half = &request[..split];
+    let second_half = &request[split..];
+
+    let syn =
+        make_l3_tcp_packet_with_seq([192, 168, 1, 1], 12345, [10, 0, 0, 1], 80, 6000, 0x02, b"");
+    let second = make_l3_tcp_packet_with_seq(
+        [192, 168, 1, 1],
+        12345,
+        [10, 0, 0, 1],
+        80,
+        6001 + first_half.len() as u32,
+        0x18,
+        second_half,
+    );
+    let first = make_l3_tcp_packet_with_seq(
+        [192, 168, 1, 1],
+        12345,
+        [10, 0, 0, 1],
+        80,
+        6001,
+        0x18,
+        first_half,
+    );
+
+    let parsed = parse_l3_packet(&syn).unwrap();
+    let packet_key = FlowKey {
+        src_ip: parsed.src_ip,
+        dst_ip: parsed.dst_ip,
+        src_port: parsed.src_port,
+        dst_port: parsed.dst_port,
+        transport: parsed.transport,
+    };
+    let mut flow = Flow::new_bidirectional(packet_key);
+
+    assert!(
+        detector
+            .process_l3_packet(&mut flow, &syn, 1)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        detector
+            .process_l3_packet(&mut flow, &second, 2)
+            .unwrap()
+            .is_none(),
+        "out-of-order segment must be buffered"
+    );
+
+    let result = detector
+        .process_l3_packet(&mut flow, &first, 3)
+        .unwrap()
+        .expect("out-of-order request should reassemble");
+    assert_eq!(result.protocol, Protocol::Http);
+    match result.metadata {
+        Metadata::Http(meta) => assert_eq!(meta.host.as_deref(), Some("example.com")),
+        _ => panic!("expected HTTP metadata"),
+    }
+}
+
+#[test]
+fn tcp_retransmission_is_deduplicated_before_http() {
+    let mut detector = Detector::new();
+    let first_half: &[u8] = b"GET / HTTP/1.1\r\nHost: exa";
+    let second_half: &[u8] = b"mple.com\r\n\r\n";
+
+    let syn =
+        make_l3_tcp_packet_with_seq([192, 168, 1, 1], 12346, [10, 0, 0, 1], 80, 7000, 0x02, b"");
+    let first = make_l3_tcp_packet_with_seq(
+        [192, 168, 1, 1],
+        12346,
+        [10, 0, 0, 1],
+        80,
+        7001,
+        0x18,
+        first_half,
+    );
+    let retransmission = make_l3_tcp_packet_with_seq(
+        [192, 168, 1, 1],
+        12346,
+        [10, 0, 0, 1],
+        80,
+        7001,
+        0x18,
+        first_half,
+    );
+    let second = make_l3_tcp_packet_with_seq(
+        [192, 168, 1, 1],
+        12346,
+        [10, 0, 0, 1],
+        80,
+        7001 + first_half.len() as u32,
+        0x18,
+        second_half,
+    );
+
+    let parsed = parse_l3_packet(&syn).unwrap();
+    let packet_key = FlowKey {
+        src_ip: parsed.src_ip,
+        dst_ip: parsed.dst_ip,
+        src_port: parsed.src_port,
+        dst_port: parsed.dst_port,
+        transport: parsed.transport,
+    };
+    let mut flow = Flow::new_bidirectional(packet_key);
+
+    assert!(
+        detector
+            .process_l3_packet(&mut flow, &syn, 1)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        detector
+            .process_l3_packet(&mut flow, &first, 2)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        detector
+            .process_l3_packet(&mut flow, &retransmission, 3)
+            .unwrap()
+            .is_none(),
+        "retransmission must not be delivered"
+    );
+
+    let result = detector
+        .process_l3_packet(&mut flow, &second, 4)
+        .unwrap()
+        .expect("request after retransmission should classify");
+    assert_eq!(result.protocol, Protocol::Http);
+    match result.metadata {
+        Metadata::Http(meta) => assert_eq!(meta.host.as_deref(), Some("example.com")),
+        _ => panic!("expected HTTP metadata"),
     }
 }
 

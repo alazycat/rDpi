@@ -10,6 +10,8 @@ use std::net::IpAddr;
 pub struct TcpHeaderInfo {
     /// 标志位原样字节（SYN=0x02、ACK=0x10 等）
     pub flags: u8,
+    /// TCP 序列号（P1：乱序/重传重组基线）
+    pub seq: u32,
     /// 窗口大小（TCP 头原始值，未按缩放因子换算）
     pub window: u16,
     /// 选项 kind 序列长度（按出现顺序，含 NOP=1；EOL=0 终止走查）
@@ -29,6 +31,7 @@ impl Default for TcpHeaderInfo {
     fn default() -> Self {
         Self {
             flags: 0,
+            seq: 0,
             window: 0,
             option_kinds_len: 0,
             option_kinds: [0; 40],
@@ -52,6 +55,7 @@ pub fn parse(data: &[u8], src_ip: IpAddr, dst_ip: IpAddr, ttl: u8) -> Result<Par
     // 无堆分配；畸形长度立即终止走查（payload 切分不受影响）。
     let mut tcp = TcpHeaderInfo {
         flags: data[13],
+        seq: u32::from_be_bytes([data[4], data[5], data[6], data[7]]),
         window: u16::from_be_bytes([data[14], data[15]]),
         ttl,
         ..Default::default()
