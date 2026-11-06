@@ -324,6 +324,21 @@ impl Detector {
             ));
         }
 
+        // F34：JA4TS 服务端 TCP 指纹——服务端 SYN-ACK（flags 精确等于 SYN|ACK，
+        // 对齐官方 zeek/ja4t/main.zeek），每流只取第一个满足的包。存服务端方向流
+        // （FlowKey 方向性：SYN-ACK 与 SYN 属两条流）的旁路字段，不占用
+        // protocol/metadata 的一次定型语义，不影响后续协议识别。
+        if flow.ja4ts.is_none() && parsed.tcp.is_some_and(|tcp| tcp.flags == 0x12) {
+            // unwrap 安全：is_some_and 已确认 tcp 存在
+            let tcp = parsed.tcp.unwrap();
+            flow.ja4ts = Some(application::compute_ja4ts(
+                tcp.window,
+                &tcp.option_kinds[..tcp.option_kinds_len],
+                tcp.mss,
+                tcp.window_scale,
+            ));
+        }
+
         // 计算 giveup 阈值
         let giveup_threshold = match flow.key.transport {
             TransportProto::Tcp => DEFAULT_TCP_GIVEUP,
@@ -361,6 +376,7 @@ impl Detector {
                 };
                 if let Some(mut r) = engine.match_rule(&rule_ctx) {
                     r.ja4t = flow.ja4t.clone();
+                    r.ja4ts = flow.ja4ts.clone();
                     flow.protocol = Some(r.protocol);
                     flow.metadata = Some(r.metadata.clone());
                     return Ok(Some(r));
@@ -454,9 +470,10 @@ impl Detector {
         flow.stats.bytes += packet.len() as u64;
         flow.stats.last_time = std::time::Instant::now();
 
-        // 如果有检测结果，保存元数据（并携带流级 JA4T，若此前已捕获 SYN）
+        // 如果有检测结果，保存元数据（并携带流级 JA4T/JA4TS，若此前已捕获 SYN/SYN-ACK）
         if let Some(ref mut r) = result {
             r.ja4t = flow.ja4t.clone();
+            r.ja4ts = flow.ja4ts.clone();
             flow.metadata = Some(r.metadata.clone());
         }
 

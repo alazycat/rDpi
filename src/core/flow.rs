@@ -66,6 +66,9 @@ pub struct Flow {
     /// JA4T 客户端 TCP 指纹（F33：初始 SYN 包一次性计算；流级旁路字段，
     /// 不占用 protocol/metadata 的一次定型语义）
     pub ja4t: Option<String>,
+    /// JA4TS 服务端 TCP 指纹（F34：SYN-ACK 包一次性计算；服务端方向流
+    /// 的旁路字段，不占用 protocol/metadata 的一次定型语义）
+    pub ja4ts: Option<String>,
     /// 流关联的风险 (feature: risk)
     #[cfg(feature = "risk")]
     pub risks: Vec<crate::risk::types::RiskResult>,
@@ -83,6 +86,7 @@ impl Flow {
             packets_seen: 0,
             dpi_only: false,
             ja4t: None,
+            ja4ts: None,
             #[cfg(feature = "risk")]
             risks: Vec::new(),
         }

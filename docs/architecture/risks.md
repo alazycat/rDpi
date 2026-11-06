@@ -263,3 +263,15 @@
   - CLI：文本输出追加 ` ja4t=...`（rdpi.rs print_detection）；json feature 随 DetectionResult derive 自动序列化。
 - **测试**：compute_ja4t 3 项（官方 3 向量 `8192_00_00_00`/`5744_2-4-8-1-3_1436_00`/`8192_2_09_00` 直证 + Windows 11 形态 + 补零语义）；parser/tcp.rs 5 项（字段提取/无选项/EOL 填充/畸形长度/截断）；tests/test_ja4t.rs 6 项（SYN 捕获、回显携带且不覆盖、SYN-ACK 不触发但后续 SYN 捕获、SYN+ECN、无 SYN 不产出、每流取第一个 SYN）。JA4T 无哈希段（纯格式化），无需 SHA256 交叉验证。共 14 项新增，默认 310 / all-features 1112 / risk 355 全绿；clippy --all-features --all-targets 0 警告。
 - **已知边界**：官方 rust/ja4 仅实现 JA4T（客户端 SYN），JA4TS（服务端 SYN-ACK）官方未实现——本轮对齐官方只做 JA4T，服务端指纹留待官方规格落地；窗口缩放后实际窗口（window << wscale）不在指纹内（与官方一致，用原始值）；IP 分片 TCP 头仅首个分片含选项，重组层不感知（parse_packet 不做 IP 重组，分片包按独立处理）；测试教训：FlowKey 为方向性五元组，SYN 与 SYN-ACK 属不同流（tests/test_ja4t.rs 按方向断言）。
+
+## F34【中】JA4TS 服务端 TCP 指纹（2026-11-06，新功能开发）—— ✅ 已完成
+
+- **背景**：F33 已知边界兑现——JA4T 之外补齐服务端指纹 JA4TS（服务端 SYN-ACK 头部字段指纹化服务器操作系统/协议栈）。与 JA4T 同为纯传输层、零解密、无新依赖、不依赖任何协议 feature。
+- **规格来源**：FoxIO 官方 rust/ja4 至今未实现 JA4TS（F33 已登记）；本轮以官方 [zeek/ja4t/main.zeek](https://github.com/FoxIO-LLC/ja4)（JA4TS_enabled 分支）为权威：格式与 JA4T **完全一致** `{window}_{options}_{mss}_{window_scale}`，差异仅在触发语义——`flags` **精确等于** `SYN|ACK`（0x12；SYN|ACK|PSH 等带额外标志位的包不触发，区别于 JA4T 的位测试判定），取第一个满足的 SYN-ACK。
+- **实现**：
+  - [application/ja4.rs](file:///d:/rust_code/rDpi/src/application/ja4.rs) `compute_ja4ts(window, option_kinds, mss, window_scale)`：直接委托 `compute_ja4t`（格式同源，命名独立以固定语义锚点），应用模块重导出。
+  - [lib.rs](file:///d:/rust_code/rDpi/src/lib.rs) detect 主流程：JA4T 捕获块之后并列 JA4TS 捕获块——`flow.ja4ts.is_none()` 且 `tcp.flags == 0x12` 时一次性计算写入 `Flow.ja4ts`（core/flow.rs 新字段）。FlowKey 方向性：SYN-ACK 落在服务端方向流（与客户端 SYN 属两条流），互不干扰；**流级旁路字段，不占用 protocol/metadata 一次定型语义**。复用 F33 的 `TcpHeaderInfo`，本轮未改 ParsedPacket。
+  - `DetectionResult.ja4ts`（types.rs 新字段）：规则分支与结果落库处统一携带（回显/DPI/guess 全分支覆盖）。
+  - CLI：文本输出追加 ` ja4ts=...`（rdpi.rs print_detection）；json feature 随 derive 自动序列化。
+- **测试**：tests/test_ja4t.rs 扩至 11 项（新增 5：SYN-ACK 捕获、首个 SYN-ACK 优先/重传不覆盖、SYN 不触发 JA4TS 且 SYN-ACK 不触发 JA4T 双向互斥、flags 精确等于门（0x1A 不触发、同流后续精确 0x12 仍捕获）、无握手不产出）。JA4TS 无哈希段（纯格式化，格式经 F33 官方 3 向量直证），无需交叉验证。三配置全绿：默认 315 / all-features 1117（10 ignored）/ risk 360；clippy --all-features --all-targets 0 警告。
+- **已知边界**：官方 JA4TS 在 SYN-ACK 重传时追加第 5 段重传延迟序列（及 RST 后缀 `-R{sec}`，10 秒窗口、至多 10 项）——需跨包计时状态（last_ts/delays 向量），超出每流旁路字段语义，本库不实现（无重传时官方输出恰为本库 4 字段格式，前缀语义无损）；窗口缩放后实际窗口、IP 分片重组不感知等边界与 F33 相同。

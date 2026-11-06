@@ -1,9 +1,11 @@
-//! JA4T 客户端 TCP 指纹集成测试（F33，2026-11-05）
+//! JA4T/JA4TS TCP 指纹集成测试（F33/F34，2026-11-05）
 //!
-//! 触发语义对齐 FoxIO 官方 rust/ja4 tcp.rs：
-//! - 仅初始 SYN（SYN=0x02 置位且 ACK=0x10 清零；SYN+ECN 0xC2 同样满足）
-//! - 每流只取第一个满足的包
-//! - 格式 `{window}_{options}_{mss}_{window_scale}`，官方向量见 application/ja4.rs
+//! 触发语义：
+//! - JA4T 对齐 FoxIO 官方 rust/ja4 tcp.rs：仅初始 SYN（SYN=0x02 置位且
+//!   ACK=0x10 清零；SYN+ECN 0xC2 同样满足），每流只取第一个满足的包
+//! - JA4TS 对齐官方 zeek/ja4t/main.zeek：仅服务端 SYN-ACK（flags 精确等于
+//!   SYN|ACK=0x12），服务端方向流每流只取第一个满足的包
+//! - 两者格式一致：`{window}_{options}_{mss}_{window_scale}`，官方向量见 application/ja4.rs
 
 use rdpi::Detector;
 
@@ -232,4 +234,186 @@ fn test_ja4t_first_syn_wins_and_udp_unaffected() {
     d.detect(&syn2).unwrap();
     let flows: Vec<_> = d.flows().map(|(_, f)| f).collect();
     assert_eq!(flows[0].ja4t.as_deref(), Some("1024_2_512_00"));
+}
+
+/// 服务端形态 SYN-ACK 选项：MSS(1460) + NOP + WS(7) + NOP + NOP + SACK-Permitted
+const SYN_ACK_OPTIONS_LINUX: &[u8] = &[2, 4, 0x05, 0xb4, 1, 3, 3, 7, 1, 1, 4, 2];
+
+#[test]
+fn test_ja4ts_captured_from_syn_ack() {
+    let mut d = Detector::new();
+    let syn_ack = build_tcp_packet_with_options(
+        [93, 184, 216, 34],
+        443,
+        [192, 168, 1, 10],
+        54321,
+        0x12, // SYN|ACK（精确等于，官方 zeek 语义）
+        29200,
+        SYN_ACK_OPTIONS_LINUX,
+        &[],
+    );
+    let r = d.detect(&syn_ack).unwrap();
+    // 空载荷 SYN-ACK 通常无协议识别结果，但 JA4TS 已写入服务端方向流
+    assert!(r.is_none() || r.unwrap().ja4ts.is_some());
+
+    let server_flow = d
+        .flows()
+        .find(|(k, _)| k.src_port == 443)
+        .map(|(_, f)| f)
+        .expect("服务端方向流应存在");
+    assert_eq!(
+        server_flow.ja4ts.as_deref(),
+        Some("29200_2-1-3-1-1-4_1460_7")
+    );
+
+    // 客户端方向流（另一条流）不受影响
+    let client_flow = d.flows().find(|(k, _)| k.src_port == 54321);
+    assert!(client_flow.is_none(), "仅有 SYN-ACK 时客户端方向流不存在");
+}
+
+#[test]
+fn test_ja4ts_first_syn_ack_wins() {
+    let mut d = Detector::new();
+    let syn_ack1 = build_tcp_packet_with_options(
+        [93, 184, 216, 34],
+        443,
+        [192, 168, 1, 10],
+        54321,
+        0x12,
+        29200,
+        SYN_ACK_OPTIONS_LINUX,
+        &[],
+    );
+    d.detect(&syn_ack1).unwrap();
+    // 重传 SYN-ACK（不同窗口/无选项）：不得覆盖首个指纹
+    let syn_ack2 = build_tcp_packet_with_options(
+        [93, 184, 216, 34],
+        443,
+        [192, 168, 1, 10],
+        54321,
+        0x12,
+        9999,
+        &[],
+        &[],
+    );
+    d.detect(&syn_ack2).unwrap();
+    let server_flow = d
+        .flows()
+        .find(|(k, _)| k.src_port == 443)
+        .map(|(_, f)| f)
+        .expect("服务端方向流应存在");
+    assert_eq!(
+        server_flow.ja4ts.as_deref(),
+        Some("29200_2-1-3-1-1-4_1460_7"),
+        "重传 SYN-ACK 不得覆盖首个指纹"
+    );
+}
+
+#[test]
+fn test_ja4ts_syn_does_not_trigger() {
+    let mut d = Detector::new();
+    // 客户端 SYN 先行：ja4ts 不得产出（SYN 归 JA4T 管辖）
+    let syn = build_tcp_packet_with_options(
+        [192, 168, 1, 10],
+        54321,
+        [93, 184, 216, 34],
+        443,
+        0x02,
+        64240,
+        SYN_OPTIONS_WIN11,
+        &[],
+    );
+    d.detect(&syn).unwrap();
+    let client_flow = d
+        .flows()
+        .find(|(k, _)| k.src_port == 54321)
+        .map(|(_, f)| f)
+        .expect("客户端方向流应存在");
+    assert!(client_flow.ja4ts.is_none(), "SYN 不得触发 JA4TS");
+    assert_eq!(
+        client_flow.ja4t.as_deref(),
+        Some("64240_2-1-3-1-1-4_1460_8")
+    );
+
+    // 随后 SYN-ACK 到达（服务端方向是另一条流）：JA4TS 捕获，且 JA4T 不触发
+    let syn_ack = build_tcp_packet_with_options(
+        [93, 184, 216, 34],
+        443,
+        [192, 168, 1, 10],
+        54321,
+        0x12,
+        29200,
+        SYN_ACK_OPTIONS_LINUX,
+        &[],
+    );
+    d.detect(&syn_ack).unwrap();
+    let server_flow = d
+        .flows()
+        .find(|(k, _)| k.src_port == 443)
+        .map(|(_, f)| f)
+        .expect("服务端方向流应存在");
+    assert_eq!(
+        server_flow.ja4ts.as_deref(),
+        Some("29200_2-1-3-1-1-4_1460_7")
+    );
+    assert!(server_flow.ja4t.is_none(), "SYN-ACK 不得触发 JA4T");
+}
+
+#[test]
+fn test_ja4ts_requires_exact_syn_ack_flags() {
+    let mut d = Detector::new();
+    // SYN|ACK|PSH（0x1A）：官方 zeek 要求 flags 精确等于 SYN|ACK，不触发
+    let weird = build_tcp_packet_with_options(
+        [93, 184, 216, 34],
+        443,
+        [192, 168, 1, 10],
+        54321,
+        0x1A,
+        29200,
+        SYN_ACK_OPTIONS_LINUX,
+        &[],
+    );
+    d.detect(&weird).unwrap();
+    let flows: Vec<_> = d.flows().map(|(_, f)| f).collect();
+    assert!(
+        flows[0].ja4ts.is_none(),
+        "带额外标志位的 SYN-ACK 不得触发 JA4TS"
+    );
+    // 同流真正精确的 SYN-ACK：仍可捕获（每流一次，首个精确 SYN-ACK 生效）
+    let syn_ack = build_tcp_packet_with_options(
+        [93, 184, 216, 34],
+        443,
+        [192, 168, 1, 10],
+        54321,
+        0x12,
+        5744,
+        &[2, 4, 0x05, 0x9c],
+        &[],
+    );
+    d.detect(&syn_ack).unwrap();
+    let server_flow = d
+        .flows()
+        .find(|(k, _)| k.src_port == 443)
+        .map(|(_, f)| f)
+        .expect("服务端方向流应存在");
+    assert_eq!(server_flow.ja4ts.as_deref(), Some("5744_2_1436_00"));
+}
+
+#[test]
+fn test_ja4ts_absent_without_syn_ack() {
+    let mut d = Detector::new();
+    // 纯数据流（无握手抓包场景）：不产出 JA4TS
+    let psh = build_tcp_packet_with_options(
+        [93, 184, 216, 34],
+        443,
+        [192, 168, 1, 10],
+        54321,
+        0x18,
+        1000,
+        &[],
+        &[],
+    );
+    d.detect(&psh).unwrap();
+    let flows: Vec<_> = d.flows().map(|(_, f)| f).collect();
+    assert!(flows[0].ja4ts.is_none());
 }

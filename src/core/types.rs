@@ -567,6 +567,8 @@ pub struct DetectionResult {
     pub app_protocol: Option<Application>,
     /// JA4T 客户端 TCP 指纹（F33：来自流的初始 SYN 包；非 TCP / 无 SYN 时为 None）
     pub ja4t: Option<String>,
+    /// JA4TS 服务端 TCP 指纹（F34：来自服务端方向的 SYN-ACK 包；非 TCP / 无 SYN-ACK 时为 None）
+    pub ja4ts: Option<String>,
     /// 风险分析结果 (feature: risk)
     #[cfg(feature = "risk")]
     pub risks: Vec<super::super::risk::types::RiskResult>,
@@ -583,6 +585,7 @@ impl DetectionResult {
             breed: protocol.breed(),
             app_protocol: None,
             ja4t: None,
+            ja4ts: None,
             #[cfg(feature = "risk")]
             risks: Vec::new(),
         }

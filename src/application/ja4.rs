@@ -341,6 +341,23 @@ pub fn compute_ja4t(window: u16, option_kinds: &[u8], mss: u16, window_scale: u8
     format!("{window}_{options}_{mss:02}_{scale}")
 }
 
+/// JA4TS：TCP 服务端指纹（F34，2026-11-05）
+///
+/// 格式与 JA4T 完全一致（FoxIO 官方 zeek/ja4t/main.zeek 的 ja4ts 字段：
+/// `{window}_{options}_{mss:02}_{scale}`），差异仅在触发语义——取服务端
+/// SYN-ACK（flags 精确等于 SYN|ACK）而非客户端初始 SYN。
+///
+/// 官方 JA4TS 在存在 SYN-ACK 重传时会追加第 5 段重传延迟序列（及 RST 后缀
+/// `-R{sec}`），需要跨包计时状态，超出每流旁路字段语义，本库不实现
+/// （见 risks.md F34 边界登记）。
+///
+/// # 参数
+///
+/// 同 [`compute_ja4t`]：SYN-ACK 包的原始窗口值、选项 kind 序列、MSS、窗口缩放因子
+pub fn compute_ja4ts(window: u16, option_kinds: &[u8], mss: u16, window_scale: u8) -> String {
+    compute_ja4t(window, option_kinds, mss, window_scale)
+}
+
 /// OID 列表 → 12 位哈希段：DER 内容字节 hex 逗号拼接后 SHA-256 截断；空列表为 12 个 0
 fn hash12_oids(oids: &[Vec<u8>]) -> String {
     if oids.is_empty() {

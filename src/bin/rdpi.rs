@@ -267,12 +267,19 @@ fn print_detection(pkt_num: u64, det: &DetectionResult) {
         .map(|j| format!(" ja4t={}", j))
         .unwrap_or_default();
 
-    if meta_str.is_empty() && ja4t_str.is_empty() {
+    // F34：JA4TS 服务端 TCP 指纹（来自服务端方向的 SYN-ACK 包）
+    let ja4ts_str = det
+        .ja4ts
+        .as_deref()
+        .map(|j| format!(" ja4ts={}", j))
+        .unwrap_or_default();
+
+    if meta_str.is_empty() && ja4t_str.is_empty() && ja4ts_str.is_empty() {
         println!("[{:6}] {:?} [{:?}]", pkt_num, det.protocol, det.confidence);
     } else {
         println!(
-            "[{:6}] {:?} ({}{}) [{:?}]",
-            pkt_num, det.protocol, meta_str, ja4t_str, det.confidence
+            "[{:6}] {:?} ({}{}{}) [{:?}]",
+            pkt_num, det.protocol, meta_str, ja4t_str, ja4ts_str, det.confidence
         );
     }
 }
