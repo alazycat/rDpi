@@ -11,7 +11,7 @@
 use super::hpack;
 
 /// HTTP/2 connection preface (24 bytes)
-const HTTP2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+pub const HTTP2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
 /// 帧头长度（RFC 7540 §4.1：3 字节长度 + 1 字节类型 + 1 字节 flags + 4 字节 stream id）
 const FRAME_HEADER_LEN: usize = 9;

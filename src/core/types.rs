@@ -96,6 +96,15 @@ pub struct TlsDissectorState {
     pub server_handshake: Vec<u8>,
 }
 
+/// HTTP/2 有状态 dissector 的 per-flow 状态
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Http2DissectorState {
+    /// preface 之后的帧字节缓冲
+    pub buffer: Vec<u8>,
+    /// 24 字节 connection preface 是否已完整
+    pub preface_seen: bool,
+}
+
 /// per-flow 有状态 dissector 状态
 ///
 /// 当前只支持一个活跃的有状态协议（HTTP）；后续按协议扩展枚举。
@@ -110,6 +119,8 @@ pub enum DissectorState {
     DnsTcp(DnsTcpDissectorState),
     /// TLS 记录跨包重组
     Tls(TlsDissectorState),
+    /// HTTP/2 preface + HEADERS 帧跨包重组
+    Http2(Http2DissectorState),
 }
 
 /// 协议栈最大层数（与 nDPI `NDPI_PROTOCOL_STACK_SIZE` 对齐）

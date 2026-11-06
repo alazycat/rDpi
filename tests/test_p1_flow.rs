@@ -256,6 +256,32 @@ fn make_tls_record(content_type: u8, payload: &[u8]) -> Vec<u8> {
 
 /// 构造可被 `parse_certificate` 真实解析的 TLS Certificate 记录
 /// （极简 X.509-like DER，UTF8String CN；与 tests/test_pin_rules.rs 同源）
+#[cfg(feature = "proto3")]
+const H2_C41_BLOCK: &[u8] = &[
+    0x82, 0x86, 0x84, 0x41, 0x8c, 0xf1, 0xe3, 0xc2, 0xe5, 0xf2, 0x3a, 0x6b, 0xa0, 0xab, 0x90, 0xf4,
+    0xff,
+];
+
+#[cfg(feature = "proto3")]
+fn h2_frame(ftype: u8, flags: u8, body: &[u8]) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(9 + body.len());
+    let len = body.len() as u32;
+    frame.extend_from_slice(&len.to_be_bytes()[1..4]);
+    frame.push(ftype);
+    frame.push(flags);
+    frame.extend_from_slice(&[0, 0, 0, 1]); // stream id = 1
+    frame.extend_from_slice(body);
+    frame
+}
+
+#[cfg(feature = "proto3")]
+fn h2_client_payload() -> Vec<u8> {
+    let mut payload = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".to_vec();
+    payload.extend_from_slice(&h2_frame(0x04, 0x00, &[])); // SETTINGS
+    payload.extend_from_slice(&h2_frame(0x01, 0x04, H2_C41_BLOCK)); // HEADERS
+    payload
+}
+
 fn make_tls_certificate_record(subject_cn: &str) -> Vec<u8> {
     fn append_dn(data: &mut Vec<u8>, cn: &str) {
         let mut attr = vec![0x06, 0x03, 0x55, 0x04, 0x03]; // OID commonName
@@ -1002,6 +1028,113 @@ fn tls_certificate_record_enriches_classified_flow() {
             assert_eq!(meta.cert_subject.as_deref(), Some("example.com"));
         }
         _ => panic!("expected enriched flow metadata"),
+    }
+}
+
+#[cfg(feature = "proto3")]
+#[test]
+fn http2_headers_split_across_tcp_packets_are_reassembled() {
+    let mut detector = Detector::new();
+    let payload = h2_client_payload();
+    let split = 24 + 9 + 5; // preface + SETTINGS + 5 bytes of HEADERS
+    let first_packet = make_l3_tcp_packet_with_seq(
+        [192, 168, 1, 1],
+        12349,
+        [10, 0, 0, 1],
+        443,
+        10_000,
+        0x18,
+        &payload[..split],
+    );
+    let second_packet = make_l3_tcp_packet_with_seq(
+        [192, 168, 1, 1],
+        12349,
+        [10, 0, 0, 1],
+        443,
+        10_000 + split as u32,
+        0x18,
+        &payload[split..],
+    );
+    let parsed = parse_l3_packet(&first_packet).unwrap();
+    let packet_key = FlowKey {
+        src_ip: parsed.src_ip,
+        dst_ip: parsed.dst_ip,
+        src_port: parsed.src_port,
+        dst_port: parsed.dst_port,
+        transport: parsed.transport,
+    };
+    let mut flow = Flow::new_bidirectional(packet_key);
+
+    let first = detector
+        .process_l3_packet(&mut flow, &first_packet, 1)
+        .unwrap();
+    assert!(first.is_none(), "partial HEADERS frame must wait");
+    assert!(matches!(flow.dissector_state, DissectorState::Http2(_)));
+
+    let second = detector
+        .process_l3_packet(&mut flow, &second_packet, 2)
+        .unwrap()
+        .expect("complete HEADERS frame should classify");
+    assert_eq!(second.protocol, Protocol::Http2);
+    match second.metadata {
+        Metadata::Http2(meta) => {
+            assert_eq!(meta.method.as_deref(), Some("GET"));
+            assert_eq!(meta.path.as_deref(), Some("/"));
+            assert_eq!(meta.authority.as_deref(), Some("www.example.com"));
+        }
+        _ => panic!("expected HTTP/2 metadata"),
+    }
+}
+
+#[cfg(feature = "proto3")]
+#[test]
+fn http2_preface_split_across_tcp_packets_is_reassembled() {
+    let mut detector = Detector::new();
+    let payload = h2_client_payload();
+    let split = 10; // inside the 24-byte connection preface
+    let first_packet = make_l3_tcp_packet_with_seq(
+        [192, 168, 1, 1],
+        12350,
+        [10, 0, 0, 1],
+        443,
+        11_000,
+        0x18,
+        &payload[..split],
+    );
+    let second_packet = make_l3_tcp_packet_with_seq(
+        [192, 168, 1, 1],
+        12350,
+        [10, 0, 0, 1],
+        443,
+        11_000 + split as u32,
+        0x18,
+        &payload[split..],
+    );
+    let parsed = parse_l3_packet(&first_packet).unwrap();
+    let packet_key = FlowKey {
+        src_ip: parsed.src_ip,
+        dst_ip: parsed.dst_ip,
+        src_port: parsed.src_port,
+        dst_port: parsed.dst_port,
+        transport: parsed.transport,
+    };
+    let mut flow = Flow::new_bidirectional(packet_key);
+
+    let first = detector
+        .process_l3_packet(&mut flow, &first_packet, 1)
+        .unwrap();
+    assert!(first.is_none(), "partial preface must be buffered");
+
+    let second = detector
+        .process_l3_packet(&mut flow, &second_packet, 2)
+        .unwrap()
+        .expect("preface continuation should classify");
+    assert_eq!(second.protocol, Protocol::Http2);
+    match second.metadata {
+        Metadata::Http2(meta) => {
+            assert_eq!(meta.authority.as_deref(), Some("www.example.com"));
+        }
+        _ => panic!("expected HTTP/2 metadata"),
     }
 }
 
