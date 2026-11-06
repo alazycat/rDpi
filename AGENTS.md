@@ -34,15 +34,16 @@ lib.rs (Detector 编排) → parser (以太网/IP/TCP/UDP) → core (FlowTable/g
 - **JA4SSH 会话指纹（F36，2026-11-06）**：`application::compute_ja4ssh`（官方 FoxIO ja4 仓库 zeek/ja4ssh/main.zeek 语义：`c{c众数}s{s众数}_c{c载荷包数}s{s载荷包数}_c{c纯ACK数}s{s纯ACK数}`，众数平局取较小值，纯 ACK = 无载荷且 flags 精确等于 0x10，窗口 = 双向载荷包合计 200 滚动）；`Flow.ssh_payload_lens/ssh_ack_count/ja4ssh` 流级旁路字段（非 SSH 流零堆分配）；`Detector::observe_ja4ssh`（lib.rs，get_or_create 之前独立借流表）门控两级——流已定型 Ssh + 连接自初始 SYN 起（借 syn_time）；方向归位 SYN 发送端为客户端；指纹写两方向流，保留**最近完成窗口**（zeek 逐窗口出日志、尾窗冲刷不实现，见 risks.md F36 边界）。
 - **JA4D/JA4D6 DHCP 指纹（F37，2026-11-06）**：`application::compute_ja4d/ja4d6`（格式 `{类型助记符5}{尺寸4}{i|n}{d|n}_{选项列表}_{参数列表}`；v4 权威 zeek/ja4d/main.zeek + Wireshark packet-ja4.c 终版 commit d21d63f9/11ae927f——选项列表剔除 {0/53/50/81}、尺寸 = option 57、未知类型 %05d、缺 53 记 "00000"；v6 权威仅 Wireshark 插件——尺寸 = option 1/2 首个 DUID 长度、选项列表不剔除、ORO = option 6 大端项）；**per-message 指纹放 metadata**（同 JA4H）：`dhcp/parser.rs parse_dhcp_options`（offset 240 单遍 TLV）→ `DhcpMetadata.ja4d`；`dhcpv6/parser.rs parse_dhcpv6_info`（is_dhcpv6 同门控识别语义不变，Relay 12/13 起始偏移 34）→ 新增 `Dhcpv6Metadata{msg_type, ja4d6}` + `Metadata::Dhcpv6`（cfg(infra)）；relay 只解析外层选项不递归 option 9（risks.md F37 边界）。
 - **DTLS 识别 + d 前缀 JA4/JA4S（F38，2026-11-06）**：新 detector（feature `dtls`，`DtlsDetector` 首字节门 [0x16,0x16]）——13B DTLS 记录头（epoch @payload[3..5] 须 0）+ 12B 握手头（fragment_offset @19..22 / fragment_length @22..25，单片段校验）；ClientHello（msg_type 1，1.3 无 cookie / 1.2 剥 cookie 两种布局试解）/ ServerHello（msg_type 2）剥离 DTLS 握手头后**合成 TLS 记录零改动复用 tls 解析器**（QUIC 先例）；HVR（msg_type 3）等不返回定型；JA4S 新增 d 前缀——`compute_ja4s` 首参重构为 `Ja4Transport{Tcp,Quic,Dtls}`，版本码补 d1/d2/d3 映射（JA4.md 权威：proto 字符与版本段独立，DTLS 1.3 输出 "dd3..." 为字面正确；zeek 基线 "td1..." 系实现局限，分歧登记 risks.md F38）；JA4 沿用占位格式（"DTLS x.y" 落 tls10 桶，登记边界）；注册于 QUIC 之后 TLS 之前——DTLS 版本字节 0xfe 与 TLS 记录头 data[1]==0x03 互斥，相对顺序无影响（R11 影响面已复述）；分片握手/epoch>0/重传序列不解析（risks.md F38 边界）。
+- **JA4 客户端指纹官方格式（F39，2026-11-06）**：`compute_ja4` 重写为官方 ja4.py `to_ja4` 格式 `{t|q|d}{版本2}{d|i}{密码数2}{扩展数2}{alpn2}_{密码哈希12}_{扩展哈希12}`（36 字符）——版本取 supported_versions 非 GREASE 最大值回退握手头 client_version（`ClientHelloInfo.negotiated_version`，JA4 恒可计算）、计数剔 GREASE 且扩展计数含 SNI/ALPN、密码升序排序哈希、扩展哈希剔除 SNI/ALPN 并追加原始顺序 sig_algs（0x000d）、ALPN 首尾字符非 ASCII 逐位 '9'（`alpn_code` 为 JA4/JA4S 共用，JA4S 行为同步变化）；TLS/QUIC/DTLS 三路径共用一处计算；官方黄金向量 `t13d1516h2_8daaf6152771_e5627efa2ab1` 直证；F38 边界③（DTLS 版本落 tls10 桶）消除（risks.md F39）。
 - **首字节门预筛（F29，2026-11-05）**：detector 可声明 `first_byte_gate()`（payload[0] 允许区间），Registry 注册期预计算 skip 位图、detect 循环内位测试跳过（miss 路径 36/49 已声明门，同机 A/B -12.3%）；13 个首字节任意的 detector 保持 `None`（dns/mongodb/postgresql/stun/modbus/l2tp/pptp/ike/nfs/whois/websocket/pop3/imap，证据见 risks.md F29）。
 - **feature gate**：全部协议有 gate（R7 已修复 2026-11-04：tftp/rsync/whois/syslog/telnet/vnc 挂在 `misc` feature，risks.md R7）。
 
 ## 3. 常用命令
 
 ```bash
-cargo test                    # 默认 features (dns+http+tls)，324 测试全绿（2026-11-06 F38 DTLS 轮实测）
-cargo test --all-features     # 1171 测试全绿（10 ignored = test_regression 存量）；F38 后实测
-cargo test --features risk    # 369 测试全绿（含风险处理器相关探针 a1_risk/a6/r5）
+cargo test                    # 默认 features (dns+http+tls)，328 测试全绿（2026-11-06 F39 JA4 官方格式轮实测）
+cargo test --all-features     # 1175 测试全绿（10 ignored = test_regression 存量）；F39 后实测
+cargo test --features risk    # 373 测试全绿（含风险处理器相关探针 a1_risk/a6/r5）
 cargo build --features pcap   # 构建 CLI
 cargo bench                   # criterion 基准（benches/bench_detect.rs）；基线见 docs/architecture/performance.md
 cargo bench --features quic   # 全量 9 项（含 QUIC 头部判定/Initial 解密冷+稳态）
@@ -100,6 +101,7 @@ cargo fmt ; cargo clippy      # 提交前（lib+bins 门槛 0 警告；验证须
 | F36 | JA4SSH 会话指纹：SSH 流 200 载荷包滚动窗口（双向包长众数/载荷包数/纯 ACK 数六段格式），官方 FoxIO zeek/ja4ssh 语义；非 SSH 流零分配；保留最近完成窗口 | 中 | ✅ 已完成 2026-11-06（compute_ja4ssh + Flow.ssh_payload_lens/ssh_ack_count/ja4ssh + observe_ja4ssh 双门控（Ssh 定型 + SYN 起）+ CLI；逐窗口日志/尾窗冲刷不实现已登记边界；默认 322 / all-features 1130 / risk 367 全绿，详见 risks.md F36） |
 | F37 | JA4D/JA4D6 DHCP 指纹：per-message 指纹放 metadata（DhcpMetadata.ja4d / 新增 Dhcpv6Metadata.ja4d6），v4 对齐 zeek ja4d + Wireshark 终版（选项剔除 {0/53/50/81}）、v6 对齐 Wireshark 插件（DUID 长度尺寸段、选项不剔除）；识别语义不变 | 中 | ✅ 已完成 2026-11-06（parse_dhcp_options/parse_dhcpv6_info + compute_ja4d/ja4d6 + CLI；官方黄金向量 + 博客样例直证；relay 不递归等边界登记；默认 322 / all-features 1156 / risk 367 全绿，详见 risks.md F37） |
 | F38 | DTLS 识别（新 detector，feature dtls）+ d 前缀 JA4/JA4S（compute_ja4s 重构 Ja4Transport + 版本码 d1/d2/d3）；合成 TLS 记录复用 tls 解析器（QUIC 先例）；"JA4DS" 独立指纹名不存在，官方规格即 DTLS 变体 | 中 | ✅ 已完成 2026-11-06（dtls 模块 + Ja4Transport + 443 端口表/rule/CLI/behavioral 接入；JA4.md 与 zeek 基线 proto 字符分歧登记；分片/epoch>0 等边界登记；默认 324 / all-features 1171 / risk 369 全绿，详见 risks.md F38） |
+| F39 | 客户端 JA4 对齐官方 ja4.py to_ja4（计数/sni/alpn 段 + 升序排序双哈希段 + sig_algs 追加；协商版本回退 client_version，JA4 恒可计算；alpn_code 逐位 '9' 同改 JA4S） | 中 | ✅ 已完成 2026-11-06（ClientHelloInfo 增 negotiated_version/client_version/signature_algorithms；官方黄金向量直证；F38 边界③消除、test_pin_rules a5 语义更新；默认 328 / all-features 1175 / risk 373 全绿，详见 risks.md F39） |
 
 ## 7. 文档索引
 

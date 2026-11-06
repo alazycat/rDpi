@@ -67,20 +67,21 @@ impl crate::protocols::ProtocolDetector for DtlsDetector {
                     .as_deref()
                     .and_then(crate::protocols::tls::parse_client_hello)
                 {
+                    // 客户端 JA4：d 前缀，与 TLS/QUIC 路径同源（官方 ja4.py
+                    // 格式，F39）；DTLS 版本码 d1/d2/d3 由版本码表覆盖。
+                    // 先于 sni/alpn 移动计算（借用 ch 字段）
+                    meta.ja4 = Some(crate::application::compute_ja4(
+                        crate::application::Ja4Transport::Dtls,
+                        ch.negotiated_version,
+                        &ch.cipher_suites,
+                        &ch.extensions,
+                        &ch.signature_algorithms,
+                        ch.alpn.as_deref(),
+                        ch.sni.is_some(),
+                    ));
                     meta.sni = ch.sni;
                     meta.alpn = ch.alpn;
                     meta.application = meta.sni.as_deref().and_then(crate::application::identify);
-                    // 客户端 JA4：与 TLS/QUIC 路径同源占位格式。"DTLS x.y"
-                    // 版本串落入 tls10 桶为已知局限（官方 d1/d2/d3 版本码待
-                    // 占位表升级，见 risks.md F38 边界）
-                    meta.ja4 = meta.version.as_ref().map(|ver| {
-                        crate::application::compute_ja4(
-                            ver,
-                            &ch.cipher_suites,
-                            &ch.extensions,
-                            &ch.supported_groups,
-                        )
-                    });
                 }
             }
             // ServerHello：服务端流定型（JA4S d 前缀）。DTLS 1.2 服务端首包

@@ -341,3 +341,23 @@
   - [protocols/mod.rs](file:///d:/rust_code/rDpi/src/protocols/mod.rs)：`#[cfg(feature = "dtls")] pub mod dtls;` + register_defaults 在 **QUIC 之后、TLS 之前**插入 `dtls::register`。**注册顺序影响面复述**：DTLS 首字节门 [0x16,0x16] 但记录头 offset 1-2 版本字节为 0xfe*，与 TLS 记录头（data[1]==0x03）互斥——DTLS 与 TLS 相对顺序无相互影响，其余 detector 相对顺序不变（R11）。
 - **测试**：tests/test_dtls.rs 新增 11 项（`#![cfg(feature = "dtls")]`）——DTLS 1.3/1.2 ClientHello（SNI/YouTube 应用/版本/ja4 占位）、1.2 空/非空 cookie、1.3 ServerHello JA4S golden `"dd302h2_1302_60694de2240d"`（与 ja4.rs 单元 2 项 `test_ja4s_dtls13`/`test_ja4s_dtls_version_codes` 互证）、HVR 不定型、分片拒绝、epoch≠0 拒绝、TLS 版本记录拒绝、畸形输入、Detector 全链路 UDP 443。三配置全绿：**默认 324 / all-features 1171（10 ignored）/ risk 369**；clippy（默认 + all-features）0 警告（--message-format=short）；fmt 干净。
 - **已知边界**：① **分片握手不解析**（fragment_offset≠0 或 frag_len≠msg_len）——DTLS 1.3 大 ClientHello 常分片，跳过不识别；② DTLS 重传序列不处理（每包独立解析）；③ compute_ja4 占位格式对 "DTLS x.y" 版本串落 tls10 桶（官方 d1/d2/d3 版本码需占位表升级，登记不实现）；④ epoch>0 的加密记录不解析（握手前 epoch 恒 0，其余为应用数据）；⑤ 单记录仅解析首个握手消息（DTLS 允许记录内多握手，实际握手包均为单消息）；⑥ 识别包合成记录一次小 Vec 分配（QUIC 先例，热路径豁免登记）；⑦ zeek proto 字符分歧见规格来源——本库按 JA4.md 输出 "dd1..."，zeek 基线 "td1..."。
+
+## F39【中】客户端 JA4 指纹对齐官方 ja4.py 格式（2026-11-06，新功能开发）—— ✅ 已完成
+
+- **背景**：本库 JA4 一直是占位格式 `tlsNN.{密码哈希12}.{扩展哈希12}.{组哈希6}`（组段官方并不存在、版本段靠字符串匹配、密码/扩展不排序不剔 GREASE、无计数/alpn/sni 段），与官方 FoxIO ja4.py `to_ja4` 输出完全不同，指纹库无法互认。F39 将 `compute_ja4` 重写为官方格式，TLS/QUIC/DTLS 三路径（共用 `tls::parse_client_hello`）一处计算全覆盖，F38 边界③（DTLS 版本落 tls10 桶）就此消除。
+- **规格来源**（官方三源考证）：
+  - [JA4.md](https://github.com/FoxIO-LLC/ja4/blob/main/technical_details/JA4.md)（黄金向量权威）：`t13d1516h2_8daaf6152771_e5627efa2ab1`（TLS 1.3、有 SNI、15 密码、16 扩展、ALPN h2）。
+  - [ja4.py](https://github.com/FoxIO-LLC/ja4/blob/main/python/ja4.py) `to_ja4`(L198-252) + [common.py](https://github.com/FoxIO-LLC/ja4/blob/main/python/common.py)（get_hex_sorted/get_supported_version/get_extension_hash/first_last_alpn/TLS_MAPPER/GREASE_TABLE）。
+- **官方语义要点**（全部按 ja4.py 实现并测试直证）：
+  - 格式：`{proto1}{ver2}{sni1}{ccnt2}{ecnt2}{alpn2}_{密码哈希12}_{扩展哈希12}`（36 字符）；proto = t/q/d（复用 F30 `Ja4Transport`）。
+  - 版本：supported_versions 扩展（0x002b）**非 GREASE 最大值**，回退握手头 client_version（非记录层版本）；版本码复用 F30 `version_code`（s2/s3/10/11/12/13/d1/d2/d3，未知 "00"）——**JA4 恒可计算**，不存在"取不到版本"（原 `version: Option<String>` 判空路径就此消失，语义变化登记）。
+  - 计数：密码/扩展均**过滤 GREASE** 后计数（min(99) 两位十进制）；扩展计数**含** SNI(0x0000)/ALPN(0x0010)。
+  - sni 段：有 SNI 'd'（domain）/无 'i'（IP）；alpn 段：首尾字符、单字符双写、空 "00"、**非 ASCII 逐位记 '9'**（官方内部分歧：JA4.md 写 hex 回退，ja4.py 实际为逐位 '9'——按 ja4.py 实现并登记；`alpn_code` 为 JA4/JA4S 共用 helper，**JA4S 行为同步变化**）。
+  - 密码哈希：非 GREASE **升序排序** `%04x` 逗号拼接 SHA-256 前 12 hex；空列表（含全 GREASE）固定 12 个 0。
+  - 扩展哈希：非 GREASE **升序排序、剔除 SNI/ALPN**（计数不剔除），`%04x` 逗号拼接；sig_algs（0x000d，仅过滤 GREASE、**保持原始顺序**）非空则追加 `"_" + sig_algs` 后再哈希；**整体输入为空才记 12 个 0**（空 ext + 有 sig 时输入 "_0403,..." 照常哈希——忠实复刻官方）。
+- **实现**：
+  - [protocols/tls/parser.rs](file:///d:/rust_code/rDpi/src/protocols/tls/parser.rs)：`ClientHelloInfo` 增 `client_version`（握手头原始值，此前 skip）/`negotiated_version`（u16：0x002b 非 GREASE 最大值回退 client_version）/`signature_algorithms`（0x000d 原始顺序）；`parse_supported_versions_values` 重构（原只取列表首项作展示串；现保留 u16 列表，展示串逻辑不变——仅扩展存在时解码，否则回退记录层版本，a1 存量语义保持）；`parse_signature_algorithms_extension`（与 supported_groups 同构 2B 列表）；本地 `is_grease_value`（与 ja4.rs 同式）。
+  - [application/ja4.rs](file:///d:/rust_code/rDpi/src/application/ja4.rs)：`compute_ja4` 重写（新签名 `(transport, negotiated_version, ciphers, extensions, sig_algs, alpn, has_sni)`，groups 参数删除——官方 JA4 无组段）；`alpn_code` 逐位 '9' + 单字符双写；模块文档与 JA4_MAPPINGS 注释同步。
+  - 调用点三处同步：[tls/mod.rs](file:///d:/rust_code/rDpi/src/protocols/tls/mod.rs)（JA4 不再依赖 `info.version` 展示串判空）、[quic/mod.rs](file:///d:/rust_code/rDpi/src/protocols/quic/mod.rs)（q 前缀，`ch` 直带新字段）、[dtls/mod.rs](file:///d:/rust_code/rDpi/src/protocols/dtls/mod.rs)（d 前缀 + DTLS 版本码；JA4 先于 sni/alpn 移动计算，borrow 顺序修正）。
+- **测试**：ja4.rs 单元 7 项重写（官方黄金向量直证 / 空列表 / GREASE 过滤与排序无关性 / 计数含 SNI-ALPN 但哈希剔除 / sig_algs 顺序敏感 + 空-ext-有-sig 照常哈希 / 版本码与传输前缀 / ALPN 编码全分支）；tests/test_ja4.rs 重写为 API 层钉住（5 项）；test_quic a2（q13d 前缀 36 字符）、test_dtls 1.3 客户端（`dd3d020200_` 前缀——F38 边界③消除）、test_pin_rules **a5 语义更新**（version 展示串仍 None，JA4 由 None 变恒可计算、回退 client_version 0x0303 → "t12d..."，改名 `a5_no_version_string_but_ja4_falls_back_to_client_version`）。三配置全绿：**默认 328 / all-features 1175（10 ignored）/ risk 373**（基线 +4：ja4 单元 +3、集成 +1）；clippy lib+bins 0 警告（--message-format=short；--all-targets 下 tests/integration_test.rs `build_tcp_packet` 未用警告经 stash 复核为 F38 提交态存量，调用方均在 cfg 门控测试内）；fmt 干净。
+- **已知边界**：① alpn 非 ASCII 回退按 ja4.py 逐位 '9'（与 JA4.md 的 hex 回退规则分歧，登记）；② QUIC 0-RTT/Handshake 等非 Initial 长包头无明文 ClientHello，JA4 不产出（原有边界）；③ DTLS 分片握手不解析（F38 边界①延续），其 JA4 同样不产出；④ 群组（supported_groups）不再参与 JA4——官方无此段，字段保留在 `ClientHelloInfo` 供他用。

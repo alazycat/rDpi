@@ -97,16 +97,17 @@ fn try_extract_tls_meta(
     // 客户端 Initial：CRYPTO 帧为 ClientHello
     if let Some((ch, tp)) = parser::decrypt_client_meta_with_cache(payload, cache) {
         let application = ch.sni.as_deref().and_then(crate::application::identify);
-        // JA4 指纹与 TLS 路径同源（application::compute_ja4），ClientHelloInfo
-        // 自带全部输入（version/ciphers/extensions/groups）
-        let ja4 = ch.version.as_ref().map(|ver| {
-            crate::application::compute_ja4(
-                ver,
-                &ch.cipher_suites,
-                &ch.extensions,
-                &ch.supported_groups,
-            )
-        });
+        // JA4 指纹与 TLS/DTLS 路径同源（application::compute_ja4，官方 ja4.py
+        // 格式，F39）：q 前缀，ClientHelloInfo 自带全部输入
+        let ja4 = Some(crate::application::compute_ja4(
+            crate::application::Ja4Transport::Quic,
+            ch.negotiated_version,
+            &ch.cipher_suites,
+            &ch.extensions,
+            &ch.signature_algorithms,
+            ch.alpn.as_deref(),
+            ch.sni.is_some(),
+        ));
         return Some((ch.sni, ch.alpn, ja4, application, tp, None));
     }
     // 服务端 Initial：CRYPTO 帧为 ServerHello（无 SNI/JA4/TP；ALPN + JA4S，前缀 q）

@@ -1,9 +1,7 @@
-//! JA4 TLS 指纹计算
+//! JA4/JA4S/JA4H/JA4X/JA4T/JA4SSH 等 FoxIO JA4+ 家族指纹计算
 //!
-//! JA4 = tls.version.ciphers.extensions.supported_groups
-//!
-//! Each field after `tls.version` is a truncated SHA-256 hex digest
-//! of the serialized (big-endian u16) list of values.
+//! 客户端 JA4（F39，2026-11-06）对齐官方 ja4.py `to_ja4`：
+//! `{ptype}{ver2}{sni}{cipher_cnt2}{ext_cnt2}{alpn2}_{cipher哈希12}_{扩展哈希12}`
 
 use sha2::{Digest, Sha256};
 
@@ -14,39 +12,108 @@ use crate::core::types::Application;
 #[allow(dead_code)]
 pub(crate) const JA4_MAPPINGS: &[(&str, Application)] = &[
     // 将在真实流量采集后填充
-    // 结构: ("tls13.{ciphers12}.{extensions12}.{groups6}", Application::Chrome),
+    // 结构: ("t13d1516h2_8daaf6152771_e5627efa2ab1", Application::Chrome),
 ];
 
-/// 计算 JA4 TLS 指纹
+/// 计算 JA4 客户端 TLS 指纹（官方 ja4.py `to_ja4` 语义）
+///
+/// 格式：`{t|q|d}{版本2位}{d|i}{密码数2位}{扩展数2位}{alpn 2字符}_{密码哈希12hex}_{扩展哈希12hex}`
+///
+/// 官方语义要点：
+/// - 版本：supported_versions 扩展非 GREASE 最大值，回退握手头 client_version
+///   （调用方传入 [`crate::protocols::tls::ClientHelloInfo::negotiated_version`]）；
+///   版本码表见 [`version_code`]，未知记 "00"——JA4 恒可计算，不存在"取不到版本"；
+/// - sni 段：有 SNI 记 'd'（domain），无记 'i'（IP）；
+/// - 计数：密码/扩展均过滤 GREASE 后计数，min(99) 两位十进制；扩展计数**含**
+///   SNI/ALPN 扩展；
+/// - alpn 段：[`alpn_code`]（首尾字符，非 ASCII 逐位记 '9'，空记 "00"）；
+/// - 密码哈希：非 GREASE 密码**升序排序**，`%04x` 逗号拼接后 SHA-256 截 12 位；
+///   空列表（含全 GREASE）记固定 12 个 0；
+/// - 扩展哈希：非 GREASE 扩展升序排序、**剔除 SNI(0x0000)/ALPN(0x0010)**（计数
+///   不剔除），`%04x` 逗号拼接；signature_algorithms 非空则追加 `"_" + sig_algs`
+///   （仅过滤 GREASE，**保持原始顺序不排序**）后再哈希；整体输入为空记 12 个 0。
 ///
 /// # 参数
 ///
-/// * `version` - TLS 版本字符串，如 "TLS 1.3", "1.3", "TLSv1.3"
+/// * `transport` - 传输层（前缀 t/q/d，见 [`Ja4Transport`]）
+/// * `negotiated_version` - 协商版本 u16（supported_versions 最大值回退 client_version）
 /// * `ciphers` - 密码套件列表
-/// * `extensions` - 扩展类型列表（按在 ClientHello 中出现的顺序）
-/// * `groups` - 支持的椭圆曲线/有限域组列表
-///
-/// # 返回
-///
-/// 格式为 `tlsNN.{ciphers12}.{extensions12}.{groups6}` 的 JA4 指纹
-pub fn compute_ja4(version: &str, ciphers: &[u16], extensions: &[u16], groups: &[u16]) -> String {
-    let ver = match version {
-        "TLS 1.3" | "1.3" | "TLSv1.3" => "tls13",
-        "TLS 1.2" | "1.2" | "TLSv1.2" => "tls12",
-        "TLS 1.1" | "1.1" | "TLSv1.1" => "tls11",
-        _ => "tls10",
+/// * `extensions` - 扩展类型列表（按出现顺序；计数用，哈希段内部再排序/剔除）
+/// * `signature_algorithms` - signature_algorithms 扩展值（原始顺序）
+/// * `alpn` - 首个 ALPN 协议名
+/// * `has_sni` - 是否携带 SNI
+pub fn compute_ja4(
+    transport: Ja4Transport,
+    negotiated_version: u16,
+    ciphers: &[u16],
+    extensions: &[u16],
+    signature_algorithms: &[u16],
+    alpn: Option<&str>,
+    has_sni: bool,
+) -> String {
+    let proto = transport.proto_char();
+    let version = version_code(negotiated_version);
+    let sni = if has_sni { 'd' } else { 'i' };
+
+    let cipher_cnt = ciphers.iter().filter(|c| !is_grease(**c)).count().min(99);
+    let ext_cnt = extensions
+        .iter()
+        .filter(|e| !is_grease(**e))
+        .count()
+        .min(99);
+    let alpn = alpn_code(alpn);
+
+    // 密码哈希：非 GREASE 升序排序后 %04x 逗号拼接
+    let mut ciphers_sorted: Vec<u16> = ciphers.iter().copied().filter(|c| !is_grease(*c)).collect();
+    ciphers_sorted.sort_unstable();
+    let cipher_hash = if ciphers_sorted.is_empty() {
+        "000000000000".to_string()
+    } else {
+        let joined = ciphers_sorted
+            .iter()
+            .map(|c| format!("{c:04x}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        trunc_hash_hex(joined.as_bytes(), 12)
     };
 
-    let ciph = trunc_hash_hex(&serialize_u16(ciphers), 12);
-    let ext = trunc_hash_hex(&serialize_u16(extensions), 12);
-    let grp = trunc_hash_hex(&serialize_u16(groups), 6);
+    // 扩展哈希：非 GREASE 升序排序、剔除 SNI/ALPN（官方 ja4.py get_extension_hash）；
+    // sig_algs 仅过滤 GREASE、保持原始顺序，以 "_" 追加（ext 为空时输入为
+    // "_0403,..." 照常哈希——忠实复刻官方）；整体输入为空记 12 个 0
+    let mut exts_sorted: Vec<u16> = extensions
+        .iter()
+        .copied()
+        .filter(|e| !is_grease(*e) && *e != 0x0000 && *e != 0x0010)
+        .collect();
+    exts_sorted.sort_unstable();
+    let mut input = exts_sorted
+        .iter()
+        .map(|e| format!("{e:04x}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sigs: Vec<u16> = signature_algorithms
+        .iter()
+        .copied()
+        .filter(|s| !is_grease(*s))
+        .collect();
+    if !sigs.is_empty() {
+        let sig_str = sigs
+            .iter()
+            .map(|s| format!("{s:04x}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        input = format!("{input}_{sig_str}");
+    }
+    let ext_hash = if input.is_empty() {
+        "000000000000".to_string()
+    } else {
+        trunc_hash_hex(input.as_bytes(), 12)
+    };
 
-    format!("{}.{}.{}.{}", ver, ciph, ext, grp)
-}
-
-/// 将 u16 切片序列化为大端字节序
-fn serialize_u16(items: &[u16]) -> Vec<u8> {
-    items.iter().flat_map(|v| v.to_be_bytes()).collect()
+    format!(
+        "{}{}{}{:02}{:02}{}_{}_{}",
+        proto, version, sni, cipher_cnt, ext_cnt, alpn, cipher_hash, ext_hash
+    )
 }
 
 /// 计算 SHA-256 并截取指定数量的十六进制字符
@@ -105,23 +172,27 @@ fn is_grease(value: u16) -> bool {
     (value >> 8) == (value & 0xff) && (value & 0x0f) == 0x0a
 }
 
-/// ALPN → 2 字符编码（官方 ja4.py）：无 ALPN 记 "00"；长度 >2 取首尾字符
-/// （"http/1.1"→"h1"）；首字符非 ASCII 记 "99"（无法编码的协议名）。
+/// ALPN → 2 字符编码（官方 ja4.py `first_last_alpn`）：无 ALPN 记 "00"；
+/// 长度 >2 取首尾字符（"http/1.1"→"h1"）；单字符双写；非 ASCII 字符逐位
+/// 记 '9'（如 "é"→"99"、首字符非 ASCII 的双字符名→"9x"）。JA4 与 JA4S 共用。
 fn alpn_code(alpn: Option<&str>) -> String {
     match alpn {
         None | Some("") => "00".to_string(),
         Some(a) => {
-            let mut code: String = a.to_string();
-            if code.chars().count() > 2 {
-                let first = code.chars().next().unwrap();
-                let last = code.chars().last().unwrap();
-                code = format!("{}{}", first, last);
-            }
-            if code.chars().next().is_some_and(|c| c as u32 > 127) {
-                "99".to_string()
+            let chars: Vec<char> = a.chars().collect();
+            let (first, last) = if chars.len() == 1 {
+                (chars[0], chars[0])
             } else {
-                code
-            }
+                (chars[0], chars[chars.len() - 1])
+            };
+            let enc = |c: char| {
+                if (c as u32) <= 127 {
+                    c.to_string()
+                } else {
+                    "9".to_string()
+                }
+            };
+            format!("{}{}", enc(first), enc(last))
         }
     }
 }
@@ -646,64 +717,179 @@ mod tests {
         assert_eq!(compute_ja4t(1024, &[1, 1], 0, 2), "1024_1-1_00_2");
     }
 
+    // ==== JA4（官方 JA4.md 黄金向量 + ja4.py to_ja4 语义，F39）====
+
+    /// 官方 JA4.md 黄金向量：15 密码 + 16 扩展 + 8 sig_algs，TLS 1.3、有 SNI、
+    /// ALPN h2 → `t13d1516h2_8daaf6152771_e5627efa2ab1`
     #[test]
-    fn test_ja4_basic() {
-        let ciphers = [0x1301, 0x1302, 0x1303, 0xc02b, 0xc02f, 0xc02c, 0xc030];
-        let extensions = [0x0000, 0x001b, 0x0023, 0x002d, 0x0033, 0xff01];
-        let groups = [0x001d, 0x0017, 0x0018];
-        let ja4 = compute_ja4("TLS 1.3", &ciphers, &extensions, &groups);
-        assert!(!ja4.is_empty());
-        assert!(ja4.starts_with("tls13."));
-        // 期望格式: tls13.{12hex}.{12hex}.{6hex}
-        let parts: Vec<&str> = ja4.split('.').collect();
-        assert_eq!(parts.len(), 4);
-        assert_eq!(parts[0], "tls13");
-        assert_eq!(parts[1].len(), 12);
-        assert_eq!(parts[2].len(), 12);
-        assert_eq!(parts[3].len(), 6);
+    fn test_ja4_official_golden_vector() {
+        let ciphers: [u16; 15] = [
+            0x1301, 0x1302, 0x1303, 0xc02b, 0xc02f, 0xc02c, 0xc030, 0xcca9, 0xcca8, 0xc013, 0xc014,
+            0x009c, 0x009d, 0x002f, 0x0035,
+        ];
+        let extensions: [u16; 16] = [
+            0x001b, 0x0000, 0x0033, 0x0010, 0x4469, 0x0017, 0x002d, 0x000d, 0x0005, 0x0023, 0x0012,
+            0x002b, 0xff01, 0x000b, 0x000a, 0x0015,
+        ];
+        let sig_algs: [u16; 8] = [
+            0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0806, 0x0601,
+        ];
+        let ja4 = compute_ja4(
+            Ja4Transport::Tcp,
+            0x0304,
+            &ciphers,
+            &extensions,
+            &sig_algs,
+            Some("h2"),
+            true,
+        );
+        assert_eq!(ja4, "t13d1516h2_8daaf6152771_e5627efa2ab1");
     }
 
+    /// 空输入：计数 "00"、哈希段固定 12 个 0；无 SNI 记 'i'
     #[test]
-    fn test_ja4_empty() {
-        let ja4 = compute_ja4("TLS 1.2", &[], &[], &[]);
-        // 空列表的哈希应一致，格式为 tls12.{12}.{12}.{6} = 38 字符
-        assert_eq!(ja4.len(), 38);
-        // 空列表的指纹应确定
-        let ja4_again = compute_ja4("TLS 1.2", &[], &[], &[]);
-        assert_eq!(ja4, ja4_again);
+    fn test_ja4_empty_lists() {
+        let ja4 = compute_ja4(Ja4Transport::Tcp, 0x0303, &[], &[], &[], None, false);
+        assert_eq!(ja4, "t12i000000_000000000000_000000000000");
     }
 
+    /// 全 GREASE 输入等价空输入：计数 0、哈希记 12 个 0；非 GREASE 密码哈希
+    /// 与排序无关（升序排序后哈希）
     #[test]
-    fn test_ja4_version_variants() {
-        let ciphers = [0x1301];
-        let extensions = [0x0000];
-        let groups = [0x001d];
+    fn test_ja4_grease_filtered() {
+        let grease = compute_ja4(
+            Ja4Transport::Tcp,
+            0x0304,
+            &[0x0a0a, 0x1a1a],
+            &[0x0a0a],
+            &[0x0a0a],
+            None,
+            false,
+        );
+        assert_eq!(grease, "t13i000000_000000000000_000000000000");
 
-        // "TLS 1.3" form (from decode_tls_version)
-        let ja4 = compute_ja4("TLS 1.3", &ciphers, &extensions, &groups);
-        assert!(ja4.starts_with("tls13."));
-
-        // "1.3" form
-        let ja4 = compute_ja4("1.3", &ciphers, &extensions, &groups);
-        assert!(ja4.starts_with("tls13."));
-
-        // "TLSv1.3" form
-        let ja4 = compute_ja4("TLSv1.3", &ciphers, &extensions, &groups);
-        assert!(ja4.starts_with("tls13."));
-
-        // Unknown version should fall back to tls10
-        let ja4 = compute_ja4("unknown", &ciphers, &extensions, &groups);
-        assert!(ja4.starts_with("tls10."));
+        let a = compute_ja4(
+            Ja4Transport::Tcp,
+            0x0304,
+            &[0x1301, 0x1302],
+            &[],
+            &[],
+            None,
+            false,
+        );
+        let b = compute_ja4(
+            Ja4Transport::Tcp,
+            0x0304,
+            &[0x1302, 0x1301],
+            &[],
+            &[],
+            None,
+            false,
+        );
+        assert_eq!(a, b);
+        assert!(a.starts_with("t13i020000_"));
     }
 
+    /// SNI/ALPN 扩展（0x0000/0x0010）参与计数但不参与扩展哈希；
+    /// sig_algs 保持原始顺序（顺序敏感）
+    #[test]
+    fn test_ja4_ext_hash_semantics() {
+        let base = compute_ja4(
+            Ja4Transport::Tcp,
+            0x0304,
+            &[0x1301],
+            &[0x001b],
+            &[],
+            None,
+            false,
+        );
+        let with = compute_ja4(
+            Ja4Transport::Tcp,
+            0x0304,
+            &[0x1301],
+            &[0x0000, 0x0010, 0x001b],
+            &[],
+            None,
+            true,
+        );
+        // 计数 +2（含 SNI/ALPN）、sni 段 'd'，但扩展哈希段相同
+        assert!(base.starts_with("t13i010100_"));
+        assert!(with.starts_with("t13d010300_"));
+        assert_eq!(&base[11..], &with[11..]);
+
+        // sig_algs 顺序敏感：同集合不同顺序哈希不同
+        let s1 = compute_ja4(
+            Ja4Transport::Tcp,
+            0x0304,
+            &[],
+            &[0x001b],
+            &[0x0403, 0x0804],
+            None,
+            false,
+        );
+        let s2 = compute_ja4(
+            Ja4Transport::Tcp,
+            0x0304,
+            &[],
+            &[0x001b],
+            &[0x0804, 0x0403],
+            None,
+            false,
+        );
+        assert_ne!(s1, s2);
+        // 空扩展 + sig_algs 非空：输入 "_0403,..." 照常哈希（扩展哈希段非 12 个 0）
+        assert!(!s1.ends_with("_000000000000"), "{}", s1);
+    }
+
+    /// 版本码与传输前缀：t/q/d 前缀 + 未知版本记 "00"；DTLS 版本码 d1/d2/d3
+    #[test]
+    fn test_ja4_version_codes_and_transports() {
+        let ja4 = |t, v| compute_ja4(t, v, &[0x1301], &[0x001b], &[], None, false);
+        assert!(ja4(Ja4Transport::Tcp, 0x0304).starts_with("t13i"));
+        assert!(ja4(Ja4Transport::Tcp, 0x0303).starts_with("t12i"));
+        assert!(ja4(Ja4Transport::Tcp, 0x0301).starts_with("t10i"));
+        assert!(ja4(Ja4Transport::Tcp, 0x0999).starts_with("t00i"));
+        assert!(ja4(Ja4Transport::Quic, 0x0304).starts_with("q13i"));
+        assert!(ja4(Ja4Transport::Dtls, 0xfefc).starts_with("dd3i"));
+        assert!(ja4(Ja4Transport::Dtls, 0xfefd).starts_with("dd2i"));
+    }
+
+    /// ALPN 编码（官方 first_last_alpn）：>2 取首尾、单字符双写、
+    /// 非 ASCII 逐位记 '9'、空记 "00"
+    #[test]
+    fn test_ja4_alpn_codes() {
+        let ja4 =
+            |alpn: Option<&str>| compute_ja4(Ja4Transport::Tcp, 0x0303, &[], &[], &[], alpn, false);
+        assert!(ja4(Some("h2")).starts_with("t12i0000h2_"));
+        assert!(ja4(Some("http/1.1")).starts_with("t12i0000h1_"));
+        assert!(ja4(Some("a")).starts_with("t12i0000aa_"));
+        assert!(ja4(Some("é")).starts_with("t12i000099_"));
+        assert!(ja4(Some("éa")).starts_with("t12i00009a_"));
+        assert!(ja4(None).starts_with("t12i000000_"));
+    }
+
+    /// 同输入确定性一致
     #[test]
     fn test_ja4_deterministic() {
-        let ciphers = [0x1301, 0x1302, 0x1303];
-        let extensions = [0x0000, 0x001b, 0x0023];
-        let groups = [0x001d, 0x0017];
-        let ja4_a = compute_ja4("TLS 1.3", &ciphers, &extensions, &groups);
-        let ja4_b = compute_ja4("TLS 1.3", &ciphers, &extensions, &groups);
-        assert_eq!(ja4_a, ja4_b);
+        let a = compute_ja4(
+            Ja4Transport::Tcp,
+            0x0304,
+            &[0x1301, 0x1302],
+            &[0x001b, 0x002b],
+            &[0x0403],
+            Some("h2"),
+            true,
+        );
+        let b = compute_ja4(
+            Ja4Transport::Tcp,
+            0x0304,
+            &[0x1301, 0x1302],
+            &[0x001b, 0x002b],
+            &[0x0403],
+            Some("h2"),
+            true,
+        );
+        assert_eq!(a, b);
     }
 
     // ==== JA4S（golden 向量：SHA-256 前缀经 PowerShell .NET SHA256 独立实现交叉验证）====

@@ -505,10 +505,11 @@ fn test_decrypt_initial_sni_alpn_via_detector() {
     if let Metadata::Quic(meta) = detection.metadata {
         assert_eq!(meta.sni.as_deref(), Some("example.com"));
         assert_eq!(meta.alpn.as_deref(), Some("alpn"));
-        // JA4 指纹与 TLS 路径同源计算（version/ciphers/extensions/groups）
+        // JA4 官方 ja4.py 格式（F39）：q 前缀 + 版本码（a2 样本 TLS 1.3 → 13）
+        // + 有 SNI 记 'd' + 计数 + ALPN 首尾（"alpn"→"an"）
         let ja4 = meta.ja4.as_deref().expect("a2 样本应产出 JA4");
-        assert!(ja4.starts_with("tls13."), "JA4 版本前缀异常: {ja4}");
-        assert_eq!(ja4.len(), 38);
+        assert!(ja4.starts_with("q13d"), "JA4 版本前缀异常: {ja4}");
+        assert_eq!(ja4.len(), 36);
         assert_eq!(meta.version.as_deref(), Some("00000001"));
         assert_eq!(
             meta.destination_connection_id,

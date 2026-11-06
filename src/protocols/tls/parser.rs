@@ -31,6 +31,14 @@ pub struct ClientHelloInfo {
     pub supported_groups: Vec<u16>,
     /// ALPN 协议协商 (如 "h2", "http/1.1")
     pub alpn: Option<String>,
+    /// 握手头 client_version 原始值（F39：JA4 版本段的回退来源）
+    pub client_version: u16,
+    /// 协商版本（F39：supported_versions 扩展非 GREASE 最大值，无该扩展时
+    /// 回退 [`ClientHelloInfo::client_version`]——官方 ja4.py 语义，与记录层
+    /// 版本无关）。未知值由 JA4 版本码表记 "00"，不再有"取不到版本"的情况。
+    pub negotiated_version: u16,
+    /// signature_algorithms 扩展（0x000d）原始顺序值列表（F39：JA4 扩展哈希段输入）
+    pub signature_algorithms: Vec<u16>,
 }
 
 /// 检查是否为 TLS 记录
@@ -86,28 +94,22 @@ pub fn parse_client_hello(data: &[u8]) -> Option<ClientHelloInfo> {
     let record_version = decode_tls_version(data[1], data[2]);
 
     // Parse extensions to find SNI and actual supported version
-    let (sni, supported_version, cipher_suites, extensions, supported_groups) =
-        parse_client_hello_fields(data)?;
+    let (mut info, supported_version_str) = parse_client_hello_fields(data)?;
 
     // Prefer supported_version extension over record layer version
-    let version = supported_version.or(record_version);
+    info.version = supported_version_str.or(record_version);
 
-    let alpn = extract_alpn(data);
-
-    Some(ClientHelloInfo {
-        sni,
-        version,
-        cipher_suites,
-        extensions,
-        supported_groups,
-        alpn,
-    })
+    Some(info)
 }
 
-/// ClientHello 字段解析结果：(SNI, 支持的版本, 密码套件, 扩展类型列表, 支持组)
-type ClientHelloFields = (Option<String>, Option<String>, Vec<u16>, Vec<u16>, Vec<u16>);
+/// ClientHello 字段解析结果：(ClientHelloInfo 本体, supported_versions 展示串)
+type ClientHelloFields = (ClientHelloInfo, Option<String>);
 
-/// 解析 ClientHello 所有字段，提取 SNI、supported_version、密码套件、扩展列表和 Supported Groups
+/// 解析 ClientHello 所有字段
+///
+/// version 展示串由调用方补齐（需结合记录层版本）；[`ClientHelloInfo::version`]
+/// 在此处置 None。协商版本按官方 ja4.py 语义取 supported_versions 非 GREASE
+/// 最大值，回退握手头 client_version。
 fn parse_client_hello_fields(data: &[u8]) -> Option<ClientHelloFields> {
     // TLS record header: 5 bytes
     // Handshake header: 4 bytes
@@ -123,7 +125,11 @@ fn parse_client_hello_fields(data: &[u8]) -> Option<ClientHelloFields> {
     // Skip handshake header (4 bytes)
     offset += 4;
 
-    // Skip client version (2 bytes)
+    // Capture client version (2 bytes) —— F39：JA4 版本段回退来源
+    if offset + 2 > data.len() {
+        return None;
+    }
+    let client_version = u16_from_be(&data[offset..offset + 2]);
     offset += 2;
 
     // Skip random (32 bytes)
@@ -175,9 +181,10 @@ fn parse_client_hello_fields(data: &[u8]) -> Option<ClientHelloFields> {
     }
 
     let mut sni: Option<String> = None;
-    let mut supported_version: Option<String> = None;
+    let mut supported_versions: Vec<u16> = Vec::new();
     let mut extensions: Vec<u16> = Vec::new();
     let mut supported_groups: Vec<u16> = Vec::new();
+    let mut signature_algorithms: Vec<u16> = Vec::new();
 
     // Parse each extension
     while offset + 4 <= extensions_end {
@@ -198,14 +205,21 @@ fn parse_client_hello_fields(data: &[u8]) -> Option<ClientHelloFields> {
                 sni = parse_sni_extension(&data[offset..offset + ext_len]);
             }
             0x002b => {
-                // supported_versions extension (0x002b)
-                supported_version =
-                    parse_supported_versions_extension(&data[offset..offset + ext_len]);
+                // supported_versions extension (0x002b)：原始值列表，
+                // 非 GREASE 最大者为协商版本（官方 ja4.py 语义）
+                supported_versions =
+                    parse_supported_versions_values(&data[offset..offset + ext_len]);
             }
             0x000a => {
                 // supported_groups extension (0x000a)
                 supported_groups =
                     parse_supported_groups_extension(&data[offset..offset + ext_len]);
+            }
+            0x000d => {
+                // signature_algorithms extension (0x000d)：原始顺序（JA4 扩展
+                // 哈希段对 sig_algs 不排序）
+                signature_algorithms =
+                    parse_signature_algorithms_extension(&data[offset..offset + ext_len]);
             }
             _ => {}
         }
@@ -213,13 +227,39 @@ fn parse_client_hello_fields(data: &[u8]) -> Option<ClientHelloFields> {
         offset += ext_len;
     }
 
-    Some((
+    // 协商版本：supported_versions 非 GREASE 最大值，回退握手头 client_version
+    // （F39：JA4 版本段专用，恒可得）；展示串仅在扩展存在时解码——无扩展时
+    // 保持旧展示语义（回退记录层版本，由调用方 or 补齐）
+    let negotiated = supported_versions
+        .iter()
+        .copied()
+        .filter(|v| !is_grease_value(*v))
+        .max()
+        .unwrap_or(client_version);
+    let supported_version_str = if supported_versions.is_empty() {
+        None
+    } else {
+        decode_tls_version((negotiated >> 8) as u8, negotiated as u8)
+    };
+
+    let info = ClientHelloInfo {
         sni,
-        supported_version,
+        version: None,
         cipher_suites,
         extensions,
         supported_groups,
-    ))
+        alpn: extract_alpn(data),
+        client_version,
+        negotiated_version: negotiated,
+        signature_algorithms,
+    };
+
+    Some((info, supported_version_str))
+}
+
+/// GREASE 判定（与 application/ja4.rs 同式：两字节相同且低半字节 0xa）
+fn is_grease_value(value: u16) -> bool {
+    (value >> 8) == (value & 0xff) && (value & 0x0f) == 0x0a
 }
 
 /// 解析 SNI 扩展
@@ -375,25 +415,51 @@ fn parse_alpn_extension(data: &[u8]) -> Option<String> {
     String::from_utf8(data[offset..offset + name_len].to_vec()).ok()
 }
 
-/// 解析 supported_versions 扩展
+/// 解析 supported_versions 扩展的原始版本值列表
 ///
 /// 格式:
 /// - Supported Versions Length (1B)
 /// - Supported Version (2B each)
-fn parse_supported_versions_extension(data: &[u8]) -> Option<String> {
+fn parse_supported_versions_values(data: &[u8]) -> Vec<u16> {
     if data.len() < 3 {
-        return None;
+        return Vec::new();
     }
 
     // Supported Versions Length (1 byte)
     let versions_len = data[0] as usize;
     if versions_len < 2 || versions_len + 1 > data.len() {
-        return None;
+        return Vec::new();
     }
 
-    // Take the first (highest) version
-    let version_bytes = &data[1..3];
-    decode_tls_version(version_bytes[0], version_bytes[1])
+    let mut versions = Vec::with_capacity(versions_len / 2);
+    let mut offset = 1;
+    while offset + 2 <= 1 + versions_len {
+        versions.push(u16_from_be(&data[offset..offset + 2]));
+        offset += 2;
+    }
+    versions
+}
+
+/// 解析 signature_algorithms 扩展 (0x000d)
+///
+/// 格式（与 supported_groups 同构）:
+/// - Signature Algorithms Length (2B)
+/// - Signature Algorithm (2B each)——保持原始顺序（JA4 扩展哈希段不排序）
+fn parse_signature_algorithms_extension(data: &[u8]) -> Vec<u16> {
+    if data.len() < 2 {
+        return Vec::new();
+    }
+    let algs_len = u16_from_be(&data[0..2]) as usize;
+    if algs_len + 2 > data.len() || !algs_len.is_multiple_of(2) {
+        return Vec::new();
+    }
+    let mut algs = Vec::with_capacity(algs_len / 2);
+    let mut offset = 2;
+    while offset + 2 <= 2 + algs_len {
+        algs.push(u16_from_be(&data[offset..offset + 2]));
+        offset += 2;
+    }
+    algs
 }
 
 /// 解析 supported_groups 扩展 (0x000a)

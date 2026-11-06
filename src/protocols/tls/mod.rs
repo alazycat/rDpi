@@ -82,15 +82,16 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
                     .sni
                     .as_ref()
                     .and_then(|sni| crate::application::identify(sni));
-                let ja4 = info.version.as_ref().map(|ver| {
-                    crate::application::compute_ja4(
-                        ver,
-                        &info.cipher_suites,
-                        &info.extensions,
-                        &info.supported_groups,
-                    )
-                });
-                tls_meta.ja4 = ja4;
+                let ja4 = crate::application::compute_ja4(
+                    crate::application::Ja4Transport::Tcp,
+                    info.negotiated_version,
+                    &info.cipher_suites,
+                    &info.extensions,
+                    &info.signature_algorithms,
+                    info.alpn.as_deref(),
+                    info.sni.is_some(),
+                );
+                tls_meta.ja4 = Some(ja4);
             } else if let Some(ref sh) = parse_server_hello(record) {
                 // ServerHello（msg_type 0x02）：服务端流首个明文记录（TLS 1.3 下
                 // 证书已加密，明文只有 ServerHello）。提取协商版本 + JA4S。

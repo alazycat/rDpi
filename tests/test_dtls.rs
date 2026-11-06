@@ -139,10 +139,11 @@ fn test_dtls13_client_hello() {
         assert_eq!(meta.sni.as_deref(), Some("www.youtube.com"));
         assert_eq!(meta.version.as_deref(), Some("DTLS 1.3"));
         assert_eq!(meta.application, Some(Application::YouTube));
-        // 客户端 JA4 占位格式："DTLS 1.3" 落入 tls10 桶（已知局限，risks.md F38）
+        // 客户端 JA4 官方 ja4.py 格式（F39）：d 前缀 + DTLS 1.3 版本码 d3
+        // + 有 SNI 记 'd' + 2 密码 + 2 扩展（SNI/supported_versions）+ 无 ALPN
         let ja4 = meta.ja4.as_deref().expect("应携带 JA4");
-        assert!(ja4.starts_with("tls10."), "{}", ja4);
-        assert_eq!(ja4.len(), 38, "{}", ja4);
+        assert!(ja4.starts_with("dd3d020200_"), "{}", ja4);
+        assert_eq!(ja4.len(), 36, "{}", ja4);
         assert!(meta.ja4s.is_none(), "客户端流不携带 JA4S");
     } else {
         panic!("Expected Dtls metadata");

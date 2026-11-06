@@ -626,10 +626,12 @@ fn a4b_guess_ip_reverse_direction_matches_known_server() {
     assert_eq!(r.confidence, Confidence::MatchByIp);
 }
 
-/// A5 (P10): version 不可得（record 版本 0x0300 且无 supported_versions）→ version 与 JA4 均为 None
-/// 证据：tls/mod.rs:59-62（ja4 = info.version.map(...)）；parser.rs:93（supported_version 优先，回退 record）；parser.rs:325-333（0x0300 → None）
+/// A5 (P10/F39): version 展示串不可得（record 版本 0x0300 且无 supported_versions）
+/// → version 仍为 None；但 F39 后 JA4 恒可计算（协商版本按官方 ja4.py 语义
+/// 回退握手头 client_version 0x0303 → 版本码 "12"）
+/// 证据：tls/parser.rs parse_client_hello_fields（negotiated 回退 client_version）；ja4.rs version_code
 #[test]
-fn a5_no_version_means_no_ja4() {
+fn a5_no_version_string_but_ja4_falls_back_to_client_version() {
     let mut d = Detector::new();
     let payload = build_client_hello(Some("nover.example.com"), [0x03, 0x00], false);
     let pkt = build_tcp_packet_ip([10, 0, 0, 1], [10, 0, 0, 2], 54321, 443, &payload);
@@ -640,7 +642,8 @@ fn a5_no_version_means_no_ja4() {
     match r.metadata {
         Metadata::Tls(m) => {
             assert_eq!(m.version, None);
-            assert_eq!(m.ja4, None, "JA4 must be None when version unknown");
+            let ja4 = m.ja4.as_deref().expect("F39: JA4 always computable");
+            assert!(ja4.starts_with("t12d"), "{}", ja4);
         }
         other => panic!("expected TLS metadata, got {:?}", other),
     }
