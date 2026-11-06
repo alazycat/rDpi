@@ -83,6 +83,15 @@ pub struct Flow {
     /// JA4L-C 客户端时延指纹（F35：SYN-ACK 后首个客户端包借对端 B 时戳
     /// 一次算出；客户端方向流的旁路字段，同上定型语义豁免）
     pub ja4lc: Option<String>,
+    /// JA4SSH 当前窗口内本方向 TCP 载荷包长度序列（F36：仅 SSH 流增长，
+    /// 非 SSH 流恒空、零堆分配；双向合计满 200 包后清零滚动）
+    pub ssh_payload_lens: Vec<u16>,
+    /// JA4SSH 当前窗口内本方向纯 ACK 包数（F36：无载荷且 flags 精确
+    /// 等于 0x10；窗口产出后清零）
+    pub ssh_ack_count: u32,
+    /// JA4SSH 会话指纹（F36：最近完成的 200 载荷包窗口指纹，存于两个
+    /// 方向流；旁路字段，不占用 protocol/metadata 的一次定型语义）
+    pub ja4ssh: Option<String>,
     /// 流关联的风险 (feature: risk)
     #[cfg(feature = "risk")]
     pub risks: Vec<crate::risk::types::RiskResult>,
@@ -107,6 +116,9 @@ impl Flow {
             synack_ttl: None,
             ja4ls: None,
             ja4lc: None,
+            ssh_payload_lens: Vec::new(),
+            ssh_ack_count: 0,
+            ja4ssh: None,
             #[cfg(feature = "risk")]
             risks: Vec::new(),
         }

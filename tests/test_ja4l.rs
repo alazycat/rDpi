@@ -72,16 +72,14 @@ const SERVER_TTL: u8 = 57;
 fn ja4ls_by_src_port(d: &Detector, port: u16) -> Option<String> {
     d.flows()
         .find(|(k, _)| k.src_port == port)
-        .map(|(_, f)| f.ja4ls.clone())
-        .flatten()
+        .and_then(|(_, f)| f.ja4ls.clone())
 }
 
 /// 按源端口取流 JA4L-C 快照
 fn ja4lc_by_src_port(d: &Detector, port: u16) -> Option<String> {
     d.flows()
         .find(|(k, _)| k.src_port == port)
-        .map(|(_, f)| f.ja4lc.clone())
-        .flatten()
+        .and_then(|(_, f)| f.ja4lc.clone())
 }
 
 #[test]

@@ -316,8 +316,10 @@ impl Detector {
         // F35：JA4L 时延观测——需跨方向流读对端握手时戳（A/B 分布在两条
         // 方向流上），在 get_or_create 之前独立完成流表读写，避免借用冲突。
         // 仅 TCP 参与（TcpHeaderInfo 携带 TTL）。
+        // F36：JA4SSH 会话观测——同样需跨方向流聚合双向窗口计数，同址复用。
         if let Some(tcp) = parsed.tcp.as_ref() {
             Self::observe_ja4l(&mut self.flow_table, &key, arrival, tcp);
+            Self::observe_ja4ssh(&mut self.flow_table, &key, tcp.flags, parsed.payload.len());
         }
 
         // 获取或创建流
@@ -405,6 +407,7 @@ impl Detector {
                     r.ja4ts = flow.ja4ts.clone();
                     r.ja4ls = flow.ja4ls.clone();
                     r.ja4lc = flow.ja4lc.clone();
+                    r.ja4ssh = flow.ja4ssh.clone();
                     flow.protocol = Some(r.protocol);
                     flow.metadata = Some(r.metadata.clone());
                     return Ok(Some(r));
@@ -498,12 +501,13 @@ impl Detector {
         flow.stats.bytes += packet.len() as u64;
         flow.stats.last_time = std::time::Instant::now();
 
-        // 如果有检测结果，保存元数据（并携带流级 JA4T/JA4TS/JA4L，若此前已捕获）
+        // 如果有检测结果，保存元数据（并携带流级 JA4T/JA4TS/JA4L/JA4SSH，若此前已捕获）
         if let Some(ref mut r) = result {
             r.ja4t = flow.ja4t.clone();
             r.ja4ts = flow.ja4ts.clone();
             r.ja4ls = flow.ja4ls.clone();
             r.ja4lc = flow.ja4lc.clone();
+            r.ja4ssh = flow.ja4ssh.clone();
             flow.metadata = Some(r.metadata.clone());
         }
 
@@ -602,6 +606,110 @@ impl Detector {
                 let fp = application::compute_ja4lc(d.as_micros() as u64, ct);
                 flow_table.get_or_create(key.clone()).ja4lc = Some(fp);
             }
+        }
+    }
+
+    /// F36：JA4SSH 会话观测（官方 zeek ja4ssh/main.zeek 语义）
+    ///
+    /// 在 [`Detector::detect_at`] 的 get_or_create 之前调用，独立持有流表借用：
+    /// 窗口聚合需要双向计数（c2s/s2c 分布在两条方向流上）。设计要点：
+    /// 1. 门控：仅已定型为 SSH 的流参与（对齐 zeek 的 SSH 版本横幅确认门），
+    ///    且连接须自初始 SYN 起（zeek `new_connection` 要求 flags 精确等于
+    ///    TH_SYN，mid-stream 会话不追踪）——借 F35 的 syn_time 判定。
+    /// 2. 本方向累计：载荷包（payload > 0）长度入序列；纯 ACK（无载荷且
+    ///    flags 精确等于 0x10）计数 +1；其余（裸 SYN/FIN/RST 等）不计。
+    /// 3. 窗口：双向载荷包合计 ≥ [`application::JA4SSH_WINDOW_PACKETS`] 时
+    ///    产出指纹写两个方向流并清零滚动窗口（zeek 逐窗口出日志，此处保留
+    ///    最近完成窗口）。方向归位：SYN 发送端为客户端（zeek orig 语义）。
+    ///
+    /// 定型当包不计入（横幅包错过，1-2/200，见 risks.md F36 边界）。
+    fn observe_ja4ssh(
+        flow_table: &mut FlowTable,
+        key: &FlowKey,
+        tcp_flags: u8,
+        payload_len: usize,
+    ) {
+        // 门控 1：仅已定型 SSH 的流参与（定型前的横幅包由检测当包处理）
+        if !flow_table
+            .get(key)
+            .is_some_and(|f| f.protocol == Some(Protocol::Ssh))
+        {
+            return;
+        }
+
+        // 对端方向流键（FlowKey 方向性）
+        let mut reverse = key.clone();
+        std::mem::swap(&mut reverse.src_ip, &mut reverse.dst_ip);
+        std::mem::swap(&mut reverse.src_port, &mut reverse.dst_port);
+        if *key == reverse {
+            return; // 自连路径保护（reverse 借用冲突不可能发生）
+        }
+
+        // 门控 2：连接自初始 SYN 起（zeek 仅跟踪 TH_SYN 开启的连接）
+        let syn_seen = flow_table.get(key).is_some_and(|f| f.syn_time.is_some())
+            || flow_table
+                .get(&reverse)
+                .is_some_and(|f| f.syn_time.is_some());
+        if !syn_seen {
+            return;
+        }
+
+        // 本方向累计：载荷包长度入序列 / 纯 ACK 计数（对齐 zeek：dl==0 且
+        // flags==0x10 记 ACK，dl>0 记长度，其余不计）
+        {
+            let f = flow_table.get_mut(key).expect("门控已确认存在");
+            if payload_len > 0 {
+                f.ssh_payload_lens
+                    .push(u16::try_from(payload_len).unwrap_or(u16::MAX));
+            } else if tcp_flags == 0x10 {
+                f.ssh_ack_count += 1;
+            }
+        }
+
+        // 窗口判定：双向载荷包合计
+        let own_len = flow_table
+            .get(key)
+            .map(|f| f.ssh_payload_lens.len())
+            .unwrap_or(0);
+        let rev_len = flow_table
+            .get(&reverse)
+            .map(|f| f.ssh_payload_lens.len())
+            .unwrap_or(0);
+        if own_len + rev_len < application::JA4SSH_WINDOW_PACKETS {
+            return;
+        }
+
+        // 方向归位：SYN 发送端为客户端（zeek orig 语义）。syn_seen 门控保证
+        // 至少一方有 syn_time；对端流缺失（仅单方向累计满窗口）时对端记空窗口。
+        let own_is_client = flow_table.get(key).is_some_and(|f| f.syn_time.is_some());
+        let empty: &[u16] = &[];
+        let (c_lens, c_ack, s_lens, s_ack);
+        {
+            let o = flow_table.get(key).expect("门控已确认存在");
+            let r = flow_table.get(&reverse);
+            let (o_lens, o_ack) = (o.ssh_payload_lens.as_slice(), o.ssh_ack_count);
+            let (r_lens, r_ack) = (
+                r.map(|f| f.ssh_payload_lens.as_slice()).unwrap_or(empty),
+                r.map(|f| f.ssh_ack_count).unwrap_or(0),
+            );
+            if own_is_client {
+                (c_lens, c_ack, s_lens, s_ack) = (o_lens, o_ack, r_lens, r_ack);
+            } else {
+                (c_lens, c_ack, s_lens, s_ack) = (r_lens, r_ack, o_lens, o_ack);
+            }
+        }
+        let fp = application::compute_ja4ssh(c_lens, s_lens, c_ack, s_ack);
+
+        // 写两个方向流并清零滚动窗口（zeek do_ja4ssh 后复位计数）
+        if let Some(f) = flow_table.get_mut(key) {
+            f.ja4ssh = Some(fp.clone());
+            f.ssh_payload_lens.clear();
+            f.ssh_ack_count = 0;
+        }
+        if let Some(f) = flow_table.get_mut(&reverse) {
+            f.ja4ssh = Some(fp);
+            f.ssh_payload_lens.clear();
+            f.ssh_ack_count = 0;
         }
     }
 

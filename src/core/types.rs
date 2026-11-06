@@ -573,6 +573,9 @@ pub struct DetectionResult {
     pub ja4ls: Option<String>,
     /// JA4L-C 客户端时延指纹（F35：`{半程时延µs}_{SYN TTL}`；无 TCP 握手起点时为 None）
     pub ja4lc: Option<String>,
+    /// JA4SSH 会话指纹（F36：`c{c众数}s{s众数}_c{c载荷包数}s{s载荷包数}_c{c纯ACK数}s{s纯ACK数}`；
+    /// 仅 SSH 流且首个 200 载荷包窗口完成后非 None）
+    pub ja4ssh: Option<String>,
     /// 风险分析结果 (feature: risk)
     #[cfg(feature = "risk")]
     pub risks: Vec<super::super::risk::types::RiskResult>,
@@ -592,6 +595,7 @@ impl DetectionResult {
             ja4ts: None,
             ja4ls: None,
             ja4lc: None,
+            ja4ssh: None,
             #[cfg(feature = "risk")]
             risks: Vec::new(),
         }

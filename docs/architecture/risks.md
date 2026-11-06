@@ -291,3 +291,19 @@
   - `DetectionResult.ja4ls/ja4lc` 全分支携带（回显/DPI/guess/规则分支）；CLI 文本输出 ` ja4ls=... ja4lc=...`；json feature 随 derive 序列化。
 - **测试**：tests/test_ja4l.rs 新增 7 项（完整握手双向数值直证 5000_57/10000_128、C 为数据包、首包优先/重传与后续包不覆盖、mid-stream 缺起点、无 SYN-ACK、时戳回退跳过、UDP 流不参与）。三配置全绿：默认 322 / all-features 1124（10 ignored）/ risk 367；clippy --all-features --all-targets 0 警告。
 - **已知边界**：① QUIC 变体（q 前缀，client Initial/server Initial/client Handshake 时戳）不实现——需 QUIC 包类型跟踪；python 另有 TLS 精化第 3 段（zeek 的 ja4l_delta：`(first_client_data-server_hello)/2`、`(server_hello-client_hello)/2`）依赖 TLS 事件，本库 2 字段格式取 python 语义（对任意 TCP 流可用，不依赖 TLS）；② 时戳回退（乱序）时 zeek 报错跳过、本库静默跳过；③ JA4L-C 在 B 未及时到达时由后续客户端包重试捕获（zeek 为一次性阈值，错过即放弃）——多包场景数值可能与 zeek 略偏；④ detect_at 调用方须保证时戳单调不回退，否则对应指纹跳过（不 panic）。
+
+## F36【中】JA4SSH 会话指纹（2026-11-06，新功能开发）—— ✅ 已完成
+
+- **背景**：JA4+ 家族 SSH 一环——加密流量内靠包长/包数/ACK 分布刻画会话行为（交互 shell、SCP/SFTP、隧道形态各异），zeek 官方按 200 载荷包滚动窗口逐个产出指纹。纯传输层统计、零解密、无新依赖。
+- **规格来源**：官方 [FoxIO-LLC/ja4 zeek/ja4ssh/main.zeek](https://github.com/FoxIO-LLC/ja4)（全文直证；ja4-zeek-scripts 仓库无 ja4ssh，纯脚本版在主仓库 zeek/ 目录）：
+  - 格式：`c{c众数}s{s众数}_c{c载荷包数}s{s载荷包数}_c{c纯ACK数}s{s纯ACK数}`（`do_ja4ssh` 的 `fmt("c%ds%d_c%ds%d_c%ds%d", ...)`）
+  - 众数：窗口内本方向 TCP 载荷长度频次最高者，平局取较小值（`get_mode`：`freq > max` 取之，`freq == max && idx < mode` 取小者），空记 0
+  - 累计口径：`dl > 0` 记长度；`dl == 0 且 flags 精确等于 0x10` 记纯 ACK；其余（裸 SYN/FIN/RST 等）不计
+  - 窗口：双向载荷包合计 ≥ `ja4_ssh_packet_count`（默认 200）产出并清零滚动；连接须自 `flags == TH_SYN`（精确等于）的 new_connection 起追踪（mid-stream 不追踪）；SSH 版本横幅确认（is_ssh）后计数
+- **实现**：
+  - [application/ja4.rs](file:///d:/rust_code/rDpi/src/application/ja4.rs)：`JA4SSH_WINDOW_PACKETS = 200` + `compute_ja4ssh(client_lens, server_lens, client_acks, server_acks)`（格式化 + 私有 `mode_of` O(n²) 众数，n ≤ 200 每窗口一次）；应用模块重导出。
+  - [core/flow.rs](file:///d:/rust_code/rDpi/src/core/flow.rs)：`Flow` 新增 `ssh_payload_lens: Vec<u16>`（本方向载荷长度序列，仅 SSH 流增长——非 SSH 流恒空、零堆分配）、`ssh_ack_count: u32`、`ja4ssh: Option<String>`；流级旁路字段，不占用 protocol/metadata 一次定型语义。
+  - [lib.rs](file:///d:/rust_code/rDpi/src/lib.rs) `Detector::observe_ja4ssh`：复用 F35 的 get_or_create 之前独立借流表模式。门控两级：①流已定型 `Protocol::Ssh`（对齐 is_ssh 横幅确认）②连接自初始 SYN 起（借 F35 `syn_time`，对齐 zeek TH_SYN 门，mid-stream 不追踪）。累计→双向合计 ≥ 200 产出（方向归位：SYN 发送端为客户端，zeek orig 语义）→ 指纹写两个方向流并清零滚动窗口。
+  - `DetectionResult.ja4ssh` 全分支携带（回显/规则分支）；CLI 文本输出 ` ja4ssh=...`；json feature 随 derive 序列化。
+- **测试**：tests/test_ja4ssh.rs 新增 6 项（`#![cfg(feature = "ssh")]`——格式/众数平局直证、完整会话窗口数值直证 c100s200_c97s103_c3s1、滚动窗口覆盖、非 SSH 流不产出、mid-stream 跳过、裸 SYN/FIN 不占窗口计数）。三配置全绿：默认 322 / all-features 1130（10 ignored）/ risk 367；clippy --all-features --all-targets 0 警告（顺修 test_ja4l.rs 两处 map-flatten 历史 lint）。
+- **已知边界**：① zeek 逐窗口出日志（`ja4ssh_fingerprint_count` + `ja4_ssh_max_fingerprints` 上限），本库保留**最近完成窗口**指纹（流级单值语义）；② 不足 200 包的尾窗不产出——zeek 在 connection_state_remove 冲刷尾窗，本库无连接结束事件（流超时删除路径不冲刷）；③ SSH 横幅定型当包不计入（observe 先于协议定型，1-2/200 包）；④ 服务端流靠横幅定型（无服务端横幅时等 guess giveup 后才计数）；⑤ 众数平局取较小值与 zeek 一致，但 zeek table 迭代顺序无关该语义（确定性相同）。

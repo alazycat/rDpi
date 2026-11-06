@@ -282,12 +282,31 @@ fn print_detection(pkt_num: u64, det: &DetectionResult) {
         (None, None) => String::new(),
     };
 
-    if meta_str.is_empty() && ja4t_str.is_empty() && ja4ts_str.is_empty() && ja4l_str.is_empty() {
+    // F36：JA4SSH 会话指纹（最近完成的 200 载荷包窗口）
+    let ja4ssh_str = det
+        .ja4ssh
+        .as_deref()
+        .map(|j| format!(" ja4ssh={}", j))
+        .unwrap_or_default();
+
+    if meta_str.is_empty()
+        && ja4t_str.is_empty()
+        && ja4ts_str.is_empty()
+        && ja4l_str.is_empty()
+        && ja4ssh_str.is_empty()
+    {
         println!("[{:6}] {:?} [{:?}]", pkt_num, det.protocol, det.confidence);
     } else {
         println!(
-            "[{:6}] {:?} ({}{}{}{}) [{:?}]",
-            pkt_num, det.protocol, meta_str, ja4t_str, ja4ts_str, ja4l_str, det.confidence
+            "[{:6}] {:?} ({}{}{}{}{}) [{:?}]",
+            pkt_num,
+            det.protocol,
+            meta_str,
+            ja4t_str,
+            ja4ts_str,
+            ja4l_str,
+            ja4ssh_str,
+            det.confidence
         );
     }
 }

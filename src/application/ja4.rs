@@ -386,6 +386,61 @@ pub fn compute_ja4lc(diff_micros: u64, client_ttl: u8) -> String {
     format!("{}_{client_ttl}", diff_micros / 2)
 }
 
+/// JA4SSH 滚动窗口大小（F36，2026-11-06）：双向载荷包合计达到该值即产出
+/// 一个指纹并清零窗口（官方 zeek ja4ssh `option ja4_ssh_packet_count = 200`）
+pub const JA4SSH_WINDOW_PACKETS: usize = 200;
+
+/// JA4SSH：SSH 会话指纹（F36，2026-11-06）
+///
+/// 格式（官方 zeek ja4ssh/main.zeek `do_ja4ssh`，python ja4.py `to_ja4ssh` 同源）：
+/// `c{c众数}s{s众数}_c{c载荷包数}s{s载荷包数}_c{c纯ACK数}s{s纯ACK数}`。
+/// 众数 = 窗口内本方向 TCP 载荷长度中出现频次最高者，平局取较小值；
+/// 纯 ACK = 无载荷且 flags 精确等于 0x10 的包。方向以连接发起方（SYN
+/// 发送端）为客户端，与 zeek 的 orig/resp 划分一致。
+///
+/// # 参数
+///
+/// * `client_lens` - 窗口内客户端→服务端载荷包长度序列
+/// * `server_lens` - 窗口内服务端→客户端载荷包长度序列
+/// * `client_acks` - 窗口内客户端方向纯 ACK 包数
+/// * `server_acks` - 窗口内服务端方向纯 ACK 包数
+pub fn compute_ja4ssh(
+    client_lens: &[u16],
+    server_lens: &[u16],
+    client_acks: u32,
+    server_acks: u32,
+) -> String {
+    format!(
+        "c{}s{}_c{}s{}_c{}s{}",
+        mode_of(client_lens),
+        mode_of(server_lens),
+        client_lens.len(),
+        server_lens.len(),
+        client_acks,
+        server_acks
+    )
+}
+
+/// 载荷长度众数：频次最高者，平局取较小值，空序列记 0
+/// （对齐官方 zeek ja4ssh `get_mode`：`freq > max` 取之，`freq == max && idx < mode` 取小者）
+fn mode_of(lens: &[u16]) -> u16 {
+    let mut best_val = 0u16;
+    let mut best_freq = 0usize;
+    for (i, &v) in lens.iter().enumerate() {
+        let mut freq = 1usize;
+        for &w in &lens[i + 1..] {
+            if w == v {
+                freq += 1;
+            }
+        }
+        if freq > best_freq || (freq == best_freq && v < best_val) {
+            best_freq = freq;
+            best_val = v;
+        }
+    }
+    best_val
+}
+
 /// OID 列表 → 12 位哈希段：DER 内容字节 hex 逗号拼接后 SHA-256 截断；空列表为 12 个 0
 fn hash12_oids(oids: &[Vec<u8>]) -> String {
     if oids.is_empty() {
