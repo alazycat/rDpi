@@ -241,6 +241,68 @@ fn make_tls_client_hello_with_sni(hostname: &str) -> Vec<u8> {
     data
 }
 
+fn make_tls_record(content_type: u8, payload: &[u8]) -> Vec<u8> {
+    let len = payload.len() as u16;
+    let mut record = vec![
+        content_type,
+        0x03,
+        0x03,
+        (len >> 8) as u8,
+        (len & 0xFF) as u8,
+    ];
+    record.extend_from_slice(payload);
+    record
+}
+
+/// 构造可被 `parse_certificate` 真实解析的 TLS Certificate 记录
+/// （极简 X.509-like DER，UTF8String CN；与 tests/test_pin_rules.rs 同源）
+fn make_tls_certificate_record(subject_cn: &str) -> Vec<u8> {
+    fn append_dn(data: &mut Vec<u8>, cn: &str) {
+        let mut attr = vec![0x06, 0x03, 0x55, 0x04, 0x03]; // OID commonName
+        attr.push(0x0c); // UTF8String
+        attr.push(cn.len() as u8);
+        attr.extend_from_slice(cn.as_bytes());
+        let mut set = vec![0x30, attr.len() as u8];
+        set.extend_from_slice(&attr);
+        let mut dn = vec![0x31, set.len() as u8];
+        dn.extend_from_slice(&set);
+        data.push(0x30);
+        data.push(dn.len() as u8);
+        data.extend_from_slice(&dn);
+    }
+
+    let mut inner = Vec::new();
+    inner.extend_from_slice(&[0xa0, 0x03, 0x02, 0x01, 0x02]); // version [0] v3
+    inner.extend_from_slice(&[0x02, 0x01, 0x01]); // serialNumber 1
+    inner.extend_from_slice(&[
+        0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b, 0x05, 0x00,
+    ]); // signature SEQ
+    append_dn(&mut inner, "Test CA"); // issuer
+    inner.extend_from_slice(&[
+        0x30, 0x1e, 0x17, 0x0d, b'2', b'4', b'0', b'3', b'0', b'9', b'1', b'2', b'0', b'0', b'0',
+        b'0', b'Z', 0x17, 0x0d, b'2', b'5', b'0', b'3', b'0', b'9', b'1', b'2', b'0', b'0', b'0',
+        b'0', b'Z',
+    ]); // validity UTCTime ×2
+    append_dn(&mut inner, subject_cn); // subject
+
+    let mut tbs = vec![0x30, 0x00];
+    tbs.extend_from_slice(&inner);
+    tbs[1] = (tbs.len() - 2) as u8;
+
+    let mut cert = vec![0x30, 0x00];
+    cert.extend_from_slice(&tbs);
+    cert[1] = (cert.len() - 2) as u8;
+
+    let mut msg = vec![0x16, 0x03, 0x03]; // record header
+    msg.extend_from_slice(&((cert.len() as u16) + 10).to_be_bytes());
+    msg.push(0x0b); // handshake Certificate
+    msg.extend_from_slice(&[0x00, 0x00, (cert.len() + 6) as u8]); // handshake body length
+    msg.extend_from_slice(&[0x00, 0x00, (cert.len() + 3) as u8]); // list len
+    msg.extend_from_slice(&[0x00, 0x00, cert.len() as u8]); // cert len
+    msg.extend_from_slice(&cert);
+    msg
+}
+
 #[test]
 fn protocol_stack_pushes_in_order_and_reports_master_app() {
     let mut stack = ProtocolStack::new();
@@ -827,6 +889,119 @@ fn tcp_retransmission_is_deduplicated_before_http() {
     match result.metadata {
         Metadata::Http(meta) => assert_eq!(meta.host.as_deref(), Some("example.com")),
         _ => panic!("expected HTTP metadata"),
+    }
+}
+
+#[test]
+fn tls_client_hello_split_across_records_is_reassembled() {
+    let mut detector = Detector::new();
+    let hello = make_tls_client_hello_with_sni("example.com");
+    let handshake = &hello[5..]; // strip the single TLS record header
+    let mid = handshake.len() / 2;
+    let mut records = make_tls_record(0x16, &handshake[..mid]);
+    records.extend_from_slice(&make_tls_record(0x16, &handshake[mid..]));
+
+    let packet = make_l3_tcp_packet_with_seq(
+        [192, 168, 1, 1],
+        12347,
+        [10, 0, 0, 1],
+        443,
+        8_000,
+        0x18,
+        &records,
+    );
+    let parsed = parse_l3_packet(&packet).unwrap();
+    let packet_key = FlowKey {
+        src_ip: parsed.src_ip,
+        dst_ip: parsed.dst_ip,
+        src_port: parsed.src_port,
+        dst_port: parsed.dst_port,
+        transport: parsed.transport,
+    };
+    let mut flow = Flow::new_bidirectional(packet_key);
+
+    let result = detector
+        .process_l3_packet(&mut flow, &packet, 1)
+        .unwrap()
+        .expect("handshake split across TLS records should classify");
+    assert_eq!(result.protocol, Protocol::Tls);
+    match result.metadata {
+        Metadata::Tls(meta) => assert_eq!(meta.sni.as_deref(), Some("example.com")),
+        _ => panic!("expected TLS metadata"),
+    }
+}
+
+#[test]
+fn tls_certificate_record_enriches_classified_flow() {
+    let mut detector = Detector::new();
+    let hello = make_tls_client_hello_with_sni("example.com");
+    let certificate = make_tls_certificate_record("example.com");
+
+    let client_packet = make_l3_tcp_packet_with_seq(
+        [192, 168, 1, 1],
+        12348,
+        [10, 0, 0, 1],
+        443,
+        9_000,
+        0x18,
+        &hello,
+    );
+    let server_packet = make_l3_tcp_packet_with_seq(
+        [10, 0, 0, 1],
+        443,
+        [192, 168, 1, 1],
+        12348,
+        100,
+        0x18,
+        &certificate,
+    );
+
+    let parsed = parse_l3_packet(&client_packet).unwrap();
+    let packet_key = FlowKey {
+        src_ip: parsed.src_ip,
+        dst_ip: parsed.dst_ip,
+        src_port: parsed.src_port,
+        dst_port: parsed.dst_port,
+        transport: parsed.transport,
+    };
+    let mut flow = Flow::new_bidirectional(packet_key);
+
+    let first = detector
+        .process_l3_packet(&mut flow, &client_packet, 1)
+        .unwrap()
+        .expect("ClientHello should classify");
+    assert_eq!(first.protocol, Protocol::Tls);
+    assert!(flow.monitoring, "TLS flow should enter monitoring mode");
+    match first.metadata {
+        Metadata::Tls(meta) => assert_eq!(meta.sni.as_deref(), Some("example.com")),
+        _ => panic!("expected TLS metadata"),
+    }
+
+    let second = detector
+        .process_l3_packet(&mut flow, &server_packet, 2)
+        .unwrap()
+        .expect("Certificate should enrich the classified flow");
+    assert_eq!(second.protocol, Protocol::Tls);
+    match second.metadata {
+        Metadata::Tls(meta) => {
+            assert_eq!(
+                meta.sni.as_deref(),
+                Some("example.com"),
+                "existing SNI must survive merge"
+            );
+            assert_eq!(
+                meta.cert_subject.as_deref(),
+                Some("example.com"),
+                "certificate subject should be enriched"
+            );
+        }
+        _ => panic!("expected TLS metadata"),
+    }
+    match flow.metadata {
+        Some(Metadata::Tls(meta)) => {
+            assert_eq!(meta.cert_subject.as_deref(), Some("example.com"));
+        }
+        _ => panic!("expected enriched flow metadata"),
     }
 }
 

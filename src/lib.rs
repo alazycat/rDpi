@@ -591,6 +591,38 @@ impl Detector {
         Ok(result)
     }
 
+    /// 回显已识别流的协议、元数据与协议栈
+    fn replay_flow(flow: &Flow) -> Option<DetectionResult> {
+        flow.protocol.map(|protocol| {
+            let mut result = DetectionResult::new(protocol);
+            result.protocol_stack = flow.protocol_stack;
+            if let Some(ref metadata) = flow.metadata {
+                result.metadata = metadata.clone();
+            }
+            result
+        })
+    }
+
+    /// 将监测路径新提取的元数据合并进流（当前支持 TLS Certificate 富化）
+    fn merge_detected_metadata(flow: &mut Flow, detected: &mut DetectionResult) {
+        let existing = std::mem::take(&mut flow.metadata);
+        match existing {
+            Some(Metadata::Tls(mut old)) => {
+                if let Metadata::Tls(new) = detected.metadata.clone() {
+                    old.merge_from(new);
+                }
+                flow.metadata = Some(Metadata::Tls(old.clone()));
+                detected.metadata = Metadata::Tls(old);
+            }
+            Some(other) => {
+                flow.metadata = Some(other);
+            }
+            None => {
+                flow.metadata = Some(detected.metadata.clone());
+            }
+        }
+    }
+
     /// 处理 L3 包（调用方持有 Flow）
     ///
     /// 输入为 IPv4/IPv6 包（不含以太网头）。与 [`Self::detect_at`] 不同：
@@ -640,16 +672,9 @@ impl Detector {
             }
         }
 
-        // 已完全定型：回显协议、元数据与协议栈，不重复检测。
-        if flow.classification_state == ClassificationState::Classified
-            && let Some(protocol) = flow.protocol
-        {
-            let mut result = DetectionResult::new(protocol);
-            result.protocol_stack = flow.protocol_stack;
-            if let Some(ref metadata) = flow.metadata {
-                result.metadata = metadata.clone();
-            }
-            return Ok(Some(result));
+        // 已完全定型且不处于监测模式：回显，不重复检测。
+        if flow.classification_state == ClassificationState::Classified && !flow.monitoring {
+            return Ok(Self::replay_flow(flow));
         }
 
         // 有状态 dissector：当前 HTTP / DNS-over-TCP / TLS 均为 TCP 专用。
@@ -667,13 +692,10 @@ impl Detector {
             };
             if stateful_payload.is_empty() {
                 // 纯 ACK / 重传 / 乱序等待：没有新的连续字节。
-                if let Some(protocol) = flow.protocol {
-                    let mut replay = DetectionResult::new(protocol);
-                    replay.protocol_stack = flow.protocol_stack;
-                    if let Some(ref metadata) = flow.metadata {
-                        replay.metadata = metadata.clone();
-                    }
-                    return Ok(Some(replay));
+                if flow.classification_state == ClassificationState::Classified
+                    || flow.protocol.is_some()
+                {
+                    return Ok(Self::replay_flow(flow));
                 }
                 return Ok(None);
             }
@@ -686,14 +708,26 @@ impl Detector {
             );
             match stateful {
                 Some(DissectorOutcome::Classified(mut detected)) => {
+                    if flow.classification_state == ClassificationState::Classified {
+                        // 监测模式：合并新元数据（TLS Certificate 等），不改变分类。
+                        Self::merge_detected_metadata(flow, &mut detected);
+                        detected.protocol_stack = flow.protocol_stack;
+                        return Ok(Some(detected));
+                    }
                     flow.protocol = Some(detected.protocol);
                     flow.metadata = Some(detected.metadata.clone());
                     flow.protocol_stack.push(detected.protocol);
                     detected.protocol_stack = flow.protocol_stack;
                     flow.classification_state = ClassificationState::Classified;
+                    flow.monitoring = matches!(flow.dissector_state, DissectorState::Tls(_));
                     return Ok(Some(detected));
                 }
                 Some(DissectorOutcome::Partial(mut detected)) => {
+                    if flow.classification_state == ClassificationState::Classified {
+                        // 监测模式下不降级；合并可合并的元数据后回显。
+                        Self::merge_detected_metadata(flow, &mut detected);
+                        return Ok(Self::replay_flow(flow));
+                    }
                     flow.protocol = Some(detected.protocol);
                     flow.metadata = Some(detected.metadata.clone());
                     flow.protocol_stack.push(detected.protocol);
@@ -701,13 +735,31 @@ impl Detector {
                     flow.classification_state = ClassificationState::Partial;
                     return Ok(Some(detected));
                 }
-                Some(DissectorOutcome::Continue) => return Ok(None),
+                Some(DissectorOutcome::Continue) => {
+                    if flow.classification_state == ClassificationState::Classified {
+                        return Ok(Self::replay_flow(flow));
+                    }
+                    return Ok(None);
+                }
                 Some(DissectorOutcome::GiveUp) => {
                     // 放弃重组：清空 per-flow 状态，回退到无状态检测。
                     flow.dissector_state = DissectorState::None;
+                    if flow.classification_state == ClassificationState::Classified {
+                        flow.monitoring = false;
+                        return Ok(Self::replay_flow(flow));
+                    }
                 }
-                None => {}
+                None => {
+                    if flow.classification_state == ClassificationState::Classified {
+                        return Ok(Self::replay_flow(flow));
+                    }
+                }
             }
+        }
+
+        // 已定型（监测模式下没有新元数据）：回显，不再走无状态检测。
+        if flow.classification_state == ClassificationState::Classified {
+            return Ok(Self::replay_flow(flow));
         }
 
         // Inspecting / Partial：继续逐包检测，允许 partial → classified 升级。
@@ -723,14 +775,9 @@ impl Detector {
                 Confidence::Dpi | Confidence::CustomRule => ClassificationState::Classified,
                 _ => ClassificationState::Partial,
             };
-        } else if let Some(protocol) = flow.protocol {
+        } else if flow.protocol.is_some() {
             // 本包没有新结果：保留并回显已有 partial 分类。
-            let mut replay = DetectionResult::new(protocol);
-            replay.protocol_stack = flow.protocol_stack;
-            if let Some(ref metadata) = flow.metadata {
-                replay.metadata = metadata.clone();
-            }
-            return Ok(Some(replay));
+            return Ok(Self::replay_flow(flow));
         }
         Ok(result)
     }

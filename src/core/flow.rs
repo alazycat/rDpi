@@ -155,6 +155,8 @@ pub struct Flow {
     pub initiator: Direction,
     /// 分类状态（双向 API；`detect` 路径暂未使用）
     pub classification_state: ClassificationState,
+    /// 已定型但继续监测元数据（P1：TLS Certificate 富化）
+    pub monitoring: bool,
     /// 正向包数/字节数（相对流键方向；双向 API）
     pub packets_forward: u64,
     /// 正向字节数
@@ -251,6 +253,7 @@ impl Flow {
             state: FlowState::New,
             initiator: Direction::Forward,
             classification_state: ClassificationState::Inspecting,
+            monitoring: false,
             packets_forward: 0,
             bytes_forward: 0,
             packets_reverse: 0,

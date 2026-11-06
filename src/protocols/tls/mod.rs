@@ -22,6 +22,10 @@ use crate::protocols::Registry;
 const TLS_MAX_RECORD_BYTES: usize = 18_432;
 /// 单方向不完整记录的缓冲上限（5 字节记录头 + 最大记录）
 const TLS_MAX_BUFFER_BYTES: usize = 5 + TLS_MAX_RECORD_BYTES;
+/// 单方向 handshake 消息重组缓冲上限
+const TLS_MAX_HANDSHAKE_BYTES: usize = 256 * 1024;
+/// 合成 TLS record 的 2 字节长度上限
+const TLS_MAX_SYNTHETIC_RECORD: usize = u16::MAX as usize;
 
 pub fn register(registry: &mut Registry) {
     registry.register(Box::new(TlsDetector::new()));
@@ -67,10 +71,10 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
 
     /// 有状态逐包 TLS 记录重组
     ///
-    /// 两个方向独立缓冲；凑齐完整 TLS record（5 字节头 + record_len）后交给
-    /// 无状态 [`Self::detect`]。非 handshake 记录（CCS/Alert/AppData）直接
-    /// 丢弃，继续等待后续记录。当前只做 record 级重组，不处理 handshake
-    /// 消息跨 TLS record 分片。
+    /// 两个方向独立缓冲；凑齐完整 TLS record（5 字节头 + record_len）后，
+    /// handshake 记录载荷进入 handshake 消息重组缓冲（支持消息跨 record
+    /// 分片），再合成单条 record 交给无状态 [`Self::detect`]。非 handshake
+    /// 记录（CCS/Alert/AppData）直接丢弃。
     fn process(
         &self,
         state: &mut DissectorState,
@@ -97,41 +101,53 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
         let DissectorState::Tls(tls_state) = state else {
             return None;
         };
-        let buffer = match direction {
-            Direction::Forward => &mut tls_state.client_buffer,
-            Direction::Reverse => &mut tls_state.server_buffer,
+        let (record_buffer, handshake_buffer) = match direction {
+            Direction::Forward => (
+                &mut tls_state.client_buffer,
+                &mut tls_state.client_handshake,
+            ),
+            Direction::Reverse => (
+                &mut tls_state.server_buffer,
+                &mut tls_state.server_handshake,
+            ),
         };
-        buffer.extend_from_slice(payload);
+        record_buffer.extend_from_slice(payload);
 
         loop {
-            if buffer.len() < 5 {
+            if record_buffer.len() < 5 {
                 break;
             }
-            let content_type = buffer[0];
-            if !(0x14..=0x17).contains(&content_type) || buffer[1] != 0x03 {
+            let content_type = record_buffer[0];
+            if !(0x14..=0x17).contains(&content_type) || record_buffer[1] != 0x03 {
                 return Some(DissectorOutcome::GiveUp);
             }
-            let record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
+            let record_len = u16::from_be_bytes([record_buffer[3], record_buffer[4]]) as usize;
             if record_len > TLS_MAX_RECORD_BYTES {
                 return Some(DissectorOutcome::GiveUp);
             }
-            if buffer.len() < 5 + record_len {
+            if record_buffer.len() < 5 + record_len {
                 break;
             }
 
-            let detected = if content_type == 0x16 {
-                self.detect(&buffer[..5 + record_len])
+            if content_type == 0x16 {
+                handshake_buffer.extend_from_slice(&record_buffer[5..5 + record_len]);
+                record_buffer.drain(..5 + record_len);
+                if handshake_buffer.len() > TLS_MAX_HANDSHAKE_BYTES {
+                    return Some(DissectorOutcome::GiveUp);
+                }
+                if let Some(result) = process_handshake(self, handshake_buffer) {
+                    record_buffer.clear();
+                    handshake_buffer.clear();
+                    return Some(DissectorOutcome::Classified(result));
+                }
             } else {
-                None
-            };
-            if let Some(result) = detected {
-                buffer.clear();
-                return Some(DissectorOutcome::Classified(result));
+                record_buffer.drain(..5 + record_len);
             }
-            buffer.drain(..5 + record_len);
         }
 
-        if buffer.len() > TLS_MAX_BUFFER_BYTES {
+        if record_buffer.len() > TLS_MAX_BUFFER_BYTES
+            || handshake_buffer.len() > TLS_MAX_HANDSHAKE_BYTES
+        {
             return Some(DissectorOutcome::GiveUp);
         }
         Some(DissectorOutcome::Continue)
@@ -223,6 +239,39 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
                 .with_metadata(Metadata::Tls(tls_meta))
                 .with_confidence(Confidence::Dpi),
         )
+    }
+}
+
+/// 从跨 record 的 handshake 缓冲中提取完整消息并解析
+///
+/// handshake 头为 4 字节（type + 3 字节长度）；合成单条 TLS record 后复用
+/// 无状态 `TlsDetector::detect`。返回首个可识别的消息结果。
+fn process_handshake(
+    detector: &TlsDetector,
+    buffer: &mut Vec<u8>,
+) -> Option<crate::core::types::DetectionResult> {
+    loop {
+        if buffer.len() < 4 {
+            return None;
+        }
+        let msg_len = u32::from_be_bytes([0, buffer[1], buffer[2], buffer[3]]) as usize;
+        let total = 4 + msg_len;
+        if buffer.len() < total {
+            return None;
+        }
+        if total > TLS_MAX_SYNTHETIC_RECORD {
+            buffer.drain(..total);
+            continue;
+        }
+
+        let mut synthetic = Vec::with_capacity(5 + total);
+        synthetic.extend_from_slice(&[0x16, 0x03, 0x03, (total >> 8) as u8, (total & 0xff) as u8]);
+        synthetic.extend_from_slice(&buffer[..total]);
+        let detected = crate::protocols::ProtocolDetector::detect(detector, &synthetic);
+        buffer.drain(..total);
+        if detected.is_some() {
+            return detected;
+        }
     }
 }
 

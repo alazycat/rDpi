@@ -86,10 +86,14 @@ pub struct DnsTcpDissectorState {
 /// 不会混入同一记录流。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TlsDissectorState {
-    /// 客户端方向（Forward）缓冲
+    /// 客户端方向（Forward）TLS record 缓冲
     pub client_buffer: Vec<u8>,
-    /// 服务端方向（Reverse）缓冲
+    /// 服务端方向（Reverse）TLS record 缓冲
     pub server_buffer: Vec<u8>,
+    /// 客户端方向 handshake 消息重组缓冲（跨 TLS record）
+    pub client_handshake: Vec<u8>,
+    /// 服务端方向 handshake 消息重组缓冲（跨 TLS record）
+    pub server_handshake: Vec<u8>,
 }
 
 /// per-flow 有状态 dissector 状态
@@ -457,6 +461,63 @@ pub struct TlsMetadata {
     pub cert_valid_to: Option<u64>,
     /// JA4X 证书指纹（issuer/subject/扩展 OID 哈希，仅证书解析路径产出）
     pub cert_ja4x: Option<String>,
+}
+
+impl TlsMetadata {
+    /// 合并后续 record 提取的字段（已有值优先，缺失字段补全）
+    pub fn merge_from(&mut self, other: TlsMetadata) {
+        let TlsMetadata {
+            sni,
+            version,
+            application,
+            ja4,
+            ja4s,
+            cipher_suites,
+            alpn,
+            cert_subject,
+            cert_issuer,
+            cert_valid_from,
+            cert_valid_to,
+            cert_ja4x,
+        } = other;
+
+        if self.sni.is_none() {
+            self.sni = sni;
+        }
+        if self.version.is_none() {
+            self.version = version;
+        }
+        if self.application.is_none() {
+            self.application = application;
+        }
+        if self.ja4.is_none() {
+            self.ja4 = ja4;
+        }
+        if self.ja4s.is_none() {
+            self.ja4s = ja4s;
+        }
+        if self.cipher_suites.is_empty() {
+            self.cipher_suites = cipher_suites;
+        }
+        if self.alpn.is_none() {
+            self.alpn = alpn;
+        }
+        if self.cert_subject.is_none() {
+            self.cert_subject = cert_subject;
+        }
+        if self.cert_issuer.is_none() {
+            self.cert_issuer = cert_issuer;
+        }
+        if self.cert_valid_from.is_none() {
+            self.cert_valid_from = cert_valid_from;
+        }
+        if self.cert_valid_to.is_none() {
+            self.cert_valid_to = cert_valid_to;
+        }
+        if self.cert_ja4x.is_none() {
+            self.cert_ja4x = cert_ja4x;
+        }
+    }
 }
 
 /// HTTP 元数据
