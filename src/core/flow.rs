@@ -153,6 +153,9 @@ pub struct Flow {
     pub state: FlowState,
     /// 首包方向（相对规范化后的双向流键；`Flow::new` 默认 Forward）
     pub initiator: Direction,
+    /// 客户端方向（SYN 发送端；由 SYN/SYN-ACK 推断，双向 API 的 JA4 归位依据。
+    /// 无握手起点时保持 None）
+    pub client_direction: Option<Direction>,
     /// 分类状态（双向 API；`detect` 路径暂未使用）
     pub classification_state: ClassificationState,
     /// 已定型但继续监测元数据（P1：TLS Certificate 富化）
@@ -220,6 +223,11 @@ pub struct Flow {
     /// JA4SSH 当前窗口内本方向纯 ACK 包数（F36：无载荷且 flags 精确
     /// 等于 0x10；窗口产出后清零）
     pub ssh_ack_count: u32,
+    /// JA4SSH 双向 API：按方向 [Forward, Reverse] 累计的载荷包长度序列
+    /// （与 detect_at 路径的 `ssh_payload_lens` 分离，避免两个流模型互相污染）
+    pub ssh_payload_lens_by_dir: [Vec<u16>; 2],
+    /// JA4SSH 双向 API：按方向累计的纯 ACK 包数
+    pub ssh_ack_count_by_dir: [u32; 2],
     /// JA4SSH 会话指纹（F36：最近完成的 200 载荷包窗口指纹，存于两个
     /// 方向流；旁路字段，不占用 protocol/metadata 的一次定型语义）
     pub ja4ssh: Option<String>,
@@ -252,6 +260,7 @@ impl Flow {
             stats: FlowStats::default(),
             state: FlowState::New,
             initiator: Direction::Forward,
+            client_direction: None,
             classification_state: ClassificationState::Inspecting,
             monitoring: false,
             packets_forward: 0,
@@ -280,6 +289,8 @@ impl Flow {
             ja4lc: None,
             ssh_payload_lens: Vec::new(),
             ssh_ack_count: 0,
+            ssh_payload_lens_by_dir: [Vec::new(), Vec::new()],
+            ssh_ack_count_by_dir: [0, 0],
             ja4ssh: None,
             quic_client_init_time: None,
             quic_client_init_ttl: None,

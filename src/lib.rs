@@ -267,6 +267,35 @@ impl Detector {
         self.rules_only = enabled;
     }
 
+    /// 构建规则匹配上下文（规则先于 DPI）
+    ///
+    /// R6 修复：`flow.metadata` 在规则分支中恒为 None（所有写 metadata 的路径
+    /// 都同时写了 protocol，而规则分支仅在 `protocol.is_none()` 时进入）→
+    /// `sni_contains` 规则原为死代码。回退到从当前包 payload 提取 SNI。
+    #[cfg(feature = "rule")]
+    fn rule_context(flow: &Flow, parsed: &crate::parser::ParsedPacket) -> RuleContext {
+        let sni = flow.metadata.as_ref().and_then(|m| match m {
+            Metadata::Tls(tls) => tls.sni.clone(),
+            Metadata::Quic(quic) => quic.sni.clone(),
+            Metadata::Dtls(dtls) => dtls.sni.clone(),
+            _ => None,
+        });
+        #[cfg(feature = "tls")]
+        let sni = sni.or_else(|| protocols::tls::extract_sni(&parsed.payload));
+        #[cfg(all(feature = "quic", feature = "tls"))]
+        let sni = sni.or_else(|| {
+            // QUIC Initial：解密 ClientHello 提取 SNI（非 Initial 包在
+            // parse_initial_header 处快速拒绝，无额外开销）
+            protocols::quic::decrypt_client_hello(&parsed.payload).and_then(|ch| ch.sni)
+        });
+        RuleContext {
+            src_port: parsed.src_port,
+            dst_port: parsed.dst_port,
+            sni,
+            payload: parsed.payload.clone(),
+        }
+    }
+
     /// 检测单个包
     ///
     /// 自动更新流表：
@@ -424,29 +453,7 @@ impl Detector {
         let mut result = if flow.protocol.is_none() {
             #[cfg(feature = "rule")]
             if let Some(ref engine) = self.rule_engine {
-                // R6 修复：flow.metadata 在规则分支中恒为 None（所有写 metadata 的
-                // 路径都同时写了 protocol，而规则分支仅在 protocol.is_none() 时进入）
-                // → sni_contains 规则原为死代码。回退到从当前包 payload 提取 SNI。
-                let sni = flow.metadata.as_ref().and_then(|m| match m {
-                    Metadata::Tls(tls) => tls.sni.clone(),
-                    Metadata::Quic(quic) => quic.sni.clone(),
-                    Metadata::Dtls(dtls) => dtls.sni.clone(),
-                    _ => None,
-                });
-                #[cfg(feature = "tls")]
-                let sni = sni.or_else(|| protocols::tls::extract_sni(&parsed.payload));
-                #[cfg(all(feature = "quic", feature = "tls"))]
-                let sni = sni.or_else(|| {
-                    // QUIC Initial：解密 ClientHello 提取 SNI（非 Initial 包在
-                    // parse_initial_header 处快速拒绝，无额外开销）
-                    protocols::quic::decrypt_client_hello(&parsed.payload).and_then(|ch| ch.sni)
-                });
-                let rule_ctx = RuleContext {
-                    src_port: parsed.src_port,
-                    dst_port: parsed.dst_port,
-                    sni,
-                    payload: parsed.payload.clone(),
-                };
+                let rule_ctx = Self::rule_context(flow, &parsed);
                 if let Some(mut r) = engine.match_rule(&rule_ctx) {
                     r.ja4t = flow.ja4t.clone();
                     r.ja4ts = Self::flow_ja4ts_full(flow);
@@ -628,7 +635,10 @@ impl Detector {
     /// 输入为 IPv4/IPv6 包（不含以太网头）。与 [`Self::detect_at`] 不同：
     /// - flow 由调用方持有，Detector 不访问内部 `FlowTable`；
     /// - 双向流：反向包通过 [`Flow::direction_of`] 映射到同一 `Flow`；
-    /// - 当前接入内置 DPI 与双向计数；规则/风险/JA4 富化尚未接入该入口。
+    /// - 已接入内置 DPI、自定义规则（feature: rule）、逐包风险（feature: risk）
+    ///   与 TCP JA4 指纹（JA4T/JA4TS/JA4L/JA4LC/JA4SSH）；
+    /// - QUIC JA4L 与流级风险分析（`analyze_flow`）仍由 `detect_at`/`drain_risks`
+    ///   路径负责。
     ///
     /// # Errors
     ///
@@ -669,6 +679,77 @@ impl Detector {
             Direction::Reverse => {
                 flow.packets_reverse += 1;
                 flow.bytes_reverse += packet.len() as u64;
+            }
+        }
+
+        let arrival = Self::timestamp_ms_to_system_time(timestamp_ms);
+
+        // JA4 观测先于分类：指纹字段随本包结果一并返回（与 detect_at 语义一致）。
+        Self::observe_ja4_flow(flow, direction, &parsed, arrival);
+
+        let mut result = self.classify_l3_packet(flow, &parsed, direction)?;
+
+        // F42：TLS JA4L 精化段（D/E/F 三时点，信号取自结果元数据）
+        if parsed.transport == TransportProto::Tcp {
+            Self::observe_ja4l_tls_flow(
+                flow,
+                direction,
+                arrival,
+                result.as_ref(),
+                !parsed.payload.is_empty(),
+            );
+        }
+
+        // 流级 JA4 指纹随结果回显
+        if let Some(ref mut detected) = result {
+            Self::attach_ja4(flow, detected);
+        }
+
+        // 风险分析（逐包）：附着到结果与流，并推送观察者回调
+        #[cfg(feature = "risk")]
+        {
+            let risks = self.risk_registry.analyze_packet(&parsed, flow);
+            if !risks.is_empty() {
+                if let Some(cb) = self.risk_callback.as_ref() {
+                    for risk in &risks {
+                        cb(flow.key.clone(), risk);
+                    }
+                }
+                flow.risks.extend(risks.clone());
+                if let Some(ref mut detected) = result {
+                    detected.risks = risks;
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// L3 分类主体（不含统计、风险与 JA4 旁路观测）
+    fn classify_l3_packet(
+        &mut self,
+        flow: &mut Flow,
+        parsed: &crate::parser::ParsedPacket,
+        direction: Direction,
+    ) -> crate::error::Result<Option<DetectionResult>> {
+        // 规则先于 DPI（仅当尚未定型，与 detect_at 对齐）
+        #[cfg(feature = "rule")]
+        {
+            if flow.protocol.is_none()
+                && let Some(ref engine) = self.rule_engine
+            {
+                let ctx = Self::rule_context(flow, parsed);
+                if let Some(mut r) = engine.match_rule(&ctx) {
+                    flow.metadata = Some(r.metadata.clone());
+                    flow.protocol = Some(r.protocol);
+                    flow.protocol_stack.push(r.protocol);
+                    r.protocol_stack = flow.protocol_stack;
+                    flow.classification_state = ClassificationState::Classified;
+                    return Ok(Some(r));
+                }
+                if self.rules_only {
+                    return Ok(None);
+                }
             }
         }
 
@@ -780,6 +861,232 @@ impl Detector {
             return Ok(Self::replay_flow(flow));
         }
         Ok(result)
+    }
+
+    /// `timestamp_ms` → `SystemTime`
+    ///
+    /// 双向入口使用毫秒时间戳（离线 pcap 友好）；JA4 时延只关心差值，
+    /// 相对基准（如从 0 开始）同样可用。
+    fn timestamp_ms_to_system_time(timestamp_ms: u64) -> std::time::SystemTime {
+        std::time::UNIX_EPOCH + std::time::Duration::from_millis(timestamp_ms)
+    }
+
+    /// 方向索引：`[Forward, Reverse]`
+    fn direction_index(direction: Direction) -> usize {
+        match direction {
+            Direction::Forward => 0,
+            Direction::Reverse => 1,
+        }
+    }
+
+    /// 双向 Flow 的 TCP JA4 观测（JA4T / JA4TS / JA4L / JA4LC / JA4SSH）
+    ///
+    /// 与 `detect_at` 的跨方向流表实现不同：双向入口收发两向共用同一个
+    /// `Flow`，客户端方向由 SYN/SYN-ACK 一次判定后存于
+    /// [`Flow::client_direction`]。观测发生在分类之前，SSH 等依赖"已定型"
+    /// 的窗口语义与旧路径一致（定型当包不计入窗口）。
+    fn observe_ja4_flow(
+        flow: &mut Flow,
+        direction: Direction,
+        parsed: &crate::parser::ParsedPacket,
+        arrival: std::time::SystemTime,
+    ) {
+        if let Some(tcp) = parsed.tcp.as_ref() {
+            Self::observe_ja4_tcp(flow, direction, parsed.payload.len(), arrival, tcp);
+        }
+    }
+
+    fn observe_ja4_tcp(
+        flow: &mut Flow,
+        direction: Direction,
+        payload_len: usize,
+        arrival: std::time::SystemTime,
+        tcp: &crate::parser::TcpHeaderInfo,
+    ) {
+        let syn_only = tcp.flags & 0x02 != 0 && tcp.flags & 0x10 == 0;
+        let syn_ack = tcp.flags & 0x02 != 0 && tcp.flags & 0x10 != 0;
+
+        // 客户端方向推断：SYN 发送端为客户端，SYN-ACK 发送端为服务端
+        if syn_only {
+            flow.client_direction.get_or_insert(direction);
+        } else if syn_ack {
+            flow.client_direction.get_or_insert(direction.opposite());
+        }
+
+        // JA4T：首个纯 SYN
+        if flow.ja4t.is_none() && syn_only {
+            flow.ja4t = Some(application::compute_ja4t(
+                tcp.window,
+                &tcp.option_kinds[..tcp.option_kinds_len],
+                tcp.mss,
+                tcp.window_scale,
+            ));
+        }
+
+        // JA4TS 基串 + 第 5 段跟踪起点：首个精确 SYN-ACK
+        if flow.ja4ts.is_none() && tcp.flags == 0x12 {
+            flow.ja4ts = Some(application::compute_ja4ts(
+                tcp.window,
+                &tcp.option_kinds[..tcp.option_kinds_len],
+                tcp.mss,
+                tcp.window_scale,
+            ));
+            flow.ja4ts_synack_time = Some(arrival);
+            flow.ja4ts_tracking = true;
+        }
+
+        // JA4L-A：客户端 SYN 时戳 + TTL（每流一次）
+        if syn_only && flow.syn_time.is_none() {
+            flow.syn_time = Some(arrival);
+            flow.syn_ttl = Some(tcp.ttl);
+        }
+
+        // JA4L-B / JA4L-S：服务端 SYN-ACK
+        if syn_ack {
+            if flow.synack_time.is_none() {
+                flow.synack_time = Some(arrival);
+                flow.synack_ttl = Some(tcp.ttl);
+            }
+            if flow.ja4ls.is_none()
+                && let Some(a) = flow.syn_time
+                && let Some(d) = arrival.duration_since(a).ok()
+            {
+                flow.ja4ls = Some(application::compute_ja4ls(d.as_micros() as u64, tcp.ttl));
+            }
+        }
+
+        // JA4L-C：SYN-ACK 之后首个客户端方向包
+        if flow.ja4lc.is_none()
+            && flow.client_direction == Some(direction)
+            && flow.syn_time.is_some()
+            && let (Some(b), Some(client_ttl)) = (flow.synack_time, flow.syn_ttl)
+            && let Some(d) = arrival.duration_since(b).ok()
+        {
+            flow.ja4lc = Some(application::compute_ja4lc(d.as_micros() as u64, client_ttl));
+        }
+
+        // JA4TS 第 5 段：客户端方向包关闭跟踪；服务端方向记录重传延迟 / RST 后缀
+        if flow.ja4ts_tracking {
+            if flow.client_direction == Some(direction) {
+                flow.ja4ts_tracking = false;
+            } else if let Some(last) = flow.ja4ts_synack_time
+                && let Ok(d) = arrival.duration_since(last)
+            {
+                if d > application::JA4TS_TRACK_TIMEOUT {
+                    flow.ja4ts_tracking = false;
+                } else if tcp.flags & 0x04 != 0 {
+                    // RST：记后缀延迟（整秒截断）并停止收集
+                    flow.ja4ts_rst_delay = Some(u32::try_from(d.as_secs()).unwrap_or(u32::MAX));
+                    flow.ja4ts_tracking = false;
+                } else if tcp.flags == 0x12
+                    && flow.ja4ts_delays.len() < application::JA4TS_MAX_DELAYS
+                {
+                    flow.ja4ts_delays
+                        .push(u32::try_from(d.as_secs()).unwrap_or(u32::MAX));
+                    flow.ja4ts_synack_time = Some(arrival);
+                    if flow.ja4ts_delays.len() == application::JA4TS_MAX_DELAYS {
+                        flow.ja4ts_tracking = false;
+                    }
+                }
+            }
+        }
+
+        // JA4SSH：仅已定型 SSH，且连接自初始 SYN 起（client_direction 已判定）
+        if flow.protocol == Some(Protocol::Ssh)
+            && let Some(client_direction) = flow.client_direction
+        {
+            let index = Self::direction_index(direction);
+            if payload_len > 0 {
+                flow.ssh_payload_lens_by_dir[index]
+                    .push(u16::try_from(payload_len).unwrap_or(u16::MAX));
+            } else if tcp.flags == 0x10 {
+                flow.ssh_ack_count_by_dir[index] += 1;
+            }
+
+            let total =
+                flow.ssh_payload_lens_by_dir[0].len() + flow.ssh_payload_lens_by_dir[1].len();
+            if total >= application::JA4SSH_WINDOW_PACKETS {
+                let client_index = Self::direction_index(client_direction);
+                let server_index = 1 - client_index;
+                let fingerprint = application::compute_ja4ssh(
+                    &flow.ssh_payload_lens_by_dir[client_index],
+                    &flow.ssh_payload_lens_by_dir[server_index],
+                    flow.ssh_ack_count_by_dir[client_index],
+                    flow.ssh_ack_count_by_dir[server_index],
+                );
+                flow.ja4ssh = Some(fingerprint);
+                for lens in &mut flow.ssh_payload_lens_by_dir {
+                    lens.clear();
+                }
+                flow.ssh_ack_count_by_dir = [0, 0];
+            }
+        }
+    }
+
+    /// F42：双向 Flow 的 TLS JA4L 精化段观测
+    ///
+    /// 与 [`Self::observe_ja4l_tls`]（流表双方向模型）同语义：D/E/F 三时点
+    /// 各记一次；E 追加 `(E-D)/2` 至 `ja4ls`，F 追加 `(F-E)/2` 至 `ja4lc`。
+    /// 客户端方向由 [`Flow::client_direction`] 判定；mid-stream（无握手起点）
+    /// 跳过。信号推断沿用检测结果元数据：`ja4` Some ⇔ 含 ClientHello、
+    /// `ja4s` Some ⇔ 含 ServerHello。
+    fn observe_ja4l_tls_flow(
+        flow: &mut Flow,
+        direction: Direction,
+        arrival: std::time::SystemTime,
+        result: Option<&DetectionResult>,
+        has_payload: bool,
+    ) {
+        let Some(r) = result else { return };
+        let Metadata::Tls(tls) = &r.metadata else {
+            return;
+        };
+        let client_hello = tls.ja4.is_some();
+        let server_hello = tls.ja4s.is_some();
+        if !client_hello && !server_hello && !has_payload {
+            return;
+        }
+        let Some(client_direction) = flow.client_direction else {
+            return;
+        };
+        let is_client = direction == client_direction;
+
+        // D：客户端 ClientHello（每流一次）
+        if client_hello && is_client && flow.tls_client_hello_time.is_none() {
+            flow.tls_client_hello_time = Some(arrival);
+        }
+        // E：服务端 ServerHello（每流一次）+ ja4ls 追加 (E-D)/2
+        if server_hello && !is_client && flow.tls_server_hello_time.is_none() {
+            flow.tls_server_hello_time = Some(arrival);
+            if let Some(d) = flow.tls_client_hello_time
+                && let Some(delta) = arrival.duration_since(d).ok()
+                && let Some(s) = flow.ja4ls.as_mut()
+            {
+                s.push_str(&format!("_{}", delta.as_micros() as u64 / 2));
+            }
+        }
+        // F：E 之后首个有载荷客户端包 + ja4lc 追加 (F-E)/2
+        if has_payload
+            && is_client
+            && let Some(e) = flow.tls_server_hello_time
+            && flow.tls_first_client_data_time.is_none()
+        {
+            flow.tls_first_client_data_time = Some(arrival);
+            if let Some(delta) = arrival.duration_since(e).ok()
+                && let Some(s) = flow.ja4lc.as_mut()
+            {
+                s.push_str(&format!("_{}", delta.as_micros() as u64 / 2));
+            }
+        }
+    }
+
+    /// 将流级 JA4 指纹附着到检测结果（与 detect_at 的回显语义一致）
+    fn attach_ja4(flow: &Flow, result: &mut DetectionResult) {
+        result.ja4t = flow.ja4t.clone();
+        result.ja4ts = Self::flow_ja4ts_full(flow);
+        result.ja4ls = flow.ja4ls.clone();
+        result.ja4lc = flow.ja4lc.clone();
+        result.ja4ssh = flow.ja4ssh.clone();
     }
 
     /// F42：JA4L TLS 精化段（delta）观测（官方 zeek ja4l/main.zeek

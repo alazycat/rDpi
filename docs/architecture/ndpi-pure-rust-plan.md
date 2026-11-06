@@ -269,7 +269,7 @@
 2. ~~确认首批 Top-N~~ 已完成：见 [protocol-coverage-plan.md](protocol-coverage-plan.md) 第 7 节。
 3. `tests/parity/` 骨架已建立；下一步接 nDPI JSON 适配器、rDpi per-flow 输出与 20 个 pcap。
 4. ~~双向流 + `Flow` API + 逐包 dissector~~ 已完成；HTTP / DNS-over-TCP / TLS / HTTP2 状态机 + TCP 序列号重组已落地。
-5. ~~VLAN/QinQ/IP-in-IP~~ 已完成；下一步：规则/风险/JA4 接入新入口、迁移现有 detector、P0 差分链路。
+5. ~~VLAN/QinQ/IP-in-IP~~、~~规则/风险/JA4 接入新入口~~ 已完成；下一步：迁移现有 detector、L2 与双向流整合、P0 差分链路。
 
 ---
 
@@ -303,10 +303,16 @@
   - TCP 序列号重组（每方向独立；乱序暂存、重传/重叠裁剪、SYN 基线；`TcpReassembler`）；
   - 有状态路径仅对 TCP 生效（HTTP / DNS-over-TCP / TLS / HTTP/2 均为 TCP 专用，避免 UDP DNS 被误接管）；
   - `Detector::process_l3_packet` 优先走有状态 disector，`Continue` 不回退、`GiveUp` 清状态后回退无状态。
-- **验证**：`tests/test_p1_flow.rs` 20 个用例；`cargo test` 与 `cargo test --all-features` 全绿；clippy lib+bins 0 警告。
+- **P1 新入口：规则 / 风险 / JA4**
+  - 规则优先：`rule_engine.match_rule` 在 DPI/有状态解析之前执行；`rules_only` 未命中直接返回，不回退 DPI；规则上下文构建与 `detect_at` 共用 `rule_context`（SNI 取流元数据，回退当前包）；
+  - 逐包风险：`RiskRegistry::analyze_packet` 结果同时写入 `DetectionResult.risks` 与 `flow.risks`，并触发 `risk_callback`；
+  - JA4 观测：`Flow.client_direction`（SYN/SYN-ACK 推断客户端方向）、JA4T/JA4TS（含第 5 段重传延迟/RST）、JA4L-S/JA4L-C、JA4SSH 200 包窗口；
+  - TLS JA4L 精化段（D/E/F 三时点）复用 `Flow` 内时戳字段，与 `detect_at` 路径同语义；
+  - `tests/test_p1_entry_features.rs`：默认 3 个用例，`rule`/`risk`/`ssh` feature 下共 7 个用例。
+- **验证**：`tests/test_p1_flow.rs` 20 个用例、`tests/test_p1_entry_features.rs` 7 个用例、`tests/test_parser.rs` 9 个用例；`cargo test` 与 `cargo test --all-features` 全绿；clippy 0 警告。
 
 ### 待办
 
 - **P0**：nDPI JSON → 归一化适配器；rDpi per-flow JSONL 输出；20–50 个 pcap 语料；CI（Linux runner 跑 nDPI）。
-- **P1**：规则/风险/JA4 接入新入口；迁移现有 50 个 detector；L2 与双向流整合。
-- **P1 边界**：HTTP/2 CONTINUATION/HPACK 动态表跨帧；TLS 大 Certificate（>64 KiB）分片；TCP FIN/RST 与窗口跟踪；多活跃有状态协议（当前一个 flow 只允许一个 `DissectorState` 变体）。
+- **P1**：迁移现有 50 个 detector；L2 与双向流整合。
+- **P1 边界**：QUIC JA4L 与流级风险分析（`analyze_flow`）仍仅在 `detect_at`/`drain_risks` 路径；HTTP/2 CONTINUATION/HPACK 动态表跨帧；TLS 大 Certificate（>64 KiB）分片；TCP FIN/RST 与窗口跟踪；多活跃有状态协议（当前一个 flow 只允许一个 `DissectorState` 变体）。
