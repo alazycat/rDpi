@@ -265,8 +265,33 @@
 
 ## 8. 下一步
 
-1. 从 [protocol-coverage-plan.md](protocol-coverage-plan.md) 的 A–E 组中选择首批组合。
-2. 确认首批 Top-N 协议/应用。
-3. 建立 `tests/parity/` 差分脚本与 20 个 pcap 基线。
-4. 写双向流 + `Flow` API 的设计 RFC。
-5. 建立协议状态机模板，从 A 组第一个协议开始实现。
+1. ~~从 A–E 组选择首批组合~~ 已完成：A + B。
+2. ~~确认首批 Top-N~~ 已完成：见 [protocol-coverage-plan.md](protocol-coverage-plan.md) 第 7 节。
+3. `tests/parity/` 骨架已建立；下一步接 nDPI JSON 适配器、rDpi per-flow 输出与 20 个 pcap。
+4. 双向流 + `Flow` API 首个切片已完成；下一步设计逐包 dissector trait + per-flow 协议状态。
+5. 协议状态机模板：从 A 组 DoH/DoT 或 B 组 SMB 开始。
+
+---
+
+## 9. 实施进展（2026-11-06）
+
+### 已完成
+
+- **P0 差分测试骨架**
+  - `tests/parity/mod.rs`：`NormalizedFlow` + `compare_flows`（双向规范键、字段级差异、missing/extra）。
+  - `tests/test_parity_harness.rs`：6 个用例（一致、反向、协议差异、缺失/多出、risk 顺序、协议栈顺序）。
+  - `tests/parity/README.md`：schema、nDPI/rDpi 输出方式、指标与 TODO。
+- **P1 首个垂直切片**
+  - `FlowKey::canonical/reverse` + `Direction`；
+  - `Flow::new_bidirectional/direction_of`（方向相对首包 initiator，而非任意规范键）；
+  - `Flow` 双向计数（`packets_forward/reverse`、`bytes_forward/reverse`）与 `first_seen_ms/last_seen_ms`；
+  - `ClassificationState`（Inspecting/Partial/Monitoring/Classified）；
+  - `ProtocolStack`（固定 8 层、去重、零堆分配）；
+  - `parser::parse_l3_packet`（L3 入口，L2 `parse_packet` 复用）；
+  - `Detector::process_l3_packet`（caller-owned Flow、双向、partial → classified 升级）。
+- **验证**：`tests/test_p1_flow.rs` 9 个用例；`cargo test` 与 `cargo test --all-features` 全绿；clippy lib+bins 0 警告。
+
+### 待办
+
+- **P0**：nDPI JSON → 归一化适配器；rDpi per-flow JSONL 输出；20–50 个 pcap 语料；CI（Linux runner 跑 nDPI）。
+- **P1**：逐包 `Dissector` trait + per-flow 协议状态；VLAN/QinQ/IP-in-IP；规则/风险/JA4 接入新入口；迁移现有 50 个 detector；L2 与双向流整合。
