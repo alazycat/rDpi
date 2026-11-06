@@ -119,6 +119,20 @@ pub trait ProtocolDetector: Send + Sync {
         self.detect(payload)
     }
 
+    /// 有状态逐包处理（P1）
+    ///
+    /// 返回 `None` 表示未接管该流；返回 `Some(Continue)` 表示已接管但需要更多
+    /// 包；`Partial` / `Classified` 返回分类结果；`GiveUp` 放弃接管。
+    /// 默认实现为无状态，直接返回 `None`。
+    fn process(
+        &self,
+        _state: &mut DissectorState,
+        _payload: &[u8],
+        _direction: Direction,
+    ) -> Option<DissectorOutcome> {
+        None
+    }
+
     /// 首字节门声明（F29 miss 路径预筛，2026-11-05）
     ///
     /// 声明 `payload[0]` 的可能取值区间（闭区间对 `&(u8, u8)` 数组）。返回
@@ -224,6 +238,25 @@ impl Registry {
             }
             if let Some(result) = entry.detector.detect_with_context(payload, &ctx) {
                 return Some(result);
+            }
+        }
+        None
+    }
+
+    /// 有状态逐包检测
+    ///
+    /// 按注册顺序询问；首个返回 `Some` 的 detector 接管该流。**不应用首字节门**：
+    /// 已接管流（如 HTTP 头跨包）后续包的 payload 首字节可能不是协议特征，
+    /// 门预筛会错误跳过重组。
+    pub fn process_stateful(
+        &self,
+        state: &mut DissectorState,
+        payload: &[u8],
+        direction: Direction,
+    ) -> Option<DissectorOutcome> {
+        for entry in &self.detectors {
+            if let Some(outcome) = entry.detector.process(state, payload, direction) {
+                return Some(outcome);
             }
         }
         None

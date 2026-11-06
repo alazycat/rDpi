@@ -77,6 +77,8 @@ pub struct Flow {
     pub metadata: Option<Metadata>,
     /// 协议栈（P1：双向 API；`detect` 路径暂未填充）
     pub protocol_stack: ProtocolStack,
+    /// 有状态 dissector 的 per-flow 状态（P1）
+    pub dissector_state: DissectorState,
     /// 已观察包计数（用于 Giveup 机制）
     pub packets_seen: u32,
     /// 仅 DPI 模式（不做猜测）
@@ -161,6 +163,7 @@ impl Flow {
             last_seen_ms: None,
             metadata: None,
             protocol_stack: ProtocolStack::new(),
+            dissector_state: DissectorState::None,
             packets_seen: 0,
             dpi_only: false,
             ja4t: None,

@@ -7,8 +7,8 @@
 use rdpi::Detector;
 use rdpi::core::flow::Flow;
 use rdpi::core::types::{
-    ClassificationState, Confidence, Direction, FlowKey, MAX_PROTOCOL_STACK, Protocol,
-    ProtocolStack, TransportProto,
+    ClassificationState, Confidence, Direction, DissectorState, FlowKey, MAX_PROTOCOL_STACK,
+    Metadata, Protocol, ProtocolStack, TransportProto,
 };
 use rdpi::parser::parse_l3_packet;
 use rdpi::protocols::{ProtocolDetector, Registry};
@@ -104,6 +104,60 @@ fn make_l3_udp_packet_between(
 
 fn make_l3_udp_packet(payload: &[u8]) -> Vec<u8> {
     make_l3_udp_packet_between([192, 168, 1, 1], 12345, [10, 0, 0, 1], 53, payload)
+}
+
+fn make_l3_tcp_packet_between(
+    src: [u8; 4],
+    src_port: u16,
+    dst: [u8; 4],
+    dst_port: u16,
+    payload: &[u8],
+) -> Vec<u8> {
+    let total_len = (20 + 20 + payload.len()) as u16;
+    let mut packet = vec![
+        0x45,
+        0x00, // IPv4, IHL=5
+        (total_len >> 8) as u8,
+        (total_len & 0xff) as u8,
+        0x00,
+        0x01, // identification
+        0x00,
+        0x00, // flags + fragment offset
+        0x40, // TTL
+        0x06, // TCP
+        0x00,
+        0x00, // checksum
+        src[0],
+        src[1],
+        src[2],
+        src[3],
+        dst[0],
+        dst[1],
+        dst[2],
+        dst[3],
+        (src_port >> 8) as u8,
+        (src_port & 0xff) as u8,
+        (dst_port >> 8) as u8,
+        (dst_port & 0xff) as u8,
+        0x00,
+        0x00,
+        0x00,
+        0x01, // seq
+        0x00,
+        0x00,
+        0x00,
+        0x00, // ack
+        0x50, // data offset = 5 * 4
+        0x18, // PSH | ACK
+        0xff,
+        0xff, // window
+        0x00,
+        0x00, // checksum
+        0x00,
+        0x00, // urgent
+    ];
+    packet.extend_from_slice(payload);
+    packet
 }
 
 fn make_dns_query_payload() -> Vec<u8> {
@@ -210,6 +264,7 @@ fn process_l3_packet_classifies_and_tracks_both_directions() {
     assert_eq!(flow.protocol, Some(Protocol::Dns));
     assert_eq!(flow.protocol_stack.master(), Some(Protocol::Dns));
     assert_eq!(flow.classification_state, ClassificationState::Classified);
+    assert_eq!(flow.dissector_state, DissectorState::None);
     assert_eq!(flow.packets_seen, 1);
     assert_eq!(flow.packets_forward, 1);
     assert_eq!(flow.packets_reverse, 0);
@@ -301,6 +356,58 @@ fn process_l3_packet_upgrades_partial_to_classified() {
         2,
         "classified flow must not re-run DPI"
     );
+}
+
+#[test]
+fn http_request_split_across_tcp_packets_is_reassembled() {
+    let mut detector = Detector::new();
+    let first = make_l3_tcp_packet_between(
+        [192, 168, 1, 1],
+        12345,
+        [10, 0, 0, 1],
+        80,
+        b"GET /index.html HTTP/1.1\r\nHost: exa",
+    );
+    let second = make_l3_tcp_packet_between(
+        [192, 168, 1, 1],
+        12345,
+        [10, 0, 0, 1],
+        80,
+        b"mple.com\r\n\r\n",
+    );
+    let parsed = parse_l3_packet(&first).unwrap();
+    let packet_key = FlowKey {
+        src_ip: parsed.src_ip,
+        dst_ip: parsed.dst_ip,
+        src_port: parsed.src_port,
+        dst_port: parsed.dst_port,
+        transport: parsed.transport,
+    };
+    let mut flow = Flow::new_bidirectional(packet_key);
+
+    let first_result = detector.process_l3_packet(&mut flow, &first, 1).unwrap();
+    assert!(
+        first_result.is_none(),
+        "partial header must not classify yet"
+    );
+    assert!(matches!(flow.dissector_state, DissectorState::Http(_)));
+    assert_eq!(flow.classification_state, ClassificationState::Inspecting);
+    assert!(flow.protocol.is_none());
+
+    let second_result = detector
+        .process_l3_packet(&mut flow, &second, 2)
+        .unwrap()
+        .expect("complete header should classify");
+    assert_eq!(second_result.protocol, Protocol::Http);
+    assert_eq!(flow.classification_state, ClassificationState::Classified);
+    match second_result.metadata {
+        Metadata::Http(meta) => {
+            assert_eq!(meta.host.as_deref(), Some("example.com"));
+            assert_eq!(meta.method.as_deref(), Some("GET"));
+            assert_eq!(meta.path.as_deref(), Some("/index.html"));
+        }
+        _ => panic!("expected HTTP metadata"),
+    }
 }
 
 #[test]

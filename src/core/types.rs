@@ -53,6 +53,38 @@ pub enum ClassificationState {
     Classified,
 }
 
+/// 有状态 dissector 的单包处理结果
+#[derive(Debug, Clone)]
+pub enum DissectorOutcome {
+    /// 已接管流，但需要更多包
+    Continue,
+    /// 部分分类，后续可能升级
+    Partial(DetectionResult),
+    /// 完全分类
+    Classified(DetectionResult),
+    /// 放弃（例如缓冲区超限）
+    GiveUp,
+}
+
+/// HTTP 有状态 dissector 的 per-flow 状态
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HttpDissectorState {
+    /// 跨包累积的请求/响应头缓冲（上限由 dissector 控制）
+    pub buffer: Vec<u8>,
+}
+
+/// per-flow 有状态 dissector 状态
+///
+/// 当前只支持一个活跃的有状态协议（HTTP）；后续按协议扩展枚举。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum DissectorState {
+    /// 无活跃有状态协议
+    #[default]
+    None,
+    /// HTTP 头重组
+    Http(HttpDissectorState),
+}
+
 /// 协议栈最大层数（与 nDPI `NDPI_PROTOCOL_STACK_SIZE` 对齐）
 pub const MAX_PROTOCOL_STACK: usize = 8;
 

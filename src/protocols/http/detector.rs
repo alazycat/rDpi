@@ -4,6 +4,15 @@ use super::parser::{
 use crate::core::types::*;
 use crate::protocols::ProtocolDetector;
 
+/// HTTP 头重组缓冲上限（8 KiB）
+const HTTP_MAX_HEADER_BYTES: usize = 8192;
+
+fn has_complete_headers(buffer: &[u8]) -> bool {
+    buffer
+        .windows(4)
+        .any(|window| window == b"\r\n\r\n".as_slice())
+}
+
 pub struct HttpDetector;
 
 impl Default for HttpDetector {
@@ -34,6 +43,53 @@ impl ProtocolDetector for HttpDetector {
             (0x50u8, 0x50u8),
             (0x54u8, 0x54u8),
         ])
+    }
+
+    /// 有状态逐包 HTTP 头重组
+    ///
+    /// 首个客户端包以 HTTP 方法/响应行前缀初始化 per-flow 缓冲；后续包追加，
+    /// 直到出现 `\r\n\r\n` 再交给无状态 [`Self::detect`] 解析。缓冲超过
+    /// [`HTTP_MAX_HEADER_BYTES`] 返回 `GiveUp`，由上层回退到无状态路径。
+    fn process(
+        &self,
+        state: &mut DissectorState,
+        payload: &[u8],
+        direction: Direction,
+    ) -> Option<DissectorOutcome> {
+        // 仅接管客户端方向（请求）；服务端响应交给无状态路径。
+        if direction != Direction::Forward {
+            return None;
+        }
+
+        match state {
+            DissectorState::None => {
+                if payload.is_empty() || !is_http_prefix(payload[0]) {
+                    return None;
+                }
+                *state = DissectorState::Http(HttpDissectorState::default());
+            }
+            DissectorState::Http(_) => {}
+        }
+
+        let DissectorState::Http(http_state) = state else {
+            return None;
+        };
+        if http_state.buffer.len() + payload.len() > HTTP_MAX_HEADER_BYTES {
+            return Some(DissectorOutcome::GiveUp);
+        }
+        http_state.buffer.extend_from_slice(payload);
+
+        if !has_complete_headers(&http_state.buffer) {
+            return Some(DissectorOutcome::Continue);
+        }
+
+        match self.detect(&http_state.buffer) {
+            Some(result) => {
+                http_state.buffer.clear();
+                Some(DissectorOutcome::Classified(result))
+            }
+            None => Some(DissectorOutcome::GiveUp),
+        }
     }
 
     fn detect(&self, payload: &[u8]) -> Option<DetectionResult> {
