@@ -640,9 +640,10 @@ impl Detector {
             }
         }
 
-        // 已定型流：回显协议、元数据与协议栈，不重复检测。
-        if let Some(protocol) = flow.protocol {
-            flow.classification_state = ClassificationState::Classified;
+        // 已完全定型：回显协议、元数据与协议栈，不重复检测。
+        if flow.classification_state == ClassificationState::Classified
+            && let Some(protocol) = flow.protocol
+        {
             let mut result = DetectionResult::new(protocol);
             result.protocol_stack = flow.protocol_stack;
             if let Some(ref metadata) = flow.metadata {
@@ -651,6 +652,7 @@ impl Detector {
             return Ok(Some(result));
         }
 
+        // Inspecting / Partial：继续逐包检测，允许 partial → classified 升级。
         let mut result =
             self.registry
                 .detect_with_ports(&parsed.payload, parsed.src_port, parsed.dst_port);
@@ -659,7 +661,18 @@ impl Detector {
             flow.metadata = Some(detected.metadata.clone());
             flow.protocol_stack.push(detected.protocol);
             detected.protocol_stack = flow.protocol_stack;
-            flow.classification_state = ClassificationState::Classified;
+            flow.classification_state = match detected.confidence {
+                Confidence::Dpi | Confidence::CustomRule => ClassificationState::Classified,
+                _ => ClassificationState::Partial,
+            };
+        } else if let Some(protocol) = flow.protocol {
+            // 本包没有新结果：保留并回显已有 partial 分类。
+            let mut replay = DetectionResult::new(protocol);
+            replay.protocol_stack = flow.protocol_stack;
+            if let Some(ref metadata) = flow.metadata {
+                replay.metadata = metadata.clone();
+            }
+            return Ok(Some(replay));
         }
         Ok(result)
     }
