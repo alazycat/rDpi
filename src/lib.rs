@@ -652,33 +652,39 @@ impl Detector {
             return Ok(Some(result));
         }
 
-        // 有状态 dissector：优先接管跨包重组协议（如 HTTP 头）。
-        let stateful =
-            self.registry
-                .process_stateful(&mut flow.dissector_state, &parsed.payload, direction);
-        match stateful {
-            Some(DissectorOutcome::Classified(mut detected)) => {
-                flow.protocol = Some(detected.protocol);
-                flow.metadata = Some(detected.metadata.clone());
-                flow.protocol_stack.push(detected.protocol);
-                detected.protocol_stack = flow.protocol_stack;
-                flow.classification_state = ClassificationState::Classified;
-                return Ok(Some(detected));
+        // 有状态 dissector：当前 HTTP / DNS-over-TCP 均为 TCP 专用。
+        if parsed.transport == TransportProto::Tcp {
+            let stateful = self.registry.process_stateful(
+                &mut flow.dissector_state,
+                &parsed.payload,
+                direction,
+                parsed.src_port,
+                parsed.dst_port,
+            );
+            match stateful {
+                Some(DissectorOutcome::Classified(mut detected)) => {
+                    flow.protocol = Some(detected.protocol);
+                    flow.metadata = Some(detected.metadata.clone());
+                    flow.protocol_stack.push(detected.protocol);
+                    detected.protocol_stack = flow.protocol_stack;
+                    flow.classification_state = ClassificationState::Classified;
+                    return Ok(Some(detected));
+                }
+                Some(DissectorOutcome::Partial(mut detected)) => {
+                    flow.protocol = Some(detected.protocol);
+                    flow.metadata = Some(detected.metadata.clone());
+                    flow.protocol_stack.push(detected.protocol);
+                    detected.protocol_stack = flow.protocol_stack;
+                    flow.classification_state = ClassificationState::Partial;
+                    return Ok(Some(detected));
+                }
+                Some(DissectorOutcome::Continue) => return Ok(None),
+                Some(DissectorOutcome::GiveUp) => {
+                    // 放弃重组：清空 per-flow 状态，回退到无状态检测。
+                    flow.dissector_state = DissectorState::None;
+                }
+                None => {}
             }
-            Some(DissectorOutcome::Partial(mut detected)) => {
-                flow.protocol = Some(detected.protocol);
-                flow.metadata = Some(detected.metadata.clone());
-                flow.protocol_stack.push(detected.protocol);
-                detected.protocol_stack = flow.protocol_stack;
-                flow.classification_state = ClassificationState::Partial;
-                return Ok(Some(detected));
-            }
-            Some(DissectorOutcome::Continue) => return Ok(None),
-            Some(DissectorOutcome::GiveUp) => {
-                // 放弃重组：清空 per-flow 状态，回退到无状态检测。
-                flow.dissector_state = DissectorState::None;
-            }
-            None => {}
         }
 
         // Inspecting / Partial：继续逐包检测，允许 partial → classified 升级。

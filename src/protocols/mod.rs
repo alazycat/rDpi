@@ -129,6 +129,7 @@ pub trait ProtocolDetector: Send + Sync {
         _state: &mut DissectorState,
         _payload: &[u8],
         _direction: Direction,
+        _ctx: &DetectContext,
     ) -> Option<DissectorOutcome> {
         None
     }
@@ -253,9 +254,16 @@ impl Registry {
         state: &mut DissectorState,
         payload: &[u8],
         direction: Direction,
+        src_port: u16,
+        dst_port: u16,
     ) -> Option<DissectorOutcome> {
+        let ctx = DetectContext {
+            src_port,
+            dst_port,
+            is_http3_port: src_port == 443 || dst_port == 443,
+        };
         for entry in &self.detectors {
-            if let Some(outcome) = entry.detector.process(state, payload, direction) {
+            if let Some(outcome) = entry.detector.process(state, payload, direction, &ctx) {
                 return Some(outcome);
             }
         }

@@ -73,6 +73,13 @@ pub struct HttpDissectorState {
     pub buffer: Vec<u8>,
 }
 
+/// DNS over TCP 有状态 dissector 的 per-flow 状态
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DnsTcpDissectorState {
+    /// 跨包累积的 TCP 字节流（2 字节长度前缀 + DNS 消息）
+    pub buffer: Vec<u8>,
+}
+
 /// per-flow 有状态 dissector 状态
 ///
 /// 当前只支持一个活跃的有状态协议（HTTP）；后续按协议扩展枚举。
@@ -83,6 +90,8 @@ pub enum DissectorState {
     None,
     /// HTTP 头重组
     Http(HttpDissectorState),
+    /// DNS over TCP 长度前缀重组
+    DnsTcp(DnsTcpDissectorState),
 }
 
 /// 协议栈最大层数（与 nDPI `NDPI_PROTOCOL_STACK_SIZE` 对齐）

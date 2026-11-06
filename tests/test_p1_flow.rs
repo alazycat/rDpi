@@ -173,6 +173,12 @@ fn make_dns_query_payload() -> Vec<u8> {
     packet
 }
 
+fn frame_dns_over_tcp(message: &[u8]) -> Vec<u8> {
+    let mut framed = (message.len() as u16).to_be_bytes().to_vec();
+    framed.extend_from_slice(message);
+    framed
+}
+
 #[test]
 fn protocol_stack_pushes_in_order_and_reports_master_app() {
     let mut stack = ProtocolStack::new();
@@ -407,6 +413,84 @@ fn http_request_split_across_tcp_packets_is_reassembled() {
             assert_eq!(meta.path.as_deref(), Some("/index.html"));
         }
         _ => panic!("expected HTTP metadata"),
+    }
+}
+
+#[test]
+fn dns_over_tcp_reassembles_split_message() {
+    let mut detector = Detector::new();
+    let query = make_dns_query_payload();
+    let framed = frame_dns_over_tcp(&query);
+    let split = 2 + query.len() / 2;
+    let first_packet =
+        make_l3_tcp_packet_between([192, 168, 1, 1], 23456, [10, 0, 0, 1], 53, &framed[..split]);
+    let second_packet =
+        make_l3_tcp_packet_between([192, 168, 1, 1], 23456, [10, 0, 0, 1], 53, &framed[split..]);
+    let parsed = parse_l3_packet(&first_packet).unwrap();
+    let packet_key = FlowKey {
+        src_ip: parsed.src_ip,
+        dst_ip: parsed.dst_ip,
+        src_port: parsed.src_port,
+        dst_port: parsed.dst_port,
+        transport: parsed.transport,
+    };
+    let mut flow = Flow::new_bidirectional(packet_key);
+
+    let first = detector
+        .process_l3_packet(&mut flow, &first_packet, 1)
+        .unwrap();
+    assert!(first.is_none(), "partial DNS-over-TCP message must wait");
+    assert!(matches!(flow.dissector_state, DissectorState::DnsTcp(_)));
+    assert_eq!(flow.classification_state, ClassificationState::Inspecting);
+
+    let second = detector
+        .process_l3_packet(&mut flow, &second_packet, 2)
+        .unwrap()
+        .expect("complete DNS-over-TCP message should classify");
+    assert_eq!(second.protocol, Protocol::Dns);
+    match second.metadata {
+        Metadata::Dns(meta) => {
+            assert_eq!(meta.query_domain.as_deref(), Some("example.com"));
+        }
+        _ => panic!("expected DNS metadata"),
+    }
+}
+
+#[test]
+fn dns_over_tcp_buffers_split_length_prefix() {
+    let mut detector = Detector::new();
+    let query = make_dns_query_payload();
+    let framed = frame_dns_over_tcp(&query);
+    let first_packet =
+        make_l3_tcp_packet_between([192, 168, 1, 1], 23457, [10, 0, 0, 1], 53, &framed[..1]);
+    let second_packet =
+        make_l3_tcp_packet_between([192, 168, 1, 1], 23457, [10, 0, 0, 1], 53, &framed[1..]);
+    let parsed = parse_l3_packet(&first_packet).unwrap();
+    let packet_key = FlowKey {
+        src_ip: parsed.src_ip,
+        dst_ip: parsed.dst_ip,
+        src_port: parsed.src_port,
+        dst_port: parsed.dst_port,
+        transport: parsed.transport,
+    };
+    let mut flow = Flow::new_bidirectional(packet_key);
+
+    let first = detector
+        .process_l3_packet(&mut flow, &first_packet, 1)
+        .unwrap();
+    assert!(first.is_none(), "1-byte length prefix must be buffered");
+    assert!(matches!(flow.dissector_state, DissectorState::DnsTcp(_)));
+
+    let second = detector
+        .process_l3_packet(&mut flow, &second_packet, 2)
+        .unwrap()
+        .expect("message after split length prefix should classify");
+    assert_eq!(second.protocol, Protocol::Dns);
+    match second.metadata {
+        Metadata::Dns(meta) => {
+            assert_eq!(meta.query_domain.as_deref(), Some("example.com"));
+        }
+        _ => panic!("expected DNS metadata"),
     }
 }
 

@@ -55,9 +55,12 @@ impl ProtocolDetector for HttpDetector {
         state: &mut DissectorState,
         payload: &[u8],
         direction: Direction,
+        ctx: &DetectContext,
     ) -> Option<DissectorOutcome> {
         // 仅接管客户端方向（请求）；服务端响应交给无状态路径。
-        if direction != Direction::Forward {
+        // DNS 端口上的 TCP 流交给 DNS-over-TCP dissector，避免长度前缀首字节
+        // 恰好落在 HTTP 方法首字母区间时被误接管。
+        if direction != Direction::Forward || ctx.src_port == 53 || ctx.dst_port == 53 {
             return None;
         }
 
@@ -69,6 +72,7 @@ impl ProtocolDetector for HttpDetector {
                 *state = DissectorState::Http(HttpDissectorState::default());
             }
             DissectorState::Http(_) => {}
+            DissectorState::DnsTcp(_) => return None,
         }
 
         let DissectorState::Http(http_state) = state else {
