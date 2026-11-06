@@ -569,6 +569,10 @@ pub struct DetectionResult {
     pub ja4t: Option<String>,
     /// JA4TS 服务端 TCP 指纹（F34：来自服务端方向的 SYN-ACK 包；非 TCP / 无 SYN-ACK 时为 None）
     pub ja4ts: Option<String>,
+    /// JA4L-S 服务端时延指纹（F35：`{半程时延µs}_{SYN-ACK TTL}`；无 TCP 握手起点时为 None）
+    pub ja4ls: Option<String>,
+    /// JA4L-C 客户端时延指纹（F35：`{半程时延µs}_{SYN TTL}`；无 TCP 握手起点时为 None）
+    pub ja4lc: Option<String>,
     /// 风险分析结果 (feature: risk)
     #[cfg(feature = "risk")]
     pub risks: Vec<super::super::risk::types::RiskResult>,
@@ -586,6 +590,8 @@ impl DetectionResult {
             app_protocol: None,
             ja4t: None,
             ja4ts: None,
+            ja4ls: None,
+            ja4lc: None,
             #[cfg(feature = "risk")]
             risks: Vec::new(),
         }

@@ -275,3 +275,19 @@
   - CLI：文本输出追加 ` ja4ts=...`（rdpi.rs print_detection）；json feature 随 derive 自动序列化。
 - **测试**：tests/test_ja4t.rs 扩至 11 项（新增 5：SYN-ACK 捕获、首个 SYN-ACK 优先/重传不覆盖、SYN 不触发 JA4TS 且 SYN-ACK 不触发 JA4T 双向互斥、flags 精确等于门（0x1A 不触发、同流后续精确 0x12 仍捕获）、无握手不产出）。JA4TS 无哈希段（纯格式化，格式经 F33 官方 3 向量直证），无需交叉验证。三配置全绿：默认 315 / all-features 1117（10 ignored）/ risk 360；clippy --all-features --all-targets 0 警告。
 - **已知边界**：官方 JA4TS 在 SYN-ACK 重传时追加第 5 段重传延迟序列（及 RST 后缀 `-R{sec}`，10 秒窗口、至多 10 项）——需跨包计时状态（last_ts/delays 向量），超出每流旁路字段语义，本库不实现（无重传时官方输出恰为本库 4 字段格式，前缀语义无损）；窗口缩放后实际窗口、IP 分片重组不感知等边界与 F33 相同。
+
+## F35【中】JA4L-C/S 时延指纹（2026-11-06，新功能开发）—— ✅ 已完成
+
+- **背景**：JA4+ 家族传输层最后一块——TCP 握手三包时戳度量半程时延（RTT/2，"光距"）+ TTL 指纹化客户端/服务端到观测点的网络距离。与 JA4T/TS 同为纯传输层、零解密、无新依赖；但**需要真实包间时戳**（区别于 F33/F34 的纯头部字段指纹）。
+- **规格来源**：官方 [zeek-zeek-scripts ja4l/main.zeek](https://github.com/FoxIO-LLC/ja4-zeek-scripts)（TCP 路径全文）+ python ja4.py `calculate_ja4_latency`（2 字段格式权威）+ python common.py `epoch_diff`（`(t2-t1) // timedelta(microseconds=2)` = 总微秒**整除 2**）+ [官方博客](https://foxio.io/blog/ja4-network-fingerprinting)：
+  - JA4L-S = `{(B-A)/2}_{server_ttl}`：A=客户端 SYN 时戳，B=SYN-ACK 时戳（SYN/ACK 位测试），TTL 取 SYN-ACK 包（IPv4 TTL / IPv6 hop limit）
+  - JA4L-C = `{(C-B)/2}_{client_ttl}`：C=SYN-ACK 之后首个客户端包（纯 ACK 或数据均可，zeek 第二发起包语义），TTL 取 SYN 包
+- **实现**：
+  - [application/ja4.rs](file:///d:/rust_code/rDpi/src/application/ja4.rs) `compute_ja4ls/ja4lc(diff_micros, ttl)`：`{diff/2}_{ttl}` 纯格式化；应用模块重导出。
+  - [core/flow.rs](file:///d:/rust_code/rDpi/src/core/flow.rs)：`Flow` 新增 6 个字段——握手时戳 `syn_time/syn_ttl`（A，客户端流）、`synack_time/synack_ttl`（B，服务端流，`SystemTime`）+ 结果 `ja4ls`（服务端流）/`ja4lc`（客户端流），均为流级旁路字段，不占用 protocol/metadata 一次定型语义。
+  - [lib.rs](file:///d:/rust_code/rDpi/src/lib.rs) `Detector::observe_ja4l`：A/B/C 三步状态机（全部每流一次），**在 get_or_create 之前独立借流表调用**——JA4L 需反查对端方向流（A/B 分布在两条 FlowKey 流上），主流程的 `flow` 可变借用无法容纳第二次流表访问；对端流不存在（mid-stream）或时戳回退（乱序）跳过，指纹保持 None。C 捕获在 B 未到时保持 None 并由后续客户端包继续尝试（乱序容忍，比 zeek 一次性阈值更鲁棒）。
+  - **时间戳入口**：新增 `Detector::detect_at(packet, arrival: SystemTime)`——`detect()` 以 `SystemTime::now()` 委托（实时接入语义不变，非破坏性 API 扩展）；离线 pcap 回放包间处理间隔趋近于零，JA4L 必须用捕获时戳，[pcap.rs](file:///d:/rust_code/rDpi/src/pcap.rs) legacy/pcapng 路径已传 `UNIX_EPOCH + packet.timestamp`（Simple Packet 无时戳退化用处理时刻，已注释数值不可信）。
+  - TTL 提取：`parser::ip::IpInfo.ttl`（IPv4 data[8] / IPv6 data[7]）→ `tcp::parse` 新增参数写入 `TcpHeaderInfo.ttl`——**未改 ParsedPacket**（复用 F33 教训，避开 12 处 risk 测试字面量波及）。
+  - `DetectionResult.ja4ls/ja4lc` 全分支携带（回显/DPI/guess/规则分支）；CLI 文本输出 ` ja4ls=... ja4lc=...`；json feature 随 derive 序列化。
+- **测试**：tests/test_ja4l.rs 新增 7 项（完整握手双向数值直证 5000_57/10000_128、C 为数据包、首包优先/重传与后续包不覆盖、mid-stream 缺起点、无 SYN-ACK、时戳回退跳过、UDP 流不参与）。三配置全绿：默认 322 / all-features 1124（10 ignored）/ risk 367；clippy --all-features --all-targets 0 警告。
+- **已知边界**：① QUIC 变体（q 前缀，client Initial/server Initial/client Handshake 时戳）不实现——需 QUIC 包类型跟踪；python 另有 TLS 精化第 3 段（zeek 的 ja4l_delta：`(first_client_data-server_hello)/2`、`(server_hello-client_hello)/2`）依赖 TLS 事件，本库 2 字段格式取 python 语义（对任意 TCP 流可用，不依赖 TLS）；② 时戳回退（乱序）时 zeek 报错跳过、本库静默跳过；③ JA4L-C 在 B 未及时到达时由后续客户端包重试捕获（zeek 为一次性阈值，错过即放弃）——多包场景数值可能与 zeek 略偏；④ detect_at 调用方须保证时戳单调不回退，否则对应指纹跳过（不 panic）。

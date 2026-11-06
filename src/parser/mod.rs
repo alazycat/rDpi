@@ -30,7 +30,7 @@ pub fn parse_packet(data: &[u8]) -> Result<ParsedPacket> {
 
     // 根据协议解析传输层
     match ip_info.protocol {
-        6 => tcp::parse(remainder, ip_info.src, ip_info.dst),
+        6 => tcp::parse(remainder, ip_info.src, ip_info.dst, ip_info.ttl),
         17 => udp::parse(remainder, ip_info.src, ip_info.dst),
         1 => {
             // ICMP 没有端口

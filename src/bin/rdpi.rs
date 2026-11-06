@@ -274,12 +274,20 @@ fn print_detection(pkt_num: u64, det: &DetectionResult) {
         .map(|j| format!(" ja4ts={}", j))
         .unwrap_or_default();
 
-    if meta_str.is_empty() && ja4t_str.is_empty() && ja4ts_str.is_empty() {
+    // F35：JA4L-S/C 时延指纹（半程时延µs_TTL）
+    let ja4l_str = match (det.ja4ls.as_deref(), det.ja4lc.as_deref()) {
+        (Some(s), Some(c)) => format!(" ja4ls={} ja4lc={}", s, c),
+        (Some(s), None) => format!(" ja4ls={}", s),
+        (None, Some(c)) => format!(" ja4lc={}", c),
+        (None, None) => String::new(),
+    };
+
+    if meta_str.is_empty() && ja4t_str.is_empty() && ja4ts_str.is_empty() && ja4l_str.is_empty() {
         println!("[{:6}] {:?} [{:?}]", pkt_num, det.protocol, det.confidence);
     } else {
         println!(
-            "[{:6}] {:?} ({}{}{}) [{:?}]",
-            pkt_num, det.protocol, meta_str, ja4t_str, ja4ts_str, det.confidence
+            "[{:6}] {:?} ({}{}{}{}) [{:?}]",
+            pkt_num, det.protocol, meta_str, ja4t_str, ja4ts_str, ja4l_str, det.confidence
         );
     }
 }

@@ -38,6 +38,7 @@ fn parse_ipv4(data: &[u8]) -> Result<(&[u8], IpInfo)> {
             src: IpAddr::V4(src),
             dst: IpAddr::V4(dst),
             protocol,
+            ttl: data[8],
         },
     ))
 }
@@ -60,6 +61,7 @@ fn parse_ipv6(data: &[u8]) -> Result<(&[u8], IpInfo)> {
             src: IpAddr::V6(src),
             dst: IpAddr::V6(dst),
             protocol,
+            ttl: data[7], // hop limit，语义等价 IPv4 TTL
         },
     ))
 }
@@ -69,4 +71,6 @@ pub struct IpInfo {
     pub src: IpAddr,
     pub dst: IpAddr,
     pub protocol: u8,
+    /// IPv4 TTL / IPv6 hop limit（F35：JA4L 时延指纹所需）
+    pub ttl: u8,
 }

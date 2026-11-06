@@ -69,6 +69,20 @@ pub struct Flow {
     /// JA4TS 服务端 TCP 指纹（F34：SYN-ACK 包一次性计算；服务端方向流
     /// 的旁路字段，不占用 protocol/metadata 的一次定型语义）
     pub ja4ts: Option<String>,
+    /// 客户端 SYN 到达时刻（F35：JA4L 的 A 时戳，TCP 客户端流记录一次）
+    pub syn_time: Option<std::time::SystemTime>,
+    /// 客户端 SYN 包的 IP TTL / IPv6 hop limit（F35：JA4L-C 的 TTL 段）
+    pub syn_ttl: Option<u8>,
+    /// 服务端 SYN-ACK 到达时刻（F35：JA4L 的 B 时戳，TCP 服务端流记录一次）
+    pub synack_time: Option<std::time::SystemTime>,
+    /// 服务端 SYN-ACK 包的 IP TTL / IPv6 hop limit（F35：JA4L-S 的 TTL 段）
+    pub synack_ttl: Option<u8>,
+    /// JA4L-S 服务端时延指纹（F35：SYN-ACK 到达时借对端 A 时戳一次算出；
+    /// 服务端方向流的旁路字段，不占用 protocol/metadata 的一次定型语义）
+    pub ja4ls: Option<String>,
+    /// JA4L-C 客户端时延指纹（F35：SYN-ACK 后首个客户端包借对端 B 时戳
+    /// 一次算出；客户端方向流的旁路字段，同上定型语义豁免）
+    pub ja4lc: Option<String>,
     /// 流关联的风险 (feature: risk)
     #[cfg(feature = "risk")]
     pub risks: Vec<crate::risk::types::RiskResult>,
@@ -87,6 +101,12 @@ impl Flow {
             dpi_only: false,
             ja4t: None,
             ja4ts: None,
+            syn_time: None,
+            syn_ttl: None,
+            synack_time: None,
+            synack_ttl: None,
+            ja4ls: None,
+            ja4lc: None,
             #[cfg(feature = "risk")]
             risks: Vec::new(),
         }

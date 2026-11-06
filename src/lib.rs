@@ -282,6 +282,25 @@ impl Detector {
     /// - `Ok(None)` - 无法识别协议
     /// - `Err(e)` - 解析错误
     pub fn detect(&mut self, packet: &[u8]) -> crate::error::Result<Option<DetectionResult>> {
+        self.detect_at(packet, std::time::SystemTime::now())
+    }
+
+    /// 检测单个包（携带包到达时刻，F35：JA4L 时延指纹需要真实的包间隔）
+    ///
+    /// [`Self::detect`] 以处理时刻计时——实时接入时即为到达时刻；离线 pcap
+    /// 回放时包间处理间隔趋近于零，JA4L 数值将失去意义，应改用本入口传入
+    /// pcap 记录的捕获时戳（CLI 已接入）。
+    ///
+    /// # Arguments
+    ///
+    /// * `packet` - 原始以太网帧字节
+    /// * `arrival` - 包到达时刻（离线回放传捕获时戳；须单调不回退，乱序包
+    ///   的时延计算自动跳过，与官方 zeek 负时长报错跳过语义一致）
+    pub fn detect_at(
+        &mut self,
+        packet: &[u8],
+        arrival: std::time::SystemTime,
+    ) -> crate::error::Result<Option<DetectionResult>> {
         // 解析包
         let parsed = parser::parse_packet(packet)?;
 
@@ -293,6 +312,13 @@ impl Detector {
             dst_port: parsed.dst_port,
             transport: parsed.transport,
         };
+
+        // F35：JA4L 时延观测——需跨方向流读对端握手时戳（A/B 分布在两条
+        // 方向流上），在 get_or_create 之前独立完成流表读写，避免借用冲突。
+        // 仅 TCP 参与（TcpHeaderInfo 携带 TTL）。
+        if let Some(tcp) = parsed.tcp.as_ref() {
+            Self::observe_ja4l(&mut self.flow_table, &key, arrival, tcp);
+        }
 
         // 获取或创建流
         let flow = self.flow_table.get_or_create(key.clone());
@@ -377,6 +403,8 @@ impl Detector {
                 if let Some(mut r) = engine.match_rule(&rule_ctx) {
                     r.ja4t = flow.ja4t.clone();
                     r.ja4ts = flow.ja4ts.clone();
+                    r.ja4ls = flow.ja4ls.clone();
+                    r.ja4lc = flow.ja4lc.clone();
                     flow.protocol = Some(r.protocol);
                     flow.metadata = Some(r.metadata.clone());
                     return Ok(Some(r));
@@ -470,10 +498,12 @@ impl Detector {
         flow.stats.bytes += packet.len() as u64;
         flow.stats.last_time = std::time::Instant::now();
 
-        // 如果有检测结果，保存元数据（并携带流级 JA4T/JA4TS，若此前已捕获 SYN/SYN-ACK）
+        // 如果有检测结果，保存元数据（并携带流级 JA4T/JA4TS/JA4L，若此前已捕获）
         if let Some(ref mut r) = result {
             r.ja4t = flow.ja4t.clone();
             r.ja4ts = flow.ja4ts.clone();
+            r.ja4ls = flow.ja4ls.clone();
+            r.ja4lc = flow.ja4lc.clone();
             flow.metadata = Some(r.metadata.clone());
         }
 
@@ -496,6 +526,83 @@ impl Detector {
         }
 
         Ok(result)
+    }
+
+    /// F35：JA4L 时延观测（官方 zeek ja4l/main.zeek + python ja4.py 同源语义）
+    ///
+    /// 在 [`Detector::detect_at`] 的 get_or_create 之前调用，独立持有流表借用：
+    /// A（客户端 SYN 时戳）与 B（服务端 SYN-ACK 时戳）分布在两条方向流上，
+    /// 计算时延需反查对端流。状态机（全部每流一次）：
+    /// 1. A 记录：客户端 SYN（SYN 置位 ACK 清零）→ 当前（客户端）流
+    /// 2. B 记录 + JA4L-S：SYN-ACK（SYN/ACK 均置位）→ 读对端 A，半程时延
+    ///    `(B-A)/2`（微秒整除 2）+ SYN-ACK TTL 写当前（服务端）流
+    /// 3. C 捕获 + JA4L-C：流已记录 A 之后的客户端包（纯 ACK 或数据均可，
+    ///    对齐 zeek 第二发起包语义）→ 读对端 B，`(C-B)/2` + SYN TTL 写当前流
+    ///
+    /// 对端流不存在（mid-stream 抓包缺握手起点）或时戳回退（乱序）时跳过，
+    /// 指纹保持 None（zeek 负时长报错跳过同义）。
+    fn observe_ja4l(
+        flow_table: &mut FlowTable,
+        key: &FlowKey,
+        arrival: std::time::SystemTime,
+        tcp: &crate::parser::TcpHeaderInfo,
+    ) {
+        let syn_only = tcp.flags & 0x02 != 0 && tcp.flags & 0x10 == 0;
+        let syn_ack = tcp.flags & 0x02 != 0 && tcp.flags & 0x10 != 0;
+
+        // 对端方向流键（SYN/SYN-ACK 分属两条方向流）
+        let mut reverse = key.clone();
+        std::mem::swap(&mut reverse.src_ip, &mut reverse.dst_ip);
+        std::mem::swap(&mut reverse.src_port, &mut reverse.dst_port);
+
+        // 1. A：客户端 SYN 时戳 + TTL（每流一次）
+        if syn_only {
+            let f = flow_table.get_or_create(key.clone());
+            if f.syn_time.is_none() {
+                f.syn_time = Some(arrival);
+                f.syn_ttl = Some(tcp.ttl);
+            }
+        }
+
+        // 2. B：服务端 SYN-ACK 时戳 + TTL（每流一次），命中即算 JA4L-S
+        if syn_ack {
+            let b_new = {
+                let f = flow_table.get_or_create(key.clone());
+                if f.synack_time.is_none() {
+                    f.synack_time = Some(arrival);
+                    f.synack_ttl = Some(tcp.ttl);
+                    true
+                } else {
+                    false
+                }
+            };
+            if b_new {
+                let a_time = flow_table.get(&reverse).and_then(|p| p.syn_time);
+                if let Some(a) = a_time
+                    && let Some(d) = arrival.duration_since(a).ok()
+                {
+                    let fp = application::compute_ja4ls(d.as_micros() as u64, tcp.ttl);
+                    flow_table.get_or_create(key.clone()).ja4ls = Some(fp);
+                }
+            }
+        }
+
+        // 3. C：SYN 之后（非首包）且未算过 JA4L-C 的客户端包，对端 B 已记录
+        //    即捕获（B 未到时保持 None，后续客户端包继续尝试——乱序容忍）
+        let c_try = {
+            let f = flow_table.get_or_create(key.clone());
+            f.syn_time.is_some() && f.ja4lc.is_none() && f.packets_seen >= 1
+        };
+        if c_try {
+            let b_time = flow_table.get(&reverse).and_then(|p| p.synack_time);
+            let client_ttl = flow_table.get(key).and_then(|p| p.syn_ttl);
+            if let (Some(b), Some(ct)) = (b_time, client_ttl)
+                && let Some(d) = arrival.duration_since(b).ok()
+            {
+                let fp = application::compute_ja4lc(d.as_micros() as u64, ct);
+                flow_table.get_or_create(key.clone()).ja4lc = Some(fp);
+            }
+        }
     }
 
     /// F3：已定型 TLS 流收到 Certificate 记录时，补解析证书字段（每流至多一次）

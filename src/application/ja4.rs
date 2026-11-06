@@ -358,6 +358,34 @@ pub fn compute_ja4ts(window: u16, option_kinds: &[u8], mss: u16, window_scale: u
     compute_ja4t(window, option_kinds, mss, window_scale)
 }
 
+/// JA4L-S：服务端时延指纹（F35，2026-11-06）
+///
+/// 格式（官方 python ja4.py `{diff}_{ttl}` / zeek ja4l/main.zeek 同源）：
+/// `{半程时延}_{服务端TTL}`，半程时延 = SYN→SYN-ACK 总微秒数整除 2
+/// （python `epoch_diff` 为 `// timedelta(microseconds=2)`，zeek 为
+/// `double_to_count((b-a)/2)` 截断，语义一致）——RTT 的一半即单程"光距"。
+///
+/// # 参数
+///
+/// * `diff_micros` - SYN（A）到 SYN-ACK（B）的总微秒数
+/// * `server_ttl` - SYN-ACK 包的 IP TTL（IPv6 为 hop limit）
+pub fn compute_ja4ls(diff_micros: u64, server_ttl: u8) -> String {
+    format!("{}_{server_ttl}", diff_micros / 2)
+}
+
+/// JA4L-C：客户端时延指纹（F35，2026-11-06）
+///
+/// 格式同 [`compute_ja4ls`]：`{半程时延}_{客户端TTL}`，半程时延 =
+/// SYN-ACK→客户端第三包（握手 ACK 或后续数据）总微秒数整除 2。
+///
+/// # 参数
+///
+/// * `diff_micros` - SYN-ACK（B）到客户端第三包（C）的总微秒数
+/// * `client_ttl` - 客户端 SYN 包的 IP TTL（IPv6 为 hop limit）
+pub fn compute_ja4lc(diff_micros: u64, client_ttl: u8) -> String {
+    format!("{}_{client_ttl}", diff_micros / 2)
+}
+
 /// OID 列表 → 12 位哈希段：DER 内容字节 hex 逗号拼接后 SHA-256 截断；空列表为 12 个 0
 fn hash12_oids(oids: &[Vec<u8>]) -> String {
     if oids.is_empty() {

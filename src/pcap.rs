@@ -99,7 +99,9 @@ impl Iterator for PcapIterator {
                 match reader.next_packet() {
                     Some(Ok(packet)) => {
                         let ts = packet.timestamp.as_nanos() / 1000; // 转换为微秒
-                        match self.detector.detect(&packet.data) {
+                        // F35：传捕获时戳给 detect_at（JA4L 需要真实包间隔）
+                        let arrival = std::time::SystemTime::UNIX_EPOCH + packet.timestamp;
+                        match self.detector.detect_at(&packet.data, arrival) {
                             Ok(Some(result)) => Some(Ok(Some((ts as u64, result)))),
                             Ok(None) => Some(Ok(None)),
                             Err(e) => Some(Err(e)),
@@ -118,17 +120,26 @@ impl Iterator for PcapIterator {
                         match block {
                             Block::EnhancedPacket(epb) => {
                                 let ts = epb.timestamp.as_nanos() / 1000; // 转换为微秒
-                                match self.detector.detect(&epb.data) {
+                                // F35：传捕获时戳给 detect_at（JA4L 需要真实包间隔）
+                                let arrival = std::time::SystemTime::UNIX_EPOCH + epb.timestamp;
+                                match self.detector.detect_at(&epb.data, arrival) {
                                     Ok(Some(result)) => Some(Ok(Some((ts as u64, result)))),
                                     Ok(None) => Some(Ok(None)),
                                     Err(e) => Some(Err(e)),
                                 }
                             }
-                            Block::SimplePacket(spb) => match self.detector.detect(&spb.data) {
-                                Ok(Some(result)) => Some(Ok(Some((0, result)))),
-                                Ok(None) => Some(Ok(None)),
-                                Err(e) => Some(Err(e)),
-                            },
+                            Block::SimplePacket(spb) => {
+                                // Simple Packet 无时戳：退化用处理时刻（JA4L 在
+                                // 此类输入上数值不可信，维持功能兼容）
+                                match self
+                                    .detector
+                                    .detect_at(&spb.data, std::time::SystemTime::now())
+                                {
+                                    Ok(Some(result)) => Some(Ok(Some((0, result)))),
+                                    Ok(None) => Some(Ok(None)),
+                                    Err(e) => Some(Err(e)),
+                                }
+                            }
                             _ => {
                                 // 跳过非数据包块，继续读取下一个
                                 self.next()

@@ -20,6 +20,8 @@ pub struct TcpHeaderInfo {
     pub mss: u16,
     /// 窗口缩放因子 shift（kind=3；缺省 0）
     pub window_scale: u8,
+    /// IP TTL / IPv6 hop limit（F35：JA4L 时延指纹所需）
+    pub ttl: u8,
 }
 
 // 手写 Default：[u8; 40] 超出 derive 支持的数组长度上限（32）
@@ -32,11 +34,12 @@ impl Default for TcpHeaderInfo {
             option_kinds: [0; 40],
             mss: 0,
             window_scale: 0,
+            ttl: 0,
         }
     }
 }
 
-pub fn parse(data: &[u8], src_ip: IpAddr, dst_ip: IpAddr) -> Result<ParsedPacket> {
+pub fn parse(data: &[u8], src_ip: IpAddr, dst_ip: IpAddr, ttl: u8) -> Result<ParsedPacket> {
     if data.len() < 20 {
         return Err(Error::TruncatedHeader);
     }
@@ -50,6 +53,7 @@ pub fn parse(data: &[u8], src_ip: IpAddr, dst_ip: IpAddr) -> Result<ParsedPacket
     let mut tcp = TcpHeaderInfo {
         flags: data[13],
         window: u16::from_be_bytes([data[14], data[15]]),
+        ttl,
         ..Default::default()
     };
     if data_offset > 20 && data_offset <= data.len() {
@@ -128,6 +132,7 @@ mod tests {
             &tcp_head(flags, window, options),
             "1.1.1.1".parse().unwrap(),
             "2.2.2.2".parse().unwrap(),
+            64,
         )
         .unwrap()
         .tcp
@@ -178,7 +183,8 @@ mod tests {
             parse(
                 &[0u8; 19],
                 "1.1.1.1".parse().unwrap(),
-                "2.2.2.2".parse().unwrap()
+                "2.2.2.2".parse().unwrap(),
+                64
             )
             .is_err()
         );
