@@ -575,7 +575,127 @@ impl Detector {
             }
         }
 
+        // F42：JA4L TLS 精化段（delta）观测——D/E/F 三时点，信号取自结果
+        // 元数据；仅 TCP（zeek delta 为 TCP TLS 专用路径，QUIC/DTLS 不参与）。
+        // 置于流统计/回显拷贝之后：此处 flow 借用已终结，可独立借流表做跨向读。
+        if parsed.transport == TransportProto::Tcp {
+            Self::observe_ja4l_tls(
+                &mut self.flow_table,
+                &key,
+                arrival,
+                result.as_ref(),
+                !parsed.payload.is_empty(),
+            );
+        }
+
         Ok(result)
+    }
+
+    /// F42：JA4L TLS 精化段（delta）观测（官方 zeek ja4l/main.zeek
+    /// `ssl_client_hello`/`ssl_server_hello`/数据阈值分支语义，TCP TLS 专用）
+    ///
+    /// 在 DPI 之后调用（信号取自检测结果元数据的精确推断：`ja4` Some ⇔ 本段
+    /// 含 ClientHello、`ja4s` Some ⇔ 含 ServerHello——TLS 检测器逐记录解析
+    /// 产物，识别包与回显包同义）。三时点状态机（全部每流一次）：
+    /// 1. D 记录：客户端方向含 ClientHello 的包 → 当前（客户端）流
+    /// 2. E 记录 + JA4L-S 第三段：服务端方向含 ServerHello 的包 → 读对端 D，
+    ///    `(E-D)/2`（微秒）以 `_` 追加至本流 ja4ls（成 `{半程}_{TTL}_{delta}`
+    ///    三段；对端无 D 或时戳回退则不追加，zeek 负时长报错跳过同义）
+    /// 3. F 记录 + JA4L-C 第三段：E 已记之后首个**有载荷**客户端包（zeek
+    ///    `dl == 0` 等待实际数据语义，纯 ACK 不触发）→ `(F-E)/2` 追加至
+    ///    本流 ja4lc
+    ///
+    /// 方向判定借 F35 握手时戳：本流 syn_time / 对端 synack_time = 客户端；
+    /// 本流 synack_time / 对端 syn_time = 服务端（放宽于 zeek 的 is_orig——
+    /// 从 SYN-ACK 起抓包仍可判定方向）；mid-stream（两侧均无握手时戳）跳过。
+    fn observe_ja4l_tls(
+        flow_table: &mut FlowTable,
+        key: &FlowKey,
+        arrival: std::time::SystemTime,
+        result: Option<&DetectionResult>,
+        has_payload: bool,
+    ) {
+        let Some(r) = result else { return };
+        let Metadata::Tls(t) = &r.metadata else {
+            return;
+        };
+        let client_hello = t.ja4.is_some();
+        let server_hello = t.ja4s.is_some();
+        if !client_hello && !server_hello && !has_payload {
+            return;
+        }
+
+        // 对端方向流键（FlowKey 方向性）+ 自连路径保护
+        let mut reverse = key.clone();
+        std::mem::swap(&mut reverse.src_ip, &mut reverse.dst_ip);
+        std::mem::swap(&mut reverse.src_port, &mut reverse.dst_port);
+        if *key == reverse {
+            return;
+        }
+
+        // 方向判定（借 F35 握手时戳，至少观测到一个握手包才参与）
+        let is_client = flow_table.get(key).is_some_and(|f| f.syn_time.is_some())
+            || flow_table
+                .get(&reverse)
+                .is_some_and(|f| f.synack_time.is_some());
+        let is_server = flow_table.get(key).is_some_and(|f| f.synack_time.is_some())
+            || flow_table
+                .get(&reverse)
+                .is_some_and(|f| f.syn_time.is_some());
+
+        // D：客户端 ClientHello（每流一次）
+        if client_hello && is_client {
+            let f = flow_table.get_or_create(key.clone());
+            if f.tls_client_hello_time.is_none() {
+                f.tls_client_hello_time = Some(arrival);
+            }
+        }
+        // E：服务端 ServerHello（每流一次）+ 对端 D 已记则追加 ja4ls 第三段
+        if server_hello && is_server {
+            let first = {
+                let f = flow_table.get_or_create(key.clone());
+                if f.tls_server_hello_time.is_none() {
+                    f.tls_server_hello_time = Some(arrival);
+                    true
+                } else {
+                    false
+                }
+            };
+            if first
+                && let Some(d) = flow_table
+                    .get(&reverse)
+                    .and_then(|p| p.tls_client_hello_time)
+                && let Some(delta) = arrival.duration_since(d).ok()
+                && let Some(f) = flow_table.get_mut(key)
+                && let Some(s) = f.ja4ls.as_mut()
+            {
+                s.push_str(&format!("_{}", delta.as_micros() as u64 / 2));
+            }
+        }
+        // F：E 之后首个有载荷客户端包（每流一次）+ 追加 ja4lc 第三段
+        if has_payload && is_client {
+            let e = flow_table
+                .get(&reverse)
+                .and_then(|p| p.tls_server_hello_time);
+            if let Some(e) = e {
+                let first = {
+                    let f = flow_table.get_or_create(key.clone());
+                    if f.tls_first_client_data_time.is_none() {
+                        f.tls_first_client_data_time = Some(arrival);
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if first
+                    && let Some(delta) = arrival.duration_since(e).ok()
+                    && let Some(f) = flow_table.get_mut(key)
+                    && let Some(s) = f.ja4lc.as_mut()
+                {
+                    s.push_str(&format!("_{}", delta.as_micros() as u64 / 2));
+                }
+            }
+        }
     }
 
     /// F35：JA4L 时延观测（官方 zeek ja4l/main.zeek + python ja4.py 同源语义）

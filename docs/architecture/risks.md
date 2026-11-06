@@ -290,7 +290,7 @@
   - TTL 提取：`parser::ip::IpInfo.ttl`（IPv4 data[8] / IPv6 data[7]）→ `tcp::parse` 新增参数写入 `TcpHeaderInfo.ttl`——**未改 ParsedPacket**（复用 F33 教训，避开 12 处 risk 测试字面量波及）。
   - `DetectionResult.ja4ls/ja4lc` 全分支携带（回显/DPI/guess/规则分支）；CLI 文本输出 ` ja4ls=... ja4lc=...`；json feature 随 derive 序列化。
 - **测试**：tests/test_ja4l.rs 新增 7 项（完整握手双向数值直证 5000_57/10000_128、C 为数据包、首包优先/重传与后续包不覆盖、mid-stream 缺起点、无 SYN-ACK、时戳回退跳过、UDP 流不参与）。三配置全绿：默认 322 / all-features 1124（10 ignored）/ risk 367；clippy --all-features --all-targets 0 警告。
-- **已知边界**：① QUIC 变体（见 F41，2026-11-06 已兑现）——原登记不实现；python 另有 TLS 精化第 3 段（zeek 的 ja4l_delta：`(first_client_data-server_hello)/2`、`(server_hello-client_hello)/2`）依赖 TLS 事件，本库 2 字段格式取 python 语义（对任意 TCP 流可用，不依赖 TLS）；② 时戳回退（乱序）时 zeek 报错跳过、本库静默跳过；③ JA4L-C 在 B 未及时到达时由后续客户端包重试捕获（zeek 为一次性阈值，错过即放弃）——多包场景数值可能与 zeek 略偏；④ detect_at 调用方须保证时戳单调不回退，否则对应指纹跳过（不 panic）。
+- **已知边界**：① QUIC 变体（见 F41，2026-11-06 已兑现）——原登记不实现；python 另有 TLS 精化第 3 段（zeek 的 ja4l_delta：`(first_client_data-server_hello)/2`、`(server_hello-client_hello)/2`）依赖 TLS 事件，本库 2 字段格式取 python 语义（对任意 TCP 流可用，不依赖 TLS）——**该精化段已由 F42 兑现**（2026-11-06，基指纹升级为三段，见 risks.md F42）；② 时戳回退（乱序）时 zeek 报错跳过、本库静默跳过；③ JA4L-C 在 B 未及时到达时由后续客户端包重试捕获（zeek 为一次性阈值，错过即放弃）——多包场景数值可能与 zeek 略偏；④ detect_at 调用方须保证时戳单调不回退，否则对应指纹跳过（不 panic）。
 
 ## F36【中】JA4SSH 会话指纹（2026-11-06，新功能开发）—— ✅ 已完成
 
@@ -391,3 +391,18 @@
   - [application/ja4.rs](file:///d:/rust_code/rDpi/src/application/ja4.rs)：`compute_ja4ls_quic/ja4lc_quic(diff_micros, ttl)` 三段 `_q` 纯格式化；应用模块重导出。
 - **测试**：tests/test_ja4l.rs 新增 6 项（UDP 包构造 helper + 四时点双向数值直证 `5000_57_q`/`8000_128_q`、时戳回退跳过、mid-stream 缺 A' 跳过、草稿版版本号跳过、短包/0-RTT(type=1)/type=3 忽略、重传 Initial 不覆盖 A'）。三配置全绿：**默认 341 / all-features 1188（10 ignored）/ risk 386**（基线 +6）；clippy lib+bins 0 警告（all-features 同）；fmt 干净。
 - **已知边界**：① 仅 QUIC v1——草稿版（0xff0000xx）/版本协商（version 0）不追踪（zeek 无版本过滤，QUIC 事件按解析产出；本库免解密门控只能认 v1 字面 version，收紧登记）；② 客户端 Initial 重传不覆盖 A'（zeek 逐 Initial 覆盖 `client_init`，本库每流一次**故意收紧**——重传 Initial 内容与时戳差在毫秒级，语义等价且状态机更简单）；③ mid-stream：zeek 对缺失时戳按 0 参与计算会产出巨值，本库缺 A'/B' 显式跳过（F35 TCP 先例）；④ zeek 依赖 QUIC 事件解析后的类型（含密钥恢复后的重试 Initial 归类），本库按长包头裸 type 位判定，coalesced 多包/首个字节被加密的短包头（1-RTT）自然落在门外——type 位不受保护故无假阴，但 0-RTT 期间路径不参与度量（与 zeek QUIC 事件一致，Initial 之后的 0-RTT 包无类型位用途）；⑤ 无 QUIC delta 精化段（与 TCP F35 边界①同源，python TLS 精化段不实现）。
+
+## F42【中】JA4L TLS 精化段 delta（2026-11-06，新功能开发）—— ✅ 已完成
+
+- **背景**：兑现 F35 边界①剩余部分——TCP TLS 握手的 D（ClientHello）/E（ServerHello）/F（首个客户端数据）三时点可进一步度量应用层时延，基指纹从两段 `{半程}_{TTL}` 升级为三段 `{半程}_{TTL}_{delta}`。**仅 TCP 路径**（zeek `connection_state_remove` 以 `server_handshake != 0` 排除 QUIC；DTLS 无对应事件）。
+- **规格来源**：官方 zeek/ja4l/main.zeek（commit 27f0cbf9，`ssl_client_hello`/`ssl_server_hello` 事件 + do_ja4l 数据阈值分支全文核对）：
+  - ja4l_s 第三段 = `(server_hello - client_hello)/2` µs：E（ServerHello 时戳）**首次**记录时追加（负时延 zeek 报错跳过，本库静默跳过，F35 边界②先例）；
+  - ja4l_c 第三段 = `(first_client_data - server_hello)/2` µs：F = E 已记之后**首个有载荷**客户端包（zeek `rp$tcp$dl == 0` 等待实际数据语义——纯 ACK 不触发）；
+  - D/E 均每流一次（`== 0` 守卫），重传不覆盖；
+  - zeek 另有 `ja4l_delta`/`ja4ls_delta` **比值字段**（`(F-E)/(ack-synack)`、`(E-D)/(synack-syn)`，`%.1f`）——**不实现**（需新增 ack_time 字段 + types/CLI 波及，登记边界）。
+- **信号推断**（zeek 事件来自 ssl 框架，本库以元数据等价推断）：`TlsMetadata.ja4` Some ⇔ 本段含 ClientHello、`ja4s` Some ⇔ 含 ServerHello——TLS detector 逐记录解析产物（tls/mod.rs），识别包与回显包同义（F7 回显携带已保存元数据），已核实 None 门不影响。
+- **实现**：
+  - [core/flow.rs](file:///d:/rust_code/rDpi/src/core/flow.rs)：`Flow` 新增 3 个旁路字段——`tls_client_hello_time`（D，客户端流）/`tls_server_hello_time`（E，服务端流）/`tls_first_client_data_time`（F，客户端流），均 `Option<SystemTime>`，正常流零堆分配，同 F33-F41 定型语义豁免。
+  - [lib.rs](file:///d:/rust_code/rDpi/src/lib.rs) `Detector::observe_ja4l_tls`：调用点在 detect 主流程 **DPI 之后**（risk 块之后、`Ok(result)` 之前）——`flow` 可变借用跨 NLL 区域与流表借用冲突，须置于 flow 最后一次使用之后（区别于 F35/F36/F40/F41 的 get_or_create 之前模式）；仅 `TransportProto::Tcp`。D/E/F 三步状态机（每流一次）：D 记录于客户端方向含 ClientHello 包；E 首记时读对端 D 追加 ja4ls 第三段；F 首记时读对端 E 追加 ja4lc 第三段（`has_payload` 门）。**基指纹 None 门**：ja4ls/ja4lc 为 None 时跳过追加（收紧于 zeek——zeek 对缺失字段按空串拼接，本库保持指纹格式完整性）。方向判定借 F35 握手时戳放宽：本流 `syn_time` / 对端 `synack_time` = 客户端，本流 `synack_time` / 对端 `syn_time` = 服务端（放宽于 zeek is_orig——从 SYN-ACK 起抓包仍可判向，但基指纹缺 A 仍不产出）。
+- **测试**：tests/test_ja4l.rs 新增 6 项（最小 TLS 记录构造 helper：ClientHello/ServerHello 各一段，ja4/ja4s Some 即可触发信号）——全握手三段数值直证 `5000_57_5000`/`10000_128_6000`、E 时戳回退保持两段、F 等待载荷（纯 ACK 不触发 + 首个数据包定值）、mid-stream 跳过、从 SYN-ACK 起抓包（方向放宽验证：E/F 时戳照常落库、基指纹缺 A 不产出）、ServerHello 重传与后续数据包不重复追加。三配置全绿：**默认 347 / all-features 1194（10 ignored）/ risk 392**（基线 +6）；clippy lib+bins 0 警告；fmt 干净。
+- **已知边界**：① zeek `ja4l_delta`/`ja4ls_delta` 比值字段不实现（需 ack_time 新字段 + types/CLI 改动，值不大）；② ja4ls/ja4lc 为 None（缺基指纹）时不追加第三段——基指纹产出是第三段前提，与 F35 mid-stream 跳过同源；③ Certificate-only 识别的 TLS 流（服务端首个明文记录是 Certificate，无 ClientHello/ServerHello 信号）不参与 D/E/F 观测；④ miss 包（result None）不观测——客户端流已定型 Tls 的后续包经 F7 回显携带元数据，正常握手场景 D/E/F 信号均可达；纯 mid-stream 且未定型的流量无回显、无基指纹，本就无产出意义；⑤ delta 为整除 2 的微秒整数（与基指纹 epoch_diff 语义一致）。

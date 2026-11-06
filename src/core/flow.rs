@@ -113,6 +113,13 @@ pub struct Flow {
     pub quic_server_init_time: Option<std::time::SystemTime>,
     /// 服务端 QUIC Handshake 到达时刻（F41：QUIC JA4L-C 的 B' 时戳，服务端流记录一次）
     pub quic_server_hs_time: Option<std::time::SystemTime>,
+    /// 客户端 TLS ClientHello 到达时刻（F42：JA4L 精化段 D 时点，客户端流记录一次）
+    pub tls_client_hello_time: Option<std::time::SystemTime>,
+    /// 服务端 TLS ServerHello 到达时刻（F42：JA4L 精化段 E 时点，服务端流记录一次）
+    pub tls_server_hello_time: Option<std::time::SystemTime>,
+    /// ServerHello 之后首个有载荷客户端包到达时刻（F42：精化段 F 时点，
+    /// 客户端流记录一次；纯 ACK 等待，zeek `dl == 0` 语义）
+    pub tls_first_client_data_time: Option<std::time::SystemTime>,
     /// 流关联的风险 (feature: risk)
     #[cfg(feature = "risk")]
     pub risks: Vec<crate::risk::types::RiskResult>,
@@ -148,6 +155,9 @@ impl Flow {
             quic_client_init_ttl: None,
             quic_server_init_time: None,
             quic_server_hs_time: None,
+            tls_client_hello_time: None,
+            tls_server_hello_time: None,
+            tls_first_client_data_time: None,
             #[cfg(feature = "risk")]
             risks: Vec::new(),
         }

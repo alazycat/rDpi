@@ -415,3 +415,320 @@ fn test_ja4l_quic_retransmit_initial_keeps_first() {
         "重传 Initial 不覆盖客户端 A' 时戳"
     );
 }
+
+// ============================================================================
+// TLS 精化段（F42，2026-11-06）：官方 zeek ja4l/main.zeek delta 语义
+// ============================================================================
+// - ja4l_s 第三段 = (server_hello - client_hello)/2 µs（E-D，每流一次）
+// - ja4l_c 第三段 = (first_client_data - server_hello)/2 µs（F-E，F 需有载荷）
+// - 信号推断：元数据 ja4 Some ⇔ 含 ClientHello、ja4s Some ⇔ 含 ServerHello
+// - 乱序/对端缺起点/基指纹未产出（ja4ls·ja4lc None）跳过追加
+
+/// TLS 记录封装（content_type=0x16 handshake + 版本 0x0303 + 2B 长度）
+fn tls_record(body: &[u8]) -> Vec<u8> {
+    let mut r = vec![0x16, 0x03, 0x03];
+    r.extend_from_slice(&(body.len() as u16).to_be_bytes());
+    r.extend_from_slice(body);
+    r
+}
+
+/// 握手头（1B type + 3B 长度）
+fn handshake_header(msg_type: u8, body_len: usize) -> Vec<u8> {
+    let mut h = vec![msg_type];
+    h.extend_from_slice(&(body_len as u32).to_be_bytes()[1..]);
+    h
+}
+
+/// 最小 TLS 1.2 ClientHello（TLS 1.2 布局：legacy_version + random + sid +
+/// cipher_suites + compression + 空扩展）——ja4 恒可计算（F39）
+fn client_hello_payload() -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&[0x03, 0x03]); // legacy_version
+    body.extend_from_slice(&[0x11; 32]); // random
+    body.push(0x00); // session id len
+    body.extend_from_slice(&[0x00, 0x02]); // cipher suites len
+    body.extend_from_slice(&[0x13, 0x01]); // TLS_AES_128_GCM_SHA256
+    body.extend_from_slice(&[0x01, 0x00]); // compression methods
+    body.extend_from_slice(&[0x00, 0x00]); // extensions len 0
+    let mut hs = handshake_header(0x01, body.len());
+    hs.extend_from_slice(&body);
+    tls_record(&hs)
+}
+
+/// 最小 ServerHello（同构布局，msg_type=0x02，comp_len 必为 1）——ja4s Some
+fn server_hello_payload() -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(&[0x03, 0x03]);
+    body.extend_from_slice(&[0x22; 32]);
+    body.push(0x00); // session id len
+    body.extend_from_slice(&[0x13, 0x01]); // selected cipher
+    body.push(0x01); // compression len（TLS 1.3 必为 1）
+    body.push(0x00); // null compression
+    body.extend_from_slice(&[0x00, 0x00]); // extensions len 0
+    let mut hs = handshake_header(0x02, body.len());
+    hs.extend_from_slice(&body);
+    tls_record(&hs)
+}
+
+#[test]
+fn test_ja4l_tls_delta_full_handshake() {
+    let mut d = Detector::new();
+    // 握手三包（F35 基指纹）+ 四时点 D/E/F（F42 精化段）
+    let syn = build_tcp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, 0x02, &[]);
+    d.detect_at(&syn, ts(0)).unwrap();
+    let syn_ack = build_tcp_packet(SERVER, 443, CLIENT, 54321, SERVER_TTL, 0x12, &[]);
+    d.detect_at(&syn_ack, ts(10_000)).unwrap();
+    let ack = build_tcp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, 0x10, &[]);
+    d.detect_at(&ack, ts(30_000)).unwrap();
+
+    // D：ClientHello（t=40ms）
+    let ch = build_tcp_packet(
+        CLIENT,
+        54321,
+        SERVER,
+        443,
+        CLIENT_TTL,
+        0x18,
+        &client_hello_payload(),
+    );
+    d.detect_at(&ch, ts(40_000)).unwrap();
+
+    // E：ServerHello（t=50ms）→ delta = (50-40)ms/2 = 5000
+    let sh = build_tcp_packet(
+        SERVER,
+        443,
+        CLIENT,
+        54321,
+        SERVER_TTL,
+        0x18,
+        &server_hello_payload(),
+    );
+    d.detect_at(&sh, ts(50_000)).unwrap();
+    assert_eq!(
+        ja4ls_by_src_port(&d, 443).as_deref(),
+        Some("5000_57_5000"),
+        "ja4l_s 第三段 = (E-D)/2"
+    );
+
+    // F：E 之后首个有载荷客户端包（t=62ms）→ delta = (62-50)ms/2 = 6000
+    let data = build_tcp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, 0x18, &[1, 2, 3]);
+    d.detect_at(&data, ts(62_000)).unwrap();
+    assert_eq!(
+        ja4lc_by_src_port(&d, 54321).as_deref(),
+        Some("10000_128_6000"),
+        "ja4l_c 第三段 = (F-E)/2"
+    );
+}
+
+#[test]
+fn test_ja4l_tls_delta_backward_timestamp_keeps_two_segments() {
+    let mut d = Detector::new();
+    let syn = build_tcp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, 0x02, &[]);
+    d.detect_at(&syn, ts(0)).unwrap();
+    let syn_ack = build_tcp_packet(SERVER, 443, CLIENT, 54321, SERVER_TTL, 0x12, &[]);
+    d.detect_at(&syn_ack, ts(10_000)).unwrap();
+    let ack = build_tcp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, 0x10, &[]);
+    d.detect_at(&ack, ts(30_000)).unwrap();
+    // D（t=40ms）之后 E 时戳回退（t=10ms）→ zeek 负时长报错跳过
+    let ch = build_tcp_packet(
+        CLIENT,
+        54321,
+        SERVER,
+        443,
+        CLIENT_TTL,
+        0x18,
+        &client_hello_payload(),
+    );
+    d.detect_at(&ch, ts(40_000)).unwrap();
+    let sh = build_tcp_packet(
+        SERVER,
+        443,
+        CLIENT,
+        54321,
+        SERVER_TTL,
+        0x18,
+        &server_hello_payload(),
+    );
+    d.detect_at(&sh, ts(10_000)).unwrap();
+    assert_eq!(
+        ja4ls_by_src_port(&d, 443).as_deref(),
+        Some("5000_57"),
+        "E < D 时不追加第三段"
+    );
+}
+
+#[test]
+fn test_ja4l_tls_delta_f_waits_for_payload() {
+    let mut d = Detector::new();
+    let syn = build_tcp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, 0x02, &[]);
+    d.detect_at(&syn, ts(0)).unwrap();
+    let syn_ack = build_tcp_packet(SERVER, 443, CLIENT, 54321, SERVER_TTL, 0x12, &[]);
+    d.detect_at(&syn_ack, ts(10_000)).unwrap();
+    // ACK t=30ms：JA4L-C 基指纹 = (30-10)ms/2 = 10000
+    let ack = build_tcp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, 0x10, &[]);
+    d.detect_at(&ack, ts(30_000)).unwrap();
+    let ch = build_tcp_packet(
+        CLIENT,
+        54321,
+        SERVER,
+        443,
+        CLIENT_TTL,
+        0x18,
+        &client_hello_payload(),
+    );
+    d.detect_at(&ch, ts(40_000)).unwrap();
+    let sh = build_tcp_packet(
+        SERVER,
+        443,
+        CLIENT,
+        54321,
+        SERVER_TTL,
+        0x18,
+        &server_hello_payload(),
+    );
+    d.detect_at(&sh, ts(50_000)).unwrap();
+    assert_eq!(
+        ja4ls_by_src_port(&d, 443).as_deref(),
+        Some("5000_57_5000"),
+        "(50-40)ms/2 = 5000"
+    );
+    // E 之后的客户端纯 ACK（t=55ms，无载荷）不触发 F（zeek dl==0 等待数据语义）
+    let pure_ack = build_tcp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, 0x10, &[]);
+    d.detect_at(&pure_ack, ts(55_000)).unwrap();
+    assert_eq!(
+        ja4lc_by_src_port(&d, 54321).as_deref(),
+        Some("10000_128"),
+        "纯 ACK 不追加第三段"
+    );
+    // 首个有载荷客户端包（t=62ms）→ delta = (62-50)ms/2 = 6000
+    let data = build_tcp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, 0x18, &[9; 8]);
+    d.detect_at(&data, ts(62_000)).unwrap();
+    assert_eq!(
+        ja4lc_by_src_port(&d, 54321).as_deref(),
+        Some("10000_128_6000"),
+        "首个有载荷客户端包触发 F 段"
+    );
+}
+
+#[test]
+fn test_ja4l_tls_delta_midstream_skipped() {
+    let mut d = Detector::new();
+    // mid-stream：首包即 ServerHello（无任何握手时戳）→ 方向不可判，不产出
+    let sh = build_tcp_packet(
+        SERVER,
+        443,
+        CLIENT,
+        54321,
+        SERVER_TTL,
+        0x18,
+        &server_hello_payload(),
+    );
+    d.detect_at(&sh, ts(0)).unwrap();
+    // 后续客户端数据包同样不追加
+    let data = build_tcp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, 0x18, &[1, 2, 3]);
+    d.detect_at(&data, ts(5_000)).unwrap();
+    assert!(ja4ls_by_src_port(&d, 443).is_none());
+    assert!(ja4lc_by_src_port(&d, 54321).is_none());
+}
+
+#[test]
+fn test_ja4l_tls_delta_from_synack_capture() {
+    let mut d = Detector::new();
+    // 从 SYN-ACK 起抓包：方向判定借对端 synack_time 放宽（D/E/F 照常记录），
+    // 但基指纹 ja4ls/ja4lc 需客户端 SYN（A）——缺失时不产出三段
+    let syn_ack = build_tcp_packet(SERVER, 443, CLIENT, 54321, SERVER_TTL, 0x12, &[]);
+    d.detect_at(&syn_ack, ts(0)).unwrap();
+    let ch = build_tcp_packet(
+        CLIENT,
+        54321,
+        SERVER,
+        443,
+        CLIENT_TTL,
+        0x18,
+        &client_hello_payload(),
+    );
+    d.detect_at(&ch, ts(10_000)).unwrap();
+    let sh = build_tcp_packet(
+        SERVER,
+        443,
+        CLIENT,
+        54321,
+        SERVER_TTL,
+        0x18,
+        &server_hello_payload(),
+    );
+    d.detect_at(&sh, ts(20_000)).unwrap();
+    let data = build_tcp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, 0x18, &[1, 2, 3]);
+    d.detect_at(&data, ts(30_000)).unwrap();
+
+    assert!(ja4ls_by_src_port(&d, 443).is_none(), "缺 A 不产出 ja4l_s");
+    assert!(
+        ja4lc_by_src_port(&d, 54321).is_none(),
+        "缺 A/B 不产出 ja4l_c"
+    );
+    // 方向放宽的验证：D/E/F 时戳照常落库（E/F 追加被基指纹 None 门跳过）
+    let server_hello_recorded = d
+        .flows()
+        .any(|(k, f)| k.src_port == 443 && f.tls_server_hello_time.is_some());
+    let client_data_recorded = d
+        .flows()
+        .any(|(k, f)| k.src_port == 54321 && f.tls_first_client_data_time.is_some());
+    assert!(
+        server_hello_recorded,
+        "从 SYN-ACK 起抓包仍可判定服务端方向并记录 E"
+    );
+    assert!(
+        client_data_recorded,
+        "从 SYN-ACK 起抓包仍可判定客户端方向并记录 F"
+    );
+}
+
+#[test]
+fn test_ja4l_tls_delta_no_duplicate_append() {
+    let mut d = Detector::new();
+    let syn = build_tcp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, 0x02, &[]);
+    d.detect_at(&syn, ts(0)).unwrap();
+    let syn_ack = build_tcp_packet(SERVER, 443, CLIENT, 54321, SERVER_TTL, 0x12, &[]);
+    d.detect_at(&syn_ack, ts(10_000)).unwrap();
+    // ACK t=30ms：JA4L-C 基指纹 = (30-10)ms/2 = 10000
+    let ack = build_tcp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, 0x10, &[]);
+    d.detect_at(&ack, ts(30_000)).unwrap();
+    let ch = build_tcp_packet(
+        CLIENT,
+        54321,
+        SERVER,
+        443,
+        CLIENT_TTL,
+        0x18,
+        &client_hello_payload(),
+    );
+    d.detect_at(&ch, ts(40_000)).unwrap();
+    // ServerHello 重传：首个（t=50ms）定 delta，重传（t=60ms）不得覆盖
+    let sh = build_tcp_packet(
+        SERVER,
+        443,
+        CLIENT,
+        54321,
+        SERVER_TTL,
+        0x18,
+        &server_hello_payload(),
+    );
+    d.detect_at(&sh, ts(50_000)).unwrap();
+    d.detect_at(&sh, ts(60_000)).unwrap();
+    assert_eq!(
+        ja4ls_by_src_port(&d, 443).as_deref(),
+        Some("5000_57_5000"),
+        "重传 ServerHello 不重复追加第三段"
+    );
+    // 后续客户端数据包也不得再次追加 F 段：首个（t=70ms）定 delta
+    // = (70-50)ms/2 = 10000，后续（t=80ms）不变
+    let data1 = build_tcp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, 0x18, &[1, 2, 3]);
+    d.detect_at(&data1, ts(70_000)).unwrap();
+    let data2 = build_tcp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, 0x18, &[4, 5, 6]);
+    d.detect_at(&data2, ts(80_000)).unwrap();
+    assert_eq!(
+        ja4lc_by_src_port(&d, 54321).as_deref(),
+        Some("10000_128_10000"),
+        "首个数据包定 delta，后续包不重复追加"
+    );
+}
