@@ -183,6 +183,10 @@ fn test_registry_default_detector_count() {
         {
             count += 1;
         }
+        #[cfg(feature = "dtls")]
+        {
+            count += 1; // DTLS（F38）
+        }
         #[cfg(feature = "mail")]
         {
             count += 2; // POP3 + IMAP

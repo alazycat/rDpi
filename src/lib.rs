@@ -386,6 +386,7 @@ impl Detector {
                 let sni = flow.metadata.as_ref().and_then(|m| match m {
                     Metadata::Tls(tls) => tls.sni.clone(),
                     Metadata::Quic(quic) => quic.sni.clone(),
+                    Metadata::Dtls(dtls) => dtls.sni.clone(),
                     _ => None,
                 });
                 #[cfg(feature = "tls")]
@@ -441,6 +442,7 @@ impl Detector {
                     sni: flow.metadata.as_ref().and_then(|m| match m {
                         Metadata::Tls(tls) => tls.sni.clone(),
                         Metadata::Quic(quic) => quic.sni.clone(),
+                        Metadata::Dtls(dtls) => dtls.sni.clone(),
                         _ => None,
                     }),
                     http_host: flow.metadata.as_ref().and_then(|m| match m {
@@ -765,7 +767,7 @@ impl Detector {
             && let Some(Metadata::Tls(ref mut tls)) = flow.metadata
         {
             tls.ja4s = Some(crate::application::compute_ja4s(
-                false,
+                crate::application::Ja4Transport::Tcp,
                 sh.legacy_version,
                 sh.supported_version,
                 sh.cipher_suite,

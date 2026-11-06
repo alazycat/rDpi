@@ -10,6 +10,8 @@ pub mod bgp;
 pub mod dhcp;
 #[cfg(feature = "dns")]
 pub mod dns;
+#[cfg(feature = "dtls")]
+pub mod dtls;
 #[cfg(feature = "proto3")]
 pub mod ftp;
 #[cfg(feature = "http")]
@@ -237,10 +239,17 @@ impl Default for Registry {
 }
 
 /// 注册所有启用的内置协议
-/// 注册顺序：QUIC → TLS → SSH → SNMP → Modbus → SMTP → POP3 → IMAP → NTP → DHCP → HTTP → DNS（按特异性递减）
+/// 注册顺序：QUIC → DTLS → TLS → SSH → SNMP → Modbus → SMTP → POP3 → IMAP → NTP → DHCP → HTTP → DNS（按特异性递减）
 pub fn register_defaults(_registry: &mut Registry) {
     #[cfg(feature = "quic")]
     quic::register(_registry);
+    // F38：DTLS 紧随 QUIC、先于 TLS——影响面复述（顺序 = 优先级语义）：
+    // DTLS 仅在 legacy_record_version ∈ {0xfeff,0xfefd,0xfefc} + epoch=0 +
+    // 单片段握手时命中，TLS 记录头（data[1]==0x03）与 DTLS 记录头
+    // （data[1]==0xfe）互斥，DTLS 与 TLS 两 detector 顺序无相互影响；
+    // 其余 detector 相对顺序不变。
+    #[cfg(feature = "dtls")]
+    dtls::register(_registry);
     #[cfg(feature = "tls")]
     tls::register(_registry);
     #[cfg(feature = "vpn")]

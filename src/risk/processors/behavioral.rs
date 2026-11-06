@@ -151,7 +151,8 @@ fn is_encrypted_protocol(p: Option<crate::core::types::Protocol>) -> bool {
         Some(
             crate::core::types::Protocol::Tls
             | crate::core::types::Protocol::Quic
-            | crate::core::types::Protocol::Http3,
+            | crate::core::types::Protocol::Http3
+            | crate::core::types::Protocol::Dtls,
         ) => true,
         #[cfg(feature = "vpn")]
         Some(crate::core::types::Protocol::WireGuard | crate::core::types::Protocol::OpenVpn) => {

@@ -57,10 +57,12 @@ fn trunc_hash_hex(data: &[u8], chars: usize) -> String {
 
 // ==== JA4S：服务端指纹（FoxIO JA4+ 家族，对应官方 ja4.py 的 to_ja4s）====
 
-/// TLS_MAPPER（官方 common.py）：TLS 版本 → 2 字符编码
+/// TLS_MAPPER（官方 common.py + JA4.md DTLS 扩展）：TLS 版本 → 2 字符编码
 ///
 /// 0x0002→"s2"（SSL 2）、0x0300→"s3"（SSL 3）、0x0301→"10"、0x0302→"11"、
-/// 0x0303→"12"、0x0304→"13"；未映射版本记 "00"。
+/// 0x0303→"12"、0x0304→"13"；DTLS（官方 technical_details/JA4.md 版本映射，
+/// zeek ssl-consts.h TLS_VERSION_MAPPER 同源）：0xfeff→"d1"、0xfefd→"d2"、
+/// 0xfefc→"d3"；未映射版本记 "00"。
 fn version_code(version: u16) -> &'static str {
     match version {
         0x0002 => "s2",
@@ -69,7 +71,32 @@ fn version_code(version: u16) -> &'static str {
         0x0302 => "11",
         0x0303 => "12",
         0x0304 => "13",
+        0xfeff => "d1",
+        0xfefd => "d2",
+        0xfefc => "d3",
         _ => "00",
+    }
+}
+
+/// JA4S 传输层前缀（官方 technical_details/JA4.md：proto 首字符
+/// QUIC="q"、DTLS="d"、TLS over TCP="t"）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ja4Transport {
+    /// TLS over TCP
+    Tcp,
+    /// QUIC
+    Quic,
+    /// DTLS
+    Dtls,
+}
+
+impl Ja4Transport {
+    fn proto_char(self) -> char {
+        match self {
+            Self::Tcp => 't',
+            Self::Quic => 'q',
+            Self::Dtls => 'd',
+        }
     }
 }
 
@@ -111,21 +138,21 @@ fn alpn_code(alpn: Option<&str>) -> String {
 ///
 /// # 参数
 ///
-/// * `quic` - true 时传输前缀为 "q"（QUIC），false 为 "t"（TCP）
+/// * `transport` - 传输层（前缀 t/q/d，见 [`Ja4Transport`]）
 /// * `legacy_version` - ServerHello 握手头 legacy_version 字段
 /// * `supported_version` - supported_versions 扩展中的协商版本（TLS 1.3 携带）
 /// * `cipher_suite` - 服务器选定的密码套件
 /// * `extensions` - 扩展类型列表（按服务端发送顺序）
 /// * `alpn` - 协商出的 ALPN
 pub fn compute_ja4s(
-    quic: bool,
+    transport: Ja4Transport,
     legacy_version: u16,
     supported_version: Option<u16>,
     cipher_suite: u16,
     extensions: &[u16],
     alpn: Option<&str>,
 ) -> String {
-    let transport = if quic { 'q' } else { 't' };
+    let transport = transport.proto_char();
     // 协商版本优先取 supported_versions 扩展（GREASE 值防御性忽略），回退 legacy_version
     let negotiated = match supported_version {
         Some(v) if !is_grease(v) => v,
@@ -686,7 +713,7 @@ mod tests {
     #[test]
     fn test_ja4s_tcp_tls13() {
         let ja4s = compute_ja4s(
-            false,
+            Ja4Transport::Tcp,
             0x0303,
             Some(0x0304),
             0x1302,
@@ -699,15 +726,64 @@ mod tests {
     /// QUIC 前缀 q；TLS 1.2 风格（无 supported_versions，legacy 0x0303）→ 版本 "12"
     #[test]
     fn test_ja4s_quic_tls12_fallback() {
-        let ja4s = compute_ja4s(true, 0x0303, None, 0x1301, &[0x0010, 0x002b], Some("h3"));
+        let ja4s = compute_ja4s(
+            Ja4Transport::Quic,
+            0x0303,
+            None,
+            0x1301,
+            &[0x0010, 0x002b],
+            Some("h3"),
+        );
         assert_eq!(ja4s, "q1202h3_1301_77012567d328");
+    }
+
+    /// DTLS 前缀 d；DTLS 1.3（legacy 0xfefd + supported_versions 0xfefc）→
+    /// 版本段 "d3"，与 proto 字符 'd' 组合为 "dd3"（JA4.md 字面语义：
+    /// proto 与版本段独立——Wireshark packet-ja4.c `case 'd'` 印证；
+    /// zeek C++ 不实现 'd' proto 字符输出 "td3"，分歧登记 risks.md F38）。
+    /// 哈希段与 TCP/QUIC 同输入同源，60694de2240d 已交叉验证
+    #[test]
+    fn test_ja4s_dtls13() {
+        let ja4s = compute_ja4s(
+            Ja4Transport::Dtls,
+            0xfefd,
+            Some(0xfefc),
+            0x1302,
+            &[0x002b, 0x0010],
+            Some("h2"),
+        );
+        assert_eq!(ja4s, "dd302h2_1302_60694de2240d");
+    }
+
+    /// DTLS 1.2 无 supported_versions：legacy 0xfefd → 版本段 "d2" → "dd2"；
+    /// DTLS 1.0 → "dd1"
+    #[test]
+    fn test_ja4s_dtls_version_codes() {
+        let ja4s12 = compute_ja4s(Ja4Transport::Dtls, 0xfefd, None, 0x1301, &[], None);
+        assert_eq!(ja4s12, "dd20000_1301_000000000000");
+        let ja4s10 = compute_ja4s(Ja4Transport::Dtls, 0xfeff, None, 0x1301, &[], None);
+        assert!(ja4s10.starts_with("dd10"), "{}", ja4s10);
     }
 
     /// 服务端扩展顺序敏感：同集合不同顺序产生不同哈希（JA4S 不排序）
     #[test]
     fn test_ja4s_extension_order_is_significant() {
-        let a = compute_ja4s(false, 0x0303, Some(0x0304), 0x1302, &[0x002b, 0x0010], None);
-        let b = compute_ja4s(false, 0x0303, Some(0x0304), 0x1302, &[0x0010, 0x002b], None);
+        let a = compute_ja4s(
+            Ja4Transport::Tcp,
+            0x0303,
+            Some(0x0304),
+            0x1302,
+            &[0x002b, 0x0010],
+            None,
+        );
+        let b = compute_ja4s(
+            Ja4Transport::Tcp,
+            0x0303,
+            Some(0x0304),
+            0x1302,
+            &[0x0010, 0x002b],
+            None,
+        );
         assert_ne!(a, b);
         assert!(a.ends_with("60694de2240d"));
         assert!(b.ends_with("77012567d328"));
@@ -723,10 +799,13 @@ mod tests {
             (0x0302, "11"),
             (0x0303, "12"),
             (0x0304, "13"),
+            (0xfeff, "d1"),
+            (0xfefd, "d2"),
+            (0xfefc, "d3"),
             (0x0999, "00"),
         ];
         for (version, code) in cases {
-            let ja4s = compute_ja4s(false, version, None, 0x1301, &[0x0010], None);
+            let ja4s = compute_ja4s(Ja4Transport::Tcp, version, None, 0x1301, &[0x0010], None);
             assert!(ja4s.starts_with(&format!("t{}", code)), "{}", ja4s);
         }
     }
@@ -734,8 +813,16 @@ mod tests {
     /// ALPN 编码：None/空 → "00"；>2 字符取首尾（"http/1.1"→"h1"）；2 字符原样
     #[test]
     fn test_ja4s_alpn_codes() {
-        let base =
-            |alpn: Option<&str>| compute_ja4s(false, 0x0303, Some(0x0304), 0x1302, &[0x002b], alpn);
+        let base = |alpn: Option<&str>| {
+            compute_ja4s(
+                Ja4Transport::Tcp,
+                0x0303,
+                Some(0x0304),
+                0x1302,
+                &[0x002b],
+                alpn,
+            )
+        };
         assert!(base(None).starts_with("t130100_1302_"));
         assert!(base(Some("")).starts_with("t130100_1302_"));
         assert!(base(Some("h2")).starts_with("t1301h2_1302_"));
@@ -746,7 +833,7 @@ mod tests {
     /// 空扩展列表哈希为固定 12 个 0
     #[test]
     fn test_ja4s_grease_version_and_empty_extensions() {
-        let ja4s = compute_ja4s(false, 0x0303, Some(0x0a0a), 0x1301, &[], None);
+        let ja4s = compute_ja4s(Ja4Transport::Tcp, 0x0303, Some(0x0a0a), 0x1301, &[], None);
         assert_eq!(ja4s, "t120000_1301_000000000000");
     }
 

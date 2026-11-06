@@ -49,6 +49,8 @@ pub enum Protocol {
     // 扩展协议
     Quic,
     Http3,
+    /// DTLS（RFC 6347/9147，feature: dtls，F38）
+    Dtls,
     // 邮件协议 (feature: mail)
     Pop3,
     Pop3s,
@@ -188,6 +190,8 @@ pub enum Metadata {
     Smtp(SmtpMetadata),
     /// QUIC 元数据
     Quic(QuicMetadata),
+    /// DTLS 元数据
+    Dtls(DtlsMetadata),
     /// NTP 元数据
     Ntp(NtpMetadata),
     /// DHCP 元数据
@@ -360,6 +364,27 @@ pub struct QuicMetadata {
     pub application: Option<Application>,
     /// Transport Parameters（仅客户端 Initial 携带；解密失败/无扩展时为 None）
     pub transport_parameters: Option<QuicTransportParams>,
+}
+
+/// DTLS 元数据
+///
+/// SNI/ALPN/JA4 来自 ClientHello（合成 TLS 记录复用 tls 解析器，F38），
+/// JA4S 来自 ServerHello（d 前缀）。未启用 tls feature 时仅记录层版本可用。
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone, Default)]
+pub struct DtlsMetadata {
+    /// Server Name Indication (SNI)
+    pub sni: Option<String>,
+    /// ALPN 协议协商（如 "h2"）
+    pub alpn: Option<String>,
+    /// JA4 指纹（与 TLS/QUIC 路径同源占位格式）
+    pub ja4: Option<String>,
+    /// JA4S 服务端指纹（d 前缀，来自 ServerHello）
+    pub ja4s: Option<String>,
+    /// DTLS 版本（如 "DTLS 1.2"、"DTLS 1.3"）
+    pub version: Option<String>,
+    /// 识别的应用（基于 SNI）
+    pub application: Option<Application>,
 }
 
 /// NTP 元数据
@@ -634,6 +659,7 @@ impl DetectionResult {
         match metadata {
             Metadata::Tls(tls) => tls.application,
             Metadata::Quic(quic) => quic.application,
+            Metadata::Dtls(dtls) => dtls.application,
             Metadata::Dns(dns) => dns.application,
             Metadata::Http(http) => http.application,
             #[cfg(feature = "proto3")]
@@ -717,7 +743,9 @@ impl Protocol {
             Protocol::Http2 | Protocol::WebSocket => ProtocolCategory::Web,
 
             // WebTunnel
-            Protocol::Tls | Protocol::Quic | Protocol::Http3 => ProtocolCategory::WebTunnel,
+            Protocol::Tls | Protocol::Quic | Protocol::Http3 | Protocol::Dtls => {
+                ProtocolCategory::WebTunnel
+            }
 
             // VPN
             #[cfg(feature = "vpn")]
@@ -825,6 +853,7 @@ impl Protocol {
             | Protocol::Tls
             | Protocol::Quic
             | Protocol::Http3
+            | Protocol::Dtls
             | Protocol::Ssh => ProtocolBreed::Safe,
             Protocol::Mysql
             | Protocol::Postgresql

@@ -105,7 +105,7 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
                 }
                 if tls_meta.ja4s.is_none() {
                     tls_meta.ja4s = Some(crate::application::compute_ja4s(
-                        false,
+                        crate::application::Ja4Transport::Tcp,
                         sh.legacy_version,
                         sh.supported_version,
                         sh.cipher_suite,

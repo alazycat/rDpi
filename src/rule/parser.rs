@@ -36,6 +36,7 @@ impl RuleFile {
                     "ssh" => Protocol::Ssh,
                     "smtp" => Protocol::Smtp,
                     "quic" => Protocol::Quic,
+                    "dtls" => Protocol::Dtls,
                     "pop3" => Protocol::Pop3,
                     "imap" => Protocol::Imap,
                     "ntp" => Protocol::Ntp,

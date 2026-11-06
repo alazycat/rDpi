@@ -18,7 +18,15 @@ pub(crate) static PORT_MAP: &[(u16, &[Protocol])] = &[
     (123u16, &[Protocol::Ntp]),
     (143u16, &[Protocol::Imap]),
     (161u16, &[Protocol::Snmp]),
-    (443u16, &[Protocol::Tls, Protocol::Quic, Protocol::Http3]),
+    (
+        443u16,
+        &[
+            Protocol::Tls,
+            Protocol::Quic,
+            Protocol::Http3,
+            Protocol::Dtls,
+        ],
+    ),
     (465u16, &[Protocol::Smtp]),
     (502u16, &[Protocol::Modbus]),
     (587u16, &[Protocol::Smtp]),

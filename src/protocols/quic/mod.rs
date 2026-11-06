@@ -112,7 +112,7 @@ fn try_extract_tls_meta(
     // 服务端 Initial：CRYPTO 帧为 ServerHello（无 SNI/JA4/TP；ALPN + JA4S，前缀 q）
     let sh = parser::decrypt_server_hello_meta_with_cache(payload, cache)?;
     let ja4s = Some(crate::application::compute_ja4s(
-        true,
+        crate::application::Ja4Transport::Quic,
         sh.legacy_version,
         sh.supported_version,
         sh.cipher_suite,

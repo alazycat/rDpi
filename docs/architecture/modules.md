@@ -9,7 +9,7 @@
 | `error` | thiserror 错误定义，导出 `Error`/`Result` | src/error.rs:1；lib.rs:65 |
 | `core` | 核心类型、流管理、猜测引擎、统计 | src/core/mod.rs:5-8 |
 | `parser` | 链路层/网络层/传输层解析 | src/parser/（ethernet/ip/tcp/udp） |
-| `protocols` | 49 个协议 detector + Registry | src/protocols/mod.rs |
+| `protocols` | 50 个协议 detector + Registry | src/protocols/mod.rs |
 | `application` | JA4 指纹、域名→应用映射、反向 Trie | src/application/mod.rs:17-20 |
 | `asn1` | ASN.1 BER 解码、OID、类型 | src/asn1/mod.rs:1-3 |
 | `pcap`（feature=pcap） | pcap/pcapng 批量处理迭代器 | src/pcap.rs:39-49 |
@@ -27,7 +27,7 @@
 
 解析链：`parse_packet` → `ethernet::parse` → `ip::parse` → 按 IP 协议号分发 `tcp::parse` / `udp::parse`；ICMP 及其他协议返回零端口 + 原始 payload；失败经 `?` 向上传播 `Result`（parser/mod.rs:8-51）。**全部手写解析，未用 etherparse**（全库 grep 零命中）。**TCP 头字段提取（F33，2026-11-05）**：`tcp::TcpHeaderInfo`（flags/window/选项 kind 序列[40]/MSS/缩放因子，手写 Default）随 `ParsedPacket.tcp: Option<TcpHeaderInfo>` 暴露——选项区单遍走查、畸形长度终止、EOL 填充不计、固定容量栈结构零堆分配（供 JA4T/JA4TS 指纹，application::compute_ja4t/compute_ja4ts；ttl 字段供 JA4L，application::compute_ja4ls/lc）。
 
-## 4. protocols 模块（49 个协议目录）
+## 4. protocols 模块（50 个协议目录）
 
 ### 检测器架构
 - trait `ProtocolDetector`：`name()` + `detect(payload)` + 可选 `detect_with_context(payload, ctx)`（protocols/mod.rs:103-112）。
@@ -43,6 +43,7 @@
 | 默认 http | http |
 | 默认 tls | tls（含 certificate.rs 证书解析） |
 | quic | quic（crypto.rs Initial 解密 + parser.rs，无 detector.rs 目录结构） |
+| dtls | dtls（F38，2026-11-06：DTLS 握手识别 + d 前缀 JA4/JA4S，合成 TLS 记录复用 tls 解析器，无 detector.rs 目录结构） |
 | ssh | ssh |
 | smtp | smtp |
 | mail | pop3, imap |
@@ -85,7 +86,7 @@
 
 - `identify(sni)`：惰性初始化 `ReverseTrie` 查域名后缀（application/mod.rs:17-20）。
 - `mappings.rs`：域名后缀→`Application` 映射表（mappings.rs:5-220，覆盖 YouTube/Netflix/Bilibili/抖音/微信/Telegram 等）。
-- `ja4.rs`：JA4 TLS 指纹 `tlsNN.{ciphers12}.{extensions12}.{groups6}` + SHA256 截断（ja4.rs:18-48, 57-58）；`compute_ja4s`（F30，2026-11-05）：JA4S 服务端指纹 `{t|q}{版本2位}{扩展数2位}{alpn 2字符}_{cipher 4hex}_{sha256("0x%04x"逗号串)[:12]}`，对齐 FoxIO 官方 ja4.py to_ja4s（扩展不排序/不过滤 GREASE），golden 向量经 PowerShell .NET SHA256 交叉验证；`compute_ja4h`（F31，2026-11-05）：JA4H 客户端 HTTP 指纹 `{方法2位}{版本2位}{c|n}{r|n}{头部数2位}{语言4位}_{头序敏感哈希}_{cookie字段排序哈希}_{cookie值排序哈希}`，对齐官方 ja4h.py to_ja4h（头部不排序、保留原始大小写、cookie/referer 仅作标志位、语言 4 位右补 0），HttpMetadata.ja4h 仅 HTTP/1.x 请求路径（h2 需 HPACK 全量解码，超范围）；`compute_ja4x`（F32，2026-11-05）：JA4X X.509 证书指纹 `{issuer12}_{subject12}_{扩展12}`，对齐官方 rust/ja4x hash12（OID DER 内容字节 hex 逗号拼接、不排序、空列表记 12 个 0），由 tls/certificate.rs 解析期算好经 CertInfo.ja4x → TlsMetadata.cert_ja4x 双路径接入；`compute_ja4t`（F33，2026-11-05）：JA4T 客户端 TCP 指纹 `{window}_{options}_{mss}_{wscale}`，对齐官方 rust/ja4 tcp.rs to_ja4t（选项 kind 序列含 NOP/EOL 终止、空记 "00"、mss 最少两位、wscale=0 记 "00"），无哈希段纯格式化；触发由 lib.rs detect 主流程负责——初始 SYN（SYN 置位 ACK 清零）每流一次写入 Flow.ja4t，DetectionResult.ja4t 全分支携带；`compute_ja4ts`（F34，2026-11-06）：JA4TS 服务端 TCP 指纹，格式与 JA4T 完全一致（委托 compute_ja4t），规格权威为官方 zeek/ja4t/main.zeek（rust/ja4 未实现）；触发为 SYN-ACK（flags 精确等于 0x12）每流一次写入服务端方向流 Flow.ja4ts，DetectionResult.ja4ts 全分支携带；官方重传延迟第 5 段不实现（risks.md F34 边界）；`compute_ja4ls/ja4lc`（F35，2026-11-06）：JA4L-C/S 时延指纹 `{半程时延µs}_{TTL}`（总微秒整除 2，官方 zeek ja4l + python ja4.py 同源），跨流时戳状态机在 lib.rs observe_ja4l（get_or_create 前独立借流表），时延需真实包间隔——detect_at(packet, SystemTime) 时间戳入口，pcap CLI 已传捕获时戳；QUIC 变体与 TLS 精化段不实现（risks.md F35 边界）；`compute_ja4ssh`（F36，2026-11-06）：JA4SSH 会话指纹 `c{c众数}s{s众数}_c{c载荷包数}s{s载荷包数}_c{c纯ACK数}s{s纯ACK数}`（官方 FoxIO ja4 仓库 zeek/ja4ssh/main.zeek 语义，众数平局取较小值、纯 ACK = 无载荷且 flags 精确等于 0x10、`JA4SSH_WINDOW_PACKETS = 200` 双向滚动窗口），跨流窗口状态机在 lib.rs observe_ja4ssh（同 observe_ja4l 模式），门控 = 流定型 Ssh + 连接自 SYN 起，指纹写两方向流、保留最近完成窗口（risks.md F36 边界）；`compute_ja4d/ja4d6`（F37，2026-11-06）：JA4D/JA4D6 DHCP 指纹 `{类型助记符5}{尺寸4}{i|n}{d|n}_{选项列表}_{参数列表}`（v4 权威 zeek/ja4d/main.zeek + Wireshark packet-ja4.c 终版 commit d21d63f9/11ae927f，v4 选项剔除 {0/53/50/81}、尺寸 = option 57；v6 权威仅 Wireshark 插件、尺寸 = option 1/2 DUID 长度、选项不剔除、ORO = option 6），per-message 放 metadata——DhcpMetadata.ja4d（dhcp/parser.rs parse_dhcp_options）与 Dhcpv6Metadata.ja4d6（dhcpv6/parser.rs parse_dhcpv6_info，识别语义不变），官方黄金向量 dhcp.pcapng.json/dhcpv6.pcap.json + 博客样例全量直证（risks.md F37 边界）。
+- `ja4.rs`：JA4 TLS 指纹 `tlsNN.{ciphers12}.{extensions12}.{groups6}` + SHA256 截断（ja4.rs:18-48, 57-58）；`compute_ja4s`（F30，2026-11-05；F38 重构首参为 `Ja4Transport{Tcp,Quic,Dtls}` 枚举）：JA4S 服务端指纹 `{t|q|d}{版本2位}{扩展数2位}{alpn 2字符}_{cipher 4hex}_{sha256("0x%04x"逗号串)[:12]}`，对齐 FoxIO 官方 ja4.py to_ja4s（扩展不排序/不过滤 GREASE），golden 向量经 PowerShell .NET SHA256 交叉验证；版本码含 DTLS 映射 d1/d2/d3（0xfeff/0xfefd/0xfefc，F38）——注意 proto 字符与版本段独立，DTLS 1.3 输出 "dd3..." 为 JA4.md 字面正确（zeek 基线记 "td1..." 系其实现局限，risks.md F38 分歧登记）；`compute_ja4h`（F31，2026-11-05）：JA4H 客户端 HTTP 指纹 `{方法2位}{版本2位}{c|n}{r|n}{头部数2位}{语言4位}_{头序敏感哈希}_{cookie字段排序哈希}_{cookie值排序哈希}`，对齐官方 ja4h.py to_ja4h（头部不排序、保留原始大小写、cookie/referer 仅作标志位、语言 4 位右补 0），HttpMetadata.ja4h 仅 HTTP/1.x 请求路径（h2 需 HPACK 全量解码，超范围）；`compute_ja4x`（F32，2026-11-05）：JA4X X.509 证书指纹 `{issuer12}_{subject12}_{扩展12}`，对齐官方 rust/ja4x hash12（OID DER 内容字节 hex 逗号拼接、不排序、空列表记 12 个 0），由 tls/certificate.rs 解析期算好经 CertInfo.ja4x → TlsMetadata.cert_ja4x 双路径接入；`compute_ja4t`（F33，2026-11-05）：JA4T 客户端 TCP 指纹 `{window}_{options}_{mss}_{wscale}`，对齐官方 rust/ja4 tcp.rs to_ja4t（选项 kind 序列含 NOP/EOL 终止、空记 "00"、mss 最少两位、wscale=0 记 "00"），无哈希段纯格式化；触发由 lib.rs detect 主流程负责——初始 SYN（SYN 置位 ACK 清零）每流一次写入 Flow.ja4t，DetectionResult.ja4t 全分支携带；`compute_ja4ts`（F34，2026-11-06）：JA4TS 服务端 TCP 指纹，格式与 JA4T 完全一致（委托 compute_ja4t），规格权威为官方 zeek/ja4t/main.zeek（rust/ja4 未实现）；触发为 SYN-ACK（flags 精确等于 0x12）每流一次写入服务端方向流 Flow.ja4ts，DetectionResult.ja4ts 全分支携带；官方重传延迟第 5 段不实现（risks.md F34 边界）；`compute_ja4ls/ja4lc`（F35，2026-11-06）：JA4L-C/S 时延指纹 `{半程时延µs}_{TTL}`（总微秒整除 2，官方 zeek ja4l + python ja4.py 同源），跨流时戳状态机在 lib.rs observe_ja4l（get_or_create 前独立借流表），时延需真实包间隔——detect_at(packet, SystemTime) 时间戳入口，pcap CLI 已传捕获时戳；QUIC 变体与 TLS 精化段不实现（risks.md F35 边界）；`compute_ja4ssh`（F36，2026-11-06）：JA4SSH 会话指纹 `c{c众数}s{s众数}_c{c载荷包数}s{s载荷包数}_c{c纯ACK数}s{s纯ACK数}`（官方 FoxIO ja4 仓库 zeek/ja4ssh/main.zeek 语义，众数平局取较小值、纯 ACK = 无载荷且 flags 精确等于 0x10、`JA4SSH_WINDOW_PACKETS = 200` 双向滚动窗口），跨流窗口状态机在 lib.rs observe_ja4ssh（同 observe_ja4l 模式），门控 = 流定型 Ssh + 连接自 SYN 起，指纹写两方向流、保留最近完成窗口（risks.md F36 边界）；`compute_ja4d/ja4d6`（F37，2026-11-06）：JA4D/JA4D6 DHCP 指纹 `{类型助记符5}{尺寸4}{i|n}{d|n}_{选项列表}_{参数列表}`（v4 权威 zeek/ja4d/main.zeek + Wireshark packet-ja4.c 终版 commit d21d63f9/11ae927f，v4 选项剔除 {0/53/50/81}、尺寸 = option 57；v6 权威仅 Wireshark 插件、尺寸 = option 1/2 DUID 长度、选项不剔除、ORO = option 6），per-message 放 metadata——DhcpMetadata.ja4d（dhcp/parser.rs parse_dhcp_options）与 Dhcpv6Metadata.ja4d6（dhcpv6/parser.rs parse_dhcpv6_info，识别语义不变），官方黄金向量 dhcp.pcapng.json/dhcpv6.pcap.json + 博客样例全量直证（risks.md F37 边界）。
 
 ## 6. risk 模块（feature=risk）
 

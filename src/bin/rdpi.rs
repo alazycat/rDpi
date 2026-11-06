@@ -255,6 +255,8 @@ fn print_detection(pkt_num: u64, det: &DetectionResult) {
             .sni
             .as_deref()
             .unwrap_or(quic.alpn.as_deref().unwrap_or("")),
+        // DTLS：同 QUIC 的 SNI 优先、ALPN 回退
+        rdpi::Metadata::Dtls(d) => d.sni.as_deref().unwrap_or(d.alpn.as_deref().unwrap_or("")),
         rdpi::Metadata::Http(http) => http.host.as_deref().unwrap_or(""),
         rdpi::Metadata::Ssh(ssh) => ssh.software.as_deref().unwrap_or(""),
         // F37：DHCP/DHCPv6 主元数据即 JA4D/JA4D6 指纹
