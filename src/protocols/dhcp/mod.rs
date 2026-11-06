@@ -29,7 +29,7 @@
 
 mod parser;
 
-pub use parser::{DhcpHeader, detect_dhcp, parse_dhcp_packet};
+pub use parser::{DhcpHeader, DhcpOptions, detect_dhcp, parse_dhcp_options, parse_dhcp_packet};
 
 use crate::protocols::ProtocolDetector;
 use crate::protocols::Registry;

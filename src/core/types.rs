@@ -192,6 +192,9 @@ pub enum Metadata {
     Ntp(NtpMetadata),
     /// DHCP 元数据
     Dhcp(DhcpMetadata),
+    /// DHCPv6 元数据 (feature: infra)
+    #[cfg(feature = "infra")]
+    Dhcpv6(Dhcpv6Metadata),
     /// SNMP 元数据
     Snmp(SnmpMetadata),
     /// Modbus 元数据
@@ -379,6 +382,18 @@ pub struct DhcpMetadata {
     pub opcode: u8,
     /// 客户端 MAC 地址
     pub client_mac: [u8; 6],
+    /// JA4D 指纹（FoxIO ja4d 语义，每有效 DHCP 报文必有）
+    pub ja4d: String,
+}
+
+/// DHCPv6 元数据 (feature: infra)
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone)]
+pub struct Dhcpv6Metadata {
+    /// 报文类型 (RFC 8415 §7.3，1-13)
+    pub msg_type: u8,
+    /// JA4D6 指纹（Wireshark packet-ja4.c 语义，每有效 DHCPv6 报文必有）
+    pub ja4d6: String,
 }
 
 /// SNMP 元数据

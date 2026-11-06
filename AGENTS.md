@@ -32,14 +32,15 @@ lib.rs (Detector 编排) → parser (以太网/IP/TCP/UDP) → core (FlowTable/g
 - **JA4TS 服务端 TCP 指纹（F34，2026-11-06）**：`application::compute_ja4ts`（格式与 JA4T 完全一致，规格权威为官方 zeek/ja4t/main.zeek——rust/ja4 未实现）；detect 主流程 SYN-ACK（flags **精确等于** 0x12，带额外标志位不触发）每流一次写入服务端方向流 `Flow.ja4ts` 旁路字段（FlowKey 方向性：与客户端 SYN 属两条流，互不干扰）；DetectionResult.ja4ts 随回显/规则分支携带；重传延迟序列（官方第 5 段）需跨包计时状态，不实现（risks.md F34 边界）。
 - **JA4L-C/S 时延指纹（F35，2026-11-06）**：`application::compute_ja4ls/ja4lc`（官方 zeek ja4l/main.zeek + python ja4.py 同源：`{半程时延µs}_{TTL}`，半程时延 = 包间总微秒**整除 2**）；A（SYN 时戳+TTL）/B（SYN-ACK 时戳+TTL）记录在两方向流（`Flow.syn_time/syn_ttl/synack_time/synack_ttl`），JA4L-S 在 SYN-ACK 到达时反查对端 A 算出（写服务端流）、JA4L-C 在其后首个客户端包到达时反查对端 B 算出（写客户端流）——跨流计算在 `Detector::observe_ja4l`（lib.rs）于 get_or_create 之前独立借流表完成；时延需真实包间隔，新增 `Detector::detect_at(packet, SystemTime)` 时间戳入口（detect 以处理时刻委托），CLI pcap 路径已传捕获时戳；乱序时戳回退/mid-stream 缺握手起点跳过；QUIC 变体与 zeek 的 TLS 精化段（delta）不实现（risks.md F35 边界）。
 - **JA4SSH 会话指纹（F36，2026-11-06）**：`application::compute_ja4ssh`（官方 FoxIO ja4 仓库 zeek/ja4ssh/main.zeek 语义：`c{c众数}s{s众数}_c{c载荷包数}s{s载荷包数}_c{c纯ACK数}s{s纯ACK数}`，众数平局取较小值，纯 ACK = 无载荷且 flags 精确等于 0x10，窗口 = 双向载荷包合计 200 滚动）；`Flow.ssh_payload_lens/ssh_ack_count/ja4ssh` 流级旁路字段（非 SSH 流零堆分配）；`Detector::observe_ja4ssh`（lib.rs，get_or_create 之前独立借流表）门控两级——流已定型 Ssh + 连接自初始 SYN 起（借 syn_time）；方向归位 SYN 发送端为客户端；指纹写两方向流，保留**最近完成窗口**（zeek 逐窗口出日志、尾窗冲刷不实现，见 risks.md F36 边界）。
+- **JA4D/JA4D6 DHCP 指纹（F37，2026-11-06）**：`application::compute_ja4d/ja4d6`（格式 `{类型助记符5}{尺寸4}{i|n}{d|n}_{选项列表}_{参数列表}`；v4 权威 zeek/ja4d/main.zeek + Wireshark packet-ja4.c 终版 commit d21d63f9/11ae927f——选项列表剔除 {0/53/50/81}、尺寸 = option 57、未知类型 %05d、缺 53 记 "00000"；v6 权威仅 Wireshark 插件——尺寸 = option 1/2 首个 DUID 长度、选项列表不剔除、ORO = option 6 大端项）；**per-message 指纹放 metadata**（同 JA4H）：`dhcp/parser.rs parse_dhcp_options`（offset 240 单遍 TLV）→ `DhcpMetadata.ja4d`；`dhcpv6/parser.rs parse_dhcpv6_info`（is_dhcpv6 同门控识别语义不变，Relay 12/13 起始偏移 34）→ 新增 `Dhcpv6Metadata{msg_type, ja4d6}` + `Metadata::Dhcpv6`（cfg(infra)）；relay 只解析外层选项不递归 option 9（risks.md F37 边界）。
 - **首字节门预筛（F29，2026-11-05）**：detector 可声明 `first_byte_gate()`（payload[0] 允许区间），Registry 注册期预计算 skip 位图、detect 循环内位测试跳过（miss 路径 36/49 已声明门，同机 A/B -12.3%）；13 个首字节任意的 detector 保持 `None`（dns/mongodb/postgresql/stun/modbus/l2tp/pptp/ike/nfs/whois/websocket/pop3/imap，证据见 risks.md F29）。
 - **feature gate**：全部协议有 gate（R7 已修复 2026-11-04：tftp/rsync/whois/syslog/telnet/vnc 挂在 `misc` feature，risks.md R7）。
 
 ## 3. 常用命令
 
 ```bash
-cargo test                    # 默认 features (dns+http+tls)，322 测试全绿（2026-11-06 F36 JA4SSH 轮实测）
-cargo test --all-features     # 1130 测试全绿（10 ignored = test_regression 存量）；F36 后实测
+cargo test                    # 默认 features (dns+http+tls)，322 测试全绿（2026-11-06 F37 JA4D 轮实测）
+cargo test --all-features     # 1156 测试全绿（10 ignored = test_regression 存量）；F37 后实测
 cargo test --features risk    # 367 测试全绿（含风险处理器相关探针 a1_risk/a6/r5）
 cargo build --features pcap   # 构建 CLI
 cargo bench                   # criterion 基准（benches/bench_detect.rs）；基线见 docs/architecture/performance.md
@@ -96,6 +97,7 @@ cargo fmt ; cargo clippy      # 提交前（lib+bins 门槛 0 警告；验证须
 | F34 | JA4TS 服务端 TCP 指纹：SYN-ACK 头部字段指纹，格式与 JA4T 同源、权威为官方 zeek/ja4t/main.zeek（flags 精确等于 0x12，服务端方向流旁路字段） | 中 | ✅ 已完成 2026-11-06（compute_ja4ts 委托 compute_ja4t + Flow.ja4ts/DetectionResult.ja4ts + CLI；重传延迟第 5 段不实现已登记边界；默认 315 / all-features 1117 / risk 360 全绿，详见 risks.md F34） |
 | F35 | JA4L-C/S 时延指纹：TCP 握手三包时戳的半程时延（总微秒整除 2）+ TTL，官方 zeek ja4l/python ja4.py 同源；新增 detect_at 时间戳入口（离线 pcap 传捕获时戳） | 中 | ✅ 已完成 2026-11-06（compute_ja4ls/lc + Flow 4 个握手时戳字段 + observe_ja4l 跨流计算 + pcap CLI 接入；乱序/缺起点跳过；QUIC 变体与 TLS 精化段不实现已登记边界；默认 322 / all-features 1124 / risk 367 全绿，详见 risks.md F35） |
 | F36 | JA4SSH 会话指纹：SSH 流 200 载荷包滚动窗口（双向包长众数/载荷包数/纯 ACK 数六段格式），官方 FoxIO zeek/ja4ssh 语义；非 SSH 流零分配；保留最近完成窗口 | 中 | ✅ 已完成 2026-11-06（compute_ja4ssh + Flow.ssh_payload_lens/ssh_ack_count/ja4ssh + observe_ja4ssh 双门控（Ssh 定型 + SYN 起）+ CLI；逐窗口日志/尾窗冲刷不实现已登记边界；默认 322 / all-features 1130 / risk 367 全绿，详见 risks.md F36） |
+| F37 | JA4D/JA4D6 DHCP 指纹：per-message 指纹放 metadata（DhcpMetadata.ja4d / 新增 Dhcpv6Metadata.ja4d6），v4 对齐 zeek ja4d + Wireshark 终版（选项剔除 {0/53/50/81}）、v6 对齐 Wireshark 插件（DUID 长度尺寸段、选项不剔除）；识别语义不变 | 中 | ✅ 已完成 2026-11-06（parse_dhcp_options/parse_dhcpv6_info + compute_ja4d/ja4d6 + CLI；官方黄金向量 + 博客样例直证；relay 不递归等边界登记；默认 322 / all-features 1156 / risk 367 全绿，详见 risks.md F37） |
 
 ## 7. 文档索引
 

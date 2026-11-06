@@ -78,14 +78,91 @@ pub fn parse_dhcp_packet(data: &[u8]) -> Option<DhcpHeader> {
     })
 }
 
+/// DHCP 选项区解析结果（JA4D 指纹输入，F37）
+///
+/// 从偏移 240（magic cookie 之后）遍历 TLV 选项：
+/// - option 0（Pad，无长度字段）跳过 1 字节继续；
+/// - option 255（End，无长度字段）终止遍历；
+/// - 其余选项为 code(1) + len(1) + value(len)，截断时停止。
+#[derive(Debug, Clone, Default)]
+pub struct DhcpOptions {
+    /// option 53 消息类型（缺省 None → JA4D 首段 "00000"）
+    pub msg_type: Option<u8>,
+    /// option 57 最大报文尺寸（缺省 None → JA4D 尺寸段 "0000"）
+    pub max_msg_size: Option<u16>,
+    /// option 50（Requested IP）出现标志 → JA4D 第 3 段 'i'
+    pub has_requested_ip: bool,
+    /// option 81（Client FQDN）出现标志 → JA4D 第 4 段 'd'
+    pub has_fqdn: bool,
+    /// 选项码列表（按包内出现序，剔除 0/53/50/81，含 57）
+    pub option_codes: Vec<u16>,
+    /// option 55 参数请求列表（按包内字节序）
+    pub param_req_list: Vec<u16>,
+}
+
+/// 解析 DHCP 选项区（偏移 240 起），提取 JA4D 指纹所需字段
+///
+/// 畸形输入（长度越界）就地停止，返回已解析部分，不产生错误。
+pub fn parse_dhcp_options(data: &[u8]) -> DhcpOptions {
+    let mut opts = DhcpOptions::default();
+    let mut i = 240;
+    while i < data.len() {
+        let code = data[i];
+        i += 1;
+        match code {
+            0 => continue, // Pad：无长度字段
+            255 => break,  // End：终止遍历
+            _ => {}
+        }
+        if i >= data.len() {
+            break;
+        }
+        let len = data[i] as usize;
+        i += 1;
+        if i + len > data.len() {
+            break; // 值被截断，停止解析
+        }
+        let value = &data[i..i + len];
+        match code {
+            53 => opts.msg_type = value.first().copied(),
+            57 => {
+                if len >= 2 {
+                    opts.max_msg_size = Some(u16::from_be_bytes([value[0], value[1]]));
+                }
+                opts.option_codes.push(57);
+            }
+            50 => opts.has_requested_ip = true,
+            81 => opts.has_fqdn = true,
+            55 => {
+                // 55 出现在选项列表（zeek 仅剔除 53/50/81），其值进参数请求列表
+                opts.option_codes.push(55);
+                opts.param_req_list.extend(value.iter().map(|&b| b as u16));
+            }
+            _ => opts.option_codes.push(code as u16),
+        }
+        i += len;
+    }
+    opts
+}
+
 /// Detect DHCP protocol from packet
 pub fn detect_dhcp(data: &[u8]) -> Option<DetectionResult> {
     let header = parse_dhcp_packet(data)?;
+    let opts = parse_dhcp_options(data);
+    let ja4d = crate::application::compute_ja4d(
+        opts.msg_type,
+        opts.max_msg_size,
+        opts.has_requested_ip,
+        opts.has_fqdn,
+        &opts.option_codes,
+        &opts.param_req_list,
+    );
 
     Some(
         DetectionResult::new(Protocol::Dhcp).with_metadata(Metadata::Dhcp(DhcpMetadata {
             opcode: header.opcode,
             client_mac: header.client_mac,
+            ja4d,
         })),
     )
 }

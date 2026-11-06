@@ -450,6 +450,144 @@ fn hash12_oids(oids: &[Vec<u8>]) -> String {
     trunc_hash_hex(joined.as_bytes(), 12)
 }
 
+/// DHCPv4 消息类型 → 5 字符助记符（下标 = 消息类型号 0-18；F37，2026-11-06）
+///
+/// 权威：FoxIO packet-ja4.c `get_dhcp_type_code`（与 zeek ja4d/consts.zeek
+/// `DHCP_MESSAGE_MAP` 同源）
+const DHCP_TYPE_CODES_V4: [&str; 19] = [
+    "", "disco", "offer", "reqst", "decln", "dpack", "dpnak", "relse", "infor", "frenw", "lqery",
+    "lunas", "lunkn", "lactv", "blklq", "lqdon", "actlq", "lqsta", "dhtls",
+];
+
+/// DHCPv6 消息类型 → 5 字符助记符（下标 = 消息类型号 0-37，RFC 8415 + 扩展；
+/// 权威：FoxIO packet-ja4.c `get_dhcpv6_type_code`）
+const DHCP_TYPE_CODES_V6: [&str; 38] = [
+    "", "solct", "advrt", "reqst", "confm", "renew", "rebnd", "reply", "relse", "decln", "recon",
+    "inreq", "rlayf", "rlayr", "query", "qrply", "qdone", "qdata", "rereq", "rrply", "v4qry",
+    "v4res", "acqry", "sttls", "bdudp", "brply", "poreq", "pores", "urqst", "ureqa", "udone",
+    "conne", "connr", "dconn", "state", "conta", "arinf", "arrep",
+];
+
+/// 消息类型号 → 指纹首段：已知取助记符，未知 `%05d` 零填充（官方 packet-ja4.c
+/// 未知走 `"%05u"`；缺消息类型时由调用方传 None → "00000"）
+fn dhcp_msg_type_code(map: &[&str], msg_type: u16) -> String {
+    match map.get(msg_type as usize) {
+        Some(&code) if !code.is_empty() => code.to_string(),
+        _ => format!("{msg_type:05}"),
+    }
+}
+
+/// 选项号列表 → `-` 连接段；空列表记 "00"（官方 packet-ja4.c：逐项 `"%d-"`
+/// 追加后截掉尾 `-`，空则追加 `"00"`，语义等价 join）
+fn join_codes(codes: &[u16]) -> String {
+    if codes.is_empty() {
+        "00".to_string()
+    } else {
+        codes
+            .iter()
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join("-")
+    }
+}
+
+/// 4 位尺寸段：`%04d` 零填充，≥9999 记 "9999"（官方 packet-ja4.c `< 9999` 判断）
+fn size4(value: u16) -> String {
+    if value < 9999 {
+        format!("{value:04}")
+    } else {
+        "9999".to_string()
+    }
+}
+
+/// JA4D：DHCPv4 消息指纹（F37，2026-11-06）
+///
+/// 格式（官方 packet-ja4.c 终版 `ja4d()`，zeek ja4d/main.zeek 同源，官方博客
+/// 样例一致）：`{类型助记符5}{max_msg_size4}{i|n}{d|n}_{选项列表}_{参数列表}`。
+/// - 首段：option 53 消息类型助记符（见 [`DHCP_TYPE_CODES_V4`]），未知类型
+///   `%05d` 零填充，缺 option 53 记 "00000"
+/// - 尺寸段：option 57 最大报文长度 `%04d`，≥9999 记 "9999"，缺记 "0000"
+/// - `i`/`n`：option 50（请求 IP）出现与否；`d`/`n`：option 81（FQDN）出现与否
+/// - 选项列表：全部选项号按包内出现序 `-` 连接，跳过 0（pad）/53/50/81
+///   （255 end 由解析器终止遍历），空记 "00"
+/// - 参数列表：option 55 参数请求项按序 `-` 连接，空记 "00"
+///
+/// # 参数
+///
+/// * `msg_type` - option 53 消息类型（None = 包内无 option 53）
+/// * `max_msg_size` - option 57 最大报文长度（None = 包内无 option 57）
+/// * `has_requested_ip` - option 50（Requested IP Address）是否出现
+/// * `has_fqdn` - option 81（Client FQDN）是否出现
+/// * `option_codes` - 包内全部选项号（已剔除 0/53/50/81），按出现序
+/// * `param_req_list` - option 55 参数请求列表（按序）
+pub fn compute_ja4d(
+    msg_type: Option<u8>,
+    max_msg_size: Option<u16>,
+    has_requested_ip: bool,
+    has_fqdn: bool,
+    option_codes: &[u16],
+    param_req_list: &[u16],
+) -> String {
+    let type_str = match msg_type {
+        Some(t) => dhcp_msg_type_code(&DHCP_TYPE_CODES_V4, t as u16),
+        None => "00000".to_string(),
+    };
+    let size_str = match max_msg_size {
+        Some(v) => size4(v),
+        None => "0000".to_string(),
+    };
+    format!(
+        "{type_str}{size_str}{}{}_{opts}_{params}",
+        if has_requested_ip { 'i' } else { 'n' },
+        if has_fqdn { 'd' } else { 'n' },
+        opts = join_codes(option_codes),
+        params = join_codes(param_req_list),
+    )
+}
+
+/// JA4D6：DHCPv6 消息指纹（F37，2026-11-06）
+///
+/// 格式（官方 packet-ja4.c 终版，DHCPv6 无 zeek 实现——官方 README 注明
+/// "awaiting Zeek DHCPv6 support"）：
+/// `{类型助记符5}{DUID长度4}{i|n}{d|n}_{选项列表}_{ORO列表}`。
+/// - 首段：RFC 8415 消息类型助记符（见 [`DHCP_TYPE_CODES_V6`]），未知 `%05d`
+/// - 尺寸段：Client Identifier（option 1）或 Server Identifier（option 2，
+///   Wireshark 的 `dhcpv6.duid.bytes` 字段两者都覆盖）DUID 字节长度 `%04d`，
+///   ≥9999 记 "9999"，均缺失记 "0000"
+/// - `i`/`n`：option 4（IA_TA）出现与否；`d`/`n`：option 39（Client FQDN）出现与否
+/// - 选项列表：全部选项号按包内出现序 `-` 连接（含 1/6/39，官方行为），空记 "00"
+/// - ORO 列表：option 6（Option Request）内 2 字节项按序 `-` 连接，空记 "00"
+///
+/// # 参数
+///
+/// * `msg_type` - RFC 8415 报文类型（data[0]，1-13；DHCPv6 detector 只识别 1-13）
+/// * `duid_len` - 首个 client/server identifier 选项的 DUID 字节长度
+/// * `has_iata` - option 4（IA_TA）是否出现
+/// * `has_client_fqdn` - option 39（Client FQDN）是否出现
+/// * `option_codes` - 包内全部选项号，按出现序（不剔除）
+/// * `oro` - option 6 内的请求项（按序）
+pub fn compute_ja4d6(
+    msg_type: u8,
+    duid_len: Option<u16>,
+    has_iata: bool,
+    has_client_fqdn: bool,
+    option_codes: &[u16],
+    oro: &[u16],
+) -> String {
+    let type_str = dhcp_msg_type_code(&DHCP_TYPE_CODES_V6, msg_type as u16);
+    let size_str = match duid_len {
+        Some(v) => size4(v),
+        None => "0000".to_string(),
+    };
+    format!(
+        "{type_str}{size_str}{}{}_{opts}_{oro_list}",
+        if has_iata { 'i' } else { 'n' },
+        if has_client_fqdn { 'd' } else { 'n' },
+        opts = join_codes(option_codes),
+        oro_list = join_codes(oro),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

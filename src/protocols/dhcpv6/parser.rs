@@ -18,8 +18,69 @@ pub fn is_dhcpv6(data: &[u8]) -> bool {
         _ => false,
     }
 }
-pub fn detect(d: &[u8]) -> bool {
-    is_dhcpv6(d)
+
+/// DHCPv6 报文信息（JA4D6 指纹输入，F37）
+#[derive(Debug, Clone, Default)]
+pub struct Dhcpv6Info {
+    /// RFC 8415 报文类型（1-13）
+    pub msg_type: u8,
+    /// Client Identifier（option 1）或 Server Identifier（option 2）的
+    /// DUID 字节长度（取首个出现者；均缺省 → JA4D6 尺寸段 "0000"）
+    pub duid_len: Option<u16>,
+    /// option 4（IA_TA）出现标志 → JA4D6 第 3 段 'i'
+    pub has_iata: bool,
+    /// option 39（Client FQDN）出现标志 → JA4D6 第 4 段 'd'
+    pub has_client_fqdn: bool,
+    /// 选项码列表（按包内出现序，**不剔除任何选项**——官方行为）
+    pub option_codes: Vec<u16>,
+    /// option 6（Option Request）内 2 字节大端选项号列表（按序）
+    pub oro: Vec<u16>,
+}
+
+/// 解析 DHCPv6 报文选项，提取 JA4D6 指纹所需字段
+///
+/// 仅解析最外层选项：Relay 消息（12/13）不递归 option 9 内层报文
+/// （登记于 risks.md F37 边界）。畸形输入（长度越界）就地停止。
+pub fn parse_dhcpv6_info(data: &[u8]) -> Option<Dhcpv6Info> {
+    if !is_dhcpv6(data) {
+        return None;
+    }
+    let msg_type = data[0];
+    // 选项起始偏移（RFC 8415 §7.3）：type 1..=11 → 4（报文头）；
+    // Relay 消息（12/13，同构：type+hop-count+link-address(16)+peer-address(16)）→ 34
+    let start = if (1..=11).contains(&msg_type) { 4 } else { 34 };
+    let mut info = Dhcpv6Info {
+        msg_type,
+        ..Dhcpv6Info::default()
+    };
+    let mut i = start;
+    while i + 4 <= data.len() {
+        let code = u16::from_be_bytes([data[i], data[i + 1]]);
+        let len = u16::from_be_bytes([data[i + 2], data[i + 3]]) as usize;
+        i += 4;
+        if i + len > data.len() {
+            break; // 值被截断，停止解析
+        }
+        let value = &data[i..i + len];
+        match code {
+            1 | 2 => {
+                if info.duid_len.is_none() {
+                    info.duid_len = Some(len as u16);
+                }
+            }
+            4 => info.has_iata = true,
+            6 => {
+                for chunk in value.as_chunks::<2>().0 {
+                    info.oro.push(u16::from_be_bytes(*chunk));
+                }
+            }
+            39 => info.has_client_fqdn = true,
+            _ => {}
+        }
+        info.option_codes.push(code);
+        i += len;
+    }
+    Some(info)
 }
 #[cfg(test)]
 pub fn valid_sample() -> Vec<u8> {

@@ -1,5 +1,5 @@
 use super::parser;
-use crate::core::types::{Confidence, DetectionResult, Protocol};
+use crate::core::types::{Confidence, DetectionResult, Dhcpv6Metadata, Metadata, Protocol};
 use crate::protocols::ProtocolDetector;
 
 pub struct Dhcpv6Detector {
@@ -25,8 +25,25 @@ impl ProtocolDetector for Dhcpv6Detector {
         Some(&[(0x01u8, 0x0Du8)])
     }
     fn detect(&self, p: &[u8]) -> Option<DetectionResult> {
-        parser::detect(p)
-            .then(|| DetectionResult::new(Protocol::Dhcpv6).with_confidence(Confidence::Dpi))
+        // F37：识别语义不变（is_dhcpv6 结构校验，parse_dhcpv6_info 内部同门控），
+        // 在此基础上提取 JA4D6 指纹填入 metadata
+        let info = parser::parse_dhcpv6_info(p)?;
+        let ja4d6 = crate::application::compute_ja4d6(
+            info.msg_type,
+            info.duid_len,
+            info.has_iata,
+            info.has_client_fqdn,
+            &info.option_codes,
+            &info.oro,
+        );
+        Some(
+            DetectionResult::new(Protocol::Dhcpv6)
+                .with_confidence(Confidence::Dpi)
+                .with_metadata(Metadata::Dhcpv6(Dhcpv6Metadata {
+                    msg_type: info.msg_type,
+                    ja4d6,
+                })),
+        )
     }
 }
 #[cfg(test)]

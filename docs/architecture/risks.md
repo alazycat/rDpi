@@ -307,3 +307,20 @@
   - `DetectionResult.ja4ssh` 全分支携带（回显/规则分支）；CLI 文本输出 ` ja4ssh=...`；json feature 随 derive 序列化。
 - **测试**：tests/test_ja4ssh.rs 新增 6 项（`#![cfg(feature = "ssh")]`——格式/众数平局直证、完整会话窗口数值直证 c100s200_c97s103_c3s1、滚动窗口覆盖、非 SSH 流不产出、mid-stream 跳过、裸 SYN/FIN 不占窗口计数）。三配置全绿：默认 322 / all-features 1130（10 ignored）/ risk 367；clippy --all-features --all-targets 0 警告（顺修 test_ja4l.rs 两处 map-flatten 历史 lint）。
 - **已知边界**：① zeek 逐窗口出日志（`ja4ssh_fingerprint_count` + `ja4_ssh_max_fingerprints` 上限），本库保留**最近完成窗口**指纹（流级单值语义）；② 不足 200 包的尾窗不产出——zeek 在 connection_state_remove 冲刷尾窗，本库无连接结束事件（流超时删除路径不冲刷）；③ SSH 横幅定型当包不计入（observe 先于协议定型，1-2/200 包）；④ 服务端流靠横幅定型（无服务端横幅时等 guess giveup 后才计数）；⑤ 众数平局取较小值与 zeek 一致，但 zeek table 迭代顺序无关该语义（确定性相同）。
+
+## F37【中】JA4D/JA4D6 DHCP 指纹（2026-11-06，新功能开发）—— ✅ 已完成
+
+- **背景**：JA4+ 家族 DHCP 一环——OS/设备指纹。客户端 Discover/Request 的选项出现顺序、参数请求列表（option 55）与 i/d 行为标志随操作系统栈固化（博客样例：Android 16 / Windows / Sony TV / 攻击工具 Pretender 各有稳定指纹）；服务端 Offer/Ack 的选项序同样是指纹信号。**per-message 指纹**（同 JA4H）：每个有效 DHCP/DHCPv6 报文各产出一个指纹，放 metadata 而非流级旁路字段。
+- **规格来源**（调研为本次最曲折——官方无独立 python 实现，以 Wireshark 插件 + zeek 脚本 + 官方测试数据三源互证）：
+  - v4 权威：官方 [FoxIO-LLC/ja4 zeek/ja4d/main.zeek](https://github.com/FoxIO-LLC/ja4)（与 Wireshark 插件终版一致）；Wireshark `packet-ja4.c` 以 **commit d21d63f9（"Update ja4d implementation"，终版格式）+ 11ae927f（"Exclude redundant DHCP option types"，v4 选项列表剔除 53/50/81）** 为准（初版 #238 的 `{proto}-{type_num}-{size}` 格式是过渡版，不采信）；
+  - v6 权威：**仅 Wireshark 插件实现**（官方 README 明言 "awaiting Zeek DHCPv6 support"）；
+  - 黄金向量：wireshark/test/testdata/`dhcp.pcapng.json`（v4 4 条）+ `dhcpv6.pcap.json`（v6 6 条）+ 官方博客（foxio.io/blog/ja4d-and-ja4d6-dhcp-fingerprinting）样例。
+  - 格式：`{类型助记符5}{尺寸4}{i|n}{d|n}_{选项列表}_{参数列表}`——v4 助记符 19 项（disco/offer/reqst/decln/dpack/dpnak/relse/infor/frenw/lqery/lunas/lunkn/lactv/blklq/lqdon/actlq/lqsta/dhtls，未知类型 `%05d`，缺 option 53 → "00000"）；v4 尺寸 = option 57（`%04d`，≥9999 记 "9999"，缺 → "0000"）；i = option 50（Requested IP）、d = option 81（FQDN）出现；v4 选项列表按包内出现序 dash 连接、**剔除 {0/53/50/81}**（含 55/57）、255 终止、空记 "00"；参数列表 = option 55 字节序。
+  - v6 格式：`{类型助记符5}{DUID长度4}{i|n}{d|n}_{选项列表}_{ORO列表}`——助记符 38 项（solct/advrt/reqst/confm/renew/rebnd/reply/relse/decln/recon/inreq/rlayf/rlayr/...）；尺寸 = option 1（Client-ID）**或 option 2（Server-ID）**首个出现的 DUID 字节长度（Wireshark dhcpv6.duid.bytes 字段覆盖两者）；i = option 4（IA_TA）、d = option 39（Client FQDN）；选项列表**不剔除任何选项**（含 1/6/39，官方向量 "solct0014nn_1-6-8-25_23-24" 直证）；ORO = option 6 内 2 字节大端项按序。
+- **实现**：
+  - [application/ja4.rs](file:///d:/rust_code/rDpi/src/application/ja4.rs)：`DHCP_TYPE_CODES_V4/V6` 常量表 + `compute_ja4d(...)`/`compute_ja4d6(...)` 纯格式化（辅助 `dhcp_msg_type_code`/`join_codes`/`size4`）；应用模块重导出。
+  - [protocols/dhcp/parser.rs](file:///d:/rust_code/rDpi/src/protocols/dhcp/parser.rs)：新增 `DhcpOptions` + `parse_dhcp_options`（offset 240 起单遍 TLV：Pad(0) 跳 1 字节、End(255) 终止、截断即停；53→msg_type、57→尺寸+选项列表、50/81→标志、55→参数列表+选项列表）——detect_dhcp 计算 `ja4d` 填入 `DhcpMetadata.ja4d`（types.rs 新字段）。
+  - [protocols/dhcpv6/parser.rs](file:///d:/rust_code/rDpi/src/protocols/dhcpv6/parser.rs)：新增 `Dhcpv6Info` + `parse_dhcpv6_info`（is_dhcpv6 同门控，识别语义不变；选项起始偏移 RFC 8415 §7.3——type 1..=11 → 4，Relay 12/13 同构 → 34）；[detector.rs](file:///d:/rust_code/rDpi/src/protocols/dhcpv6/detector.rs) 识别路径改带 `Metadata::Dhcpv6(Dhcpv6Metadata{msg_type, ja4d6})`（types.rs 新增元数据类型与枚举变体，cfg(infra)，无 gate 对齐 Ntp/Dhcp 先例）。
+  - CLI：print_detection 元数据位显示 Dhcp → ja4d / Dhcpv6 → ja4d6。
+- **测试**：tests/test_ja4d.rs 新增 26 项（`#![cfg(feature = "infra")]`）——v4/v6 官方黄金向量全量 + 博客样例 3 条 + 边界（缺 53 → "00000"、未知类型 `%05d`、尺寸 10000 → "9999"、空列表 "00"、End 终止、Pad 跳过、截断即停、relay 只解析外层、DUID 取 option 1/2 首个、iata/fqdn 标志）。三配置全绿：默认 322 / all-features 1156（10 ignored）/ risk 367；clippy --all-features 0 警告；fmt 干净。
+- **已知边界**：① Relay 消息（v6 type 12/13）只解析最外层选项，**不递归 option 9（Relay Message）内层报文**——内层 Solicit/Reply 不产出独立指纹；② v4 option 52（option overload，RFC 2131 §21.5——sname/file 区转存选项）不特殊处理，按普通选项跳过；③ dhcpv6 detector 识别范围保持 F12 审计收紧后的 1-13 不变（指纹解析不扩大识别面）；④ v6 消息类型 >13 被识别门拒绝（is_dhcpv6），助记符表 14-38 项（query/v4qry 等）预置供未来扩展但当前不可达；⑤ per-message 语义：流内每个 DHCP 报文覆盖上一次指纹（metadata 一次定型语义——同协议流的后续报文不回显，见 lib.rs 流识别只写一次机制，与 JA4H 同性质）。

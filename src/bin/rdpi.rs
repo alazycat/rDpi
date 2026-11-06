@@ -257,6 +257,10 @@ fn print_detection(pkt_num: u64, det: &DetectionResult) {
             .unwrap_or(quic.alpn.as_deref().unwrap_or("")),
         rdpi::Metadata::Http(http) => http.host.as_deref().unwrap_or(""),
         rdpi::Metadata::Ssh(ssh) => ssh.software.as_deref().unwrap_or(""),
+        // F37：DHCP/DHCPv6 主元数据即 JA4D/JA4D6 指纹
+        rdpi::Metadata::Dhcp(d) => &d.ja4d,
+        #[cfg(feature = "infra")]
+        rdpi::Metadata::Dhcpv6(d) => &d.ja4d6,
         _ => "",
     };
 
