@@ -18,6 +18,41 @@ pub enum TransportProto {
     Other(u8),
 }
 
+/// 流方向（相对规范化后的双向流键）
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Direction {
+    /// 与规范化键同向（src -> dst）
+    Forward,
+    /// 反向（dst -> src）
+    Reverse,
+}
+
+impl Direction {
+    /// 反转方向
+    pub fn opposite(self) -> Self {
+        match self {
+            Self::Forward => Self::Reverse,
+            Self::Reverse => Self::Forward,
+        }
+    }
+}
+
+/// 流分类状态（类比 nDPI classification state）
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ClassificationState {
+    /// 正在识别
+    #[default]
+    Inspecting,
+    /// 已有部分结果，后续包可能升级
+    Partial,
+    /// 已定型但继续监测元数据
+    Monitoring,
+    /// 已完全定型
+    Classified,
+}
+
 /// 支持的协议枚举
 ///
 /// # Feature Gates
@@ -164,6 +199,33 @@ pub struct FlowKey {
     pub dst_port: u16,
     /// 传输层协议
     pub transport: TransportProto,
+}
+
+impl FlowKey {
+    /// 反转五元组方向
+    pub fn reverse(&self) -> Self {
+        Self {
+            src_ip: self.dst_ip,
+            dst_ip: self.src_ip,
+            src_port: self.dst_port,
+            dst_port: self.src_port,
+            transport: self.transport,
+        }
+    }
+
+    /// 规范化双向流键
+    ///
+    /// 按 `(ip, port)` 字典序确定端点顺序，返回规范键及原始键相对规范键的方向。
+    /// 两个方向相反的 FlowKey 会得到相同的规范键，方向分别为 Forward/Reverse。
+    pub fn canonical(&self) -> (Self, Direction) {
+        let src = (self.src_ip, self.src_port);
+        let dst = (self.dst_ip, self.dst_port);
+        if src <= dst {
+            (self.clone(), Direction::Forward)
+        } else {
+            (self.reverse(), Direction::Reverse)
+        }
+    }
 }
 
 /// 协议特定元数据

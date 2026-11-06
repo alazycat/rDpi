@@ -591,6 +591,76 @@ impl Detector {
         Ok(result)
     }
 
+    /// 处理 L3 包（调用方持有 Flow）
+    ///
+    /// 输入为 IPv4/IPv6 包（不含以太网头）。与 [`Self::detect_at`] 不同：
+    /// - flow 由调用方持有，Detector 不访问内部 `FlowTable`；
+    /// - 双向流：反向包通过 [`Flow::direction_of`] 映射到同一 `Flow`；
+    /// - 当前接入内置 DPI 与双向计数；规则/风险/JA4 富化尚未接入该入口。
+    ///
+    /// # Errors
+    ///
+    /// 包无法解析，或包不属于传入的 flow 时返回错误。
+    pub fn process_l3_packet(
+        &mut self,
+        flow: &mut Flow,
+        packet: &[u8],
+        timestamp_ms: u64,
+    ) -> crate::error::Result<Option<DetectionResult>> {
+        let parsed = parser::parse_l3_packet(packet)?;
+        let packet_key = FlowKey {
+            src_ip: parsed.src_ip,
+            dst_ip: parsed.dst_ip,
+            src_port: parsed.src_port,
+            dst_port: parsed.dst_port,
+            transport: parsed.transport,
+        };
+        let direction = flow.direction_of(&packet_key).ok_or_else(|| {
+            crate::error::Error::InvalidPacket(
+                "packet does not belong to the supplied flow".to_string(),
+            )
+        })?;
+
+        flow.packets_seen += 1;
+        flow.stats.packets += 1;
+        flow.stats.bytes += packet.len() as u64;
+        flow.stats.last_time = std::time::Instant::now();
+        if flow.first_seen_ms.is_none() {
+            flow.first_seen_ms = Some(timestamp_ms);
+        }
+        flow.last_seen_ms = Some(timestamp_ms);
+        match direction {
+            Direction::Forward => {
+                flow.packets_forward += 1;
+                flow.bytes_forward += packet.len() as u64;
+            }
+            Direction::Reverse => {
+                flow.packets_reverse += 1;
+                flow.bytes_reverse += packet.len() as u64;
+            }
+        }
+
+        // 已定型流：回显协议与元数据，不重复检测。
+        if let Some(protocol) = flow.protocol {
+            flow.classification_state = ClassificationState::Classified;
+            let mut result = DetectionResult::new(protocol);
+            if let Some(ref metadata) = flow.metadata {
+                result.metadata = metadata.clone();
+            }
+            return Ok(Some(result));
+        }
+
+        let result =
+            self.registry
+                .detect_with_ports(&parsed.payload, parsed.src_port, parsed.dst_port);
+        if let Some(ref detected) = result {
+            flow.protocol = Some(detected.protocol);
+            flow.metadata = Some(detected.metadata.clone());
+            flow.classification_state = ClassificationState::Classified;
+        }
+        Ok(result)
+    }
+
     /// F42：JA4L TLS 精化段（delta）观测（官方 zeek ja4l/main.zeek
     /// `ssl_client_hello`/`ssl_server_hello`/数据阈值分支语义，TCP TLS 专用）
     ///

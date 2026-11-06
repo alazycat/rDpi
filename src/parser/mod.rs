@@ -23,14 +23,23 @@ pub struct ParsedPacket {
     pub ttl: u8,
 }
 
-/// 解析原始包
+/// 解析原始包（以太网帧）
 pub fn parse_packet(data: &[u8]) -> Result<ParsedPacket> {
-    // 先解析以太网头
+    // 先解析以太网头，再交给 L3 入口
     let (remainder, _eth_header) = ethernet::parse(data)?;
+    parse_l3_packet(remainder)
+}
 
-    // 再解析 IP 头
-    let (remainder, ip_info) = ip::parse(remainder)?;
+/// 解析 L3 包（IPv4/IPv6 头起始，不含以太网头）
+///
+/// 与 [`parse_packet`] 共用传输层解析逻辑，供调用方持有 flow 的
+/// `Detector::process_l3_packet` 入口使用。
+pub fn parse_l3_packet(data: &[u8]) -> Result<ParsedPacket> {
+    let (remainder, ip_info) = ip::parse(data)?;
+    parse_l4(remainder, ip_info)
+}
 
+fn parse_l4(remainder: &[u8], ip_info: ip::IpInfo) -> Result<ParsedPacket> {
     // 根据协议解析传输层
     match ip_info.protocol {
         6 => tcp::parse(remainder, ip_info.src, ip_info.dst, ip_info.ttl),

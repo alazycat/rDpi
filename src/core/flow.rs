@@ -57,6 +57,22 @@ pub struct Flow {
     pub stats: FlowStats,
     /// 流状态
     pub state: FlowState,
+    /// 首包方向（相对规范化后的双向流键；`Flow::new` 默认 Forward）
+    pub initiator: Direction,
+    /// 分类状态（双向 API；`detect` 路径暂未使用）
+    pub classification_state: ClassificationState,
+    /// 正向包数/字节数（相对流键方向；双向 API）
+    pub packets_forward: u64,
+    /// 正向字节数
+    pub bytes_forward: u64,
+    /// 反向包数（双向 API）
+    pub packets_reverse: u64,
+    /// 反向字节数
+    pub bytes_reverse: u64,
+    /// 首包时间戳（毫秒；双向 API，离线 pcap 可直接使用）
+    pub first_seen_ms: Option<u64>,
+    /// 最近包时间戳（毫秒；双向 API）
+    pub last_seen_ms: Option<u64>,
     /// 协议元数据
     pub metadata: Option<Metadata>,
     /// 已观察包计数（用于 Giveup 机制）
@@ -133,6 +149,14 @@ impl Flow {
             protocol: None,
             stats: FlowStats::default(),
             state: FlowState::New,
+            initiator: Direction::Forward,
+            classification_state: ClassificationState::Inspecting,
+            packets_forward: 0,
+            bytes_forward: 0,
+            packets_reverse: 0,
+            bytes_reverse: 0,
+            first_seen_ms: None,
+            last_seen_ms: None,
             metadata: None,
             packets_seen: 0,
             dpi_only: false,
@@ -161,6 +185,38 @@ impl Flow {
             #[cfg(feature = "risk")]
             risks: Vec::new(),
         }
+    }
+
+    /// 创建双向流
+    ///
+    /// `packet_key` 为触发建流的首包五元组；流键按端点 `(ip, port)` 字典序
+    /// 规范化，`initiator` 记录首包相对规范键的方向。两个方向的包用
+    /// [`Self::direction_of`] 映射到同一个流。
+    pub fn new_bidirectional(packet_key: FlowKey) -> Self {
+        let (key, first_dir) = packet_key.canonical();
+        let mut flow = Self::new(key);
+        flow.initiator = first_dir;
+        flow
+    }
+
+    /// 返回包相对**首包方向**（initiator）的方向
+    ///
+    /// 与首包同向返回 `Forward`，反向返回 `Reverse`；包不属于本流
+    /// （既非同向也非反向）时返回 `None`。注意：`self.key` 可能是规范化键，
+    /// 因此内部方向与 `self.key` 的对应关系需按 `initiator` 翻转。
+    pub fn direction_of(&self, packet_key: &FlowKey) -> Option<Direction> {
+        let direction = if packet_key == &self.key {
+            Direction::Forward
+        } else if packet_key == &self.key.reverse() {
+            Direction::Reverse
+        } else {
+            return None;
+        };
+        Some(if self.initiator == Direction::Reverse {
+            direction.opposite()
+        } else {
+            direction
+        })
     }
 }
 
