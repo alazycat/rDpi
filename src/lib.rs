@@ -640,22 +640,25 @@ impl Detector {
             }
         }
 
-        // 已定型流：回显协议与元数据，不重复检测。
+        // 已定型流：回显协议、元数据与协议栈，不重复检测。
         if let Some(protocol) = flow.protocol {
             flow.classification_state = ClassificationState::Classified;
             let mut result = DetectionResult::new(protocol);
+            result.protocol_stack = flow.protocol_stack;
             if let Some(ref metadata) = flow.metadata {
                 result.metadata = metadata.clone();
             }
             return Ok(Some(result));
         }
 
-        let result =
+        let mut result =
             self.registry
                 .detect_with_ports(&parsed.payload, parsed.src_port, parsed.dst_port);
-        if let Some(ref detected) = result {
+        if let Some(ref mut detected) = result {
             flow.protocol = Some(detected.protocol);
             flow.metadata = Some(detected.metadata.clone());
+            flow.protocol_stack.push(detected.protocol);
+            detected.protocol_stack = flow.protocol_stack;
             flow.classification_state = ClassificationState::Classified;
         }
         Ok(result)

@@ -6,7 +6,10 @@
 
 use rdpi::Detector;
 use rdpi::core::flow::Flow;
-use rdpi::core::types::{ClassificationState, Direction, FlowKey, Protocol, TransportProto};
+use rdpi::core::types::{
+    ClassificationState, Direction, FlowKey, MAX_PROTOCOL_STACK, Protocol, ProtocolStack,
+    TransportProto,
+};
 use rdpi::parser::parse_l3_packet;
 use std::net::{IpAddr, Ipv4Addr};
 
@@ -112,6 +115,55 @@ fn make_dns_query_payload() -> Vec<u8> {
 }
 
 #[test]
+fn protocol_stack_pushes_in_order_and_reports_master_app() {
+    let mut stack = ProtocolStack::new();
+    assert!(stack.is_empty());
+    assert_eq!(stack.master(), None);
+    assert_eq!(stack.app(), None);
+
+    assert!(stack.push(Protocol::Tls));
+    assert!(stack.push(Protocol::Http));
+    assert_eq!(stack.len(), 2);
+    assert_eq!(stack.master(), Some(Protocol::Tls));
+    assert_eq!(stack.app(), Some(Protocol::Http));
+    assert_eq!(
+        stack.iter().collect::<Vec<_>>(),
+        vec![Protocol::Tls, Protocol::Http]
+    );
+    assert!(stack.contains(Protocol::Tls));
+    assert!(!stack.contains(Protocol::Dns));
+
+    stack.clear();
+    assert!(stack.is_empty());
+}
+
+#[test]
+fn protocol_stack_deduplicates_and_enforces_capacity() {
+    let mut stack = ProtocolStack::new();
+    assert!(stack.push(Protocol::Tls));
+    assert!(!stack.push(Protocol::Tls), "duplicate must be ignored");
+    assert_eq!(stack.len(), 1);
+
+    let distinct = [
+        Protocol::Tcp,
+        Protocol::Udp,
+        Protocol::Icmp,
+        Protocol::Dns,
+        Protocol::Http,
+        Protocol::Tls,
+        Protocol::Quic,
+        Protocol::Http3,
+    ];
+    stack.clear();
+    for protocol in distinct {
+        assert!(stack.push(protocol));
+    }
+    assert_eq!(stack.len(), MAX_PROTOCOL_STACK);
+    assert!(!stack.push(Protocol::Dtls), "full stack must reject");
+    assert_eq!(stack.len(), MAX_PROTOCOL_STACK);
+}
+
+#[test]
 fn parse_l3_packet_parses_ipv4_without_ethernet() {
     let parsed = parse_l3_packet(&make_l3_udp_packet(b"hello")).unwrap();
 
@@ -149,7 +201,9 @@ fn process_l3_packet_classifies_and_tracks_both_directions() {
         .unwrap()
         .expect("DNS query should be classified");
     assert_eq!(result.protocol, Protocol::Dns);
+    assert_eq!(result.protocol_stack.master(), Some(Protocol::Dns));
     assert_eq!(flow.protocol, Some(Protocol::Dns));
+    assert_eq!(flow.protocol_stack.master(), Some(Protocol::Dns));
     assert_eq!(flow.classification_state, ClassificationState::Classified);
     assert_eq!(flow.packets_seen, 1);
     assert_eq!(flow.packets_forward, 1);
@@ -165,6 +219,7 @@ fn process_l3_packet_classifies_and_tracks_both_directions() {
         .unwrap()
         .expect("已定型流应回显协议");
     assert_eq!(result.protocol, Protocol::Dns);
+    assert_eq!(result.protocol_stack.master(), Some(Protocol::Dns));
     assert_eq!(flow.packets_seen, 2);
     assert_eq!(flow.packets_forward, 1);
     assert_eq!(flow.packets_reverse, 1);

@@ -53,6 +53,77 @@ pub enum ClassificationState {
     Classified,
 }
 
+/// 协议栈最大层数（与 nDPI `NDPI_PROTOCOL_STACK_SIZE` 对齐）
+pub const MAX_PROTOCOL_STACK: usize = 8;
+
+/// 协议栈（类比 nDPI protocol stack）
+///
+/// 固定容量、零堆分配；`push` 追加并去重，栈满返回 `false`。
+/// `master()` 返回首个（外层/基础）协议，`app()` 返回最后一个（最具体）协议。
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ProtocolStack {
+    protocols: [Option<Protocol>; MAX_PROTOCOL_STACK],
+    len: usize,
+}
+
+impl ProtocolStack {
+    /// 创建空协议栈
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 是否为空
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// 层数
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// 主协议（首个/外层协议）
+    pub fn master(&self) -> Option<Protocol> {
+        self.protocols[0]
+    }
+
+    /// 应用协议（最后一个/最具体协议）
+    pub fn app(&self) -> Option<Protocol> {
+        if self.len == 0 {
+            None
+        } else {
+            self.protocols[self.len - 1]
+        }
+    }
+
+    /// 是否已包含某协议
+    pub fn contains(&self, protocol: Protocol) -> bool {
+        self.iter().any(|p| p == protocol)
+    }
+
+    /// 追加协议；重复或栈满返回 `false`
+    pub fn push(&mut self, protocol: Protocol) -> bool {
+        if self.contains(protocol) || self.len == MAX_PROTOCOL_STACK {
+            return false;
+        }
+        self.protocols[self.len] = Some(protocol);
+        self.len += 1;
+        true
+    }
+
+    /// 清空
+    pub fn clear(&mut self) {
+        self.protocols = [None; MAX_PROTOCOL_STACK];
+        self.len = 0;
+    }
+
+    /// 按入栈顺序迭代
+    pub fn iter(&self) -> impl Iterator<Item = Protocol> + '_ {
+        self.protocols[..self.len].iter().filter_map(|p| *p)
+    }
+}
+
 /// 支持的协议枚举
 ///
 /// # Feature Gates
@@ -667,6 +738,8 @@ pub struct DetectionResult {
     pub breed: ProtocolBreed,
     /// 应用层协议（如 YouTube, WeChat 等）
     pub app_protocol: Option<Application>,
+    /// 协议栈（P1：双向 API / 后续分类流程使用）
+    pub protocol_stack: ProtocolStack,
     /// JA4T 客户端 TCP 指纹（F33：来自流的初始 SYN 包；非 TCP / 无 SYN 时为 None）
     pub ja4t: Option<String>,
     /// JA4TS 服务端 TCP 指纹（F34：来自服务端方向的 SYN-ACK 包；非 TCP / 无
@@ -695,6 +768,7 @@ impl DetectionResult {
             category: protocol.category(),
             breed: protocol.breed(),
             app_protocol: None,
+            protocol_stack: ProtocolStack::new(),
             ja4t: None,
             ja4ts: None,
             ja4ls: None,

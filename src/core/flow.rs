@@ -75,6 +75,8 @@ pub struct Flow {
     pub last_seen_ms: Option<u64>,
     /// 协议元数据
     pub metadata: Option<Metadata>,
+    /// 协议栈（P1：双向 API；`detect` 路径暂未填充）
+    pub protocol_stack: ProtocolStack,
     /// 已观察包计数（用于 Giveup 机制）
     pub packets_seen: u32,
     /// 仅 DPI 模式（不做猜测）
@@ -158,6 +160,7 @@ impl Flow {
             first_seen_ms: None,
             last_seen_ms: None,
             metadata: None,
+            protocol_stack: ProtocolStack::new(),
             packets_seen: 0,
             dpi_only: false,
             ja4t: None,
