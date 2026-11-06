@@ -179,6 +179,66 @@ fn frame_dns_over_tcp(message: &[u8]) -> Vec<u8> {
     framed
 }
 
+/// 构造带 SNI 的 TLS 1.3 ClientHello 记录（单条完整 TLS record）
+fn make_tls_client_hello_with_sni(hostname: &str) -> Vec<u8> {
+    let hostname_bytes = hostname.as_bytes();
+
+    let mut sni_ext = vec![
+        0x00, 0x00, // Extension Type: SNI
+        0x00, 0x00, // Extension Length: placeholder
+        0x00, 0x00, // Server Name List Length: placeholder
+        0x00, // Server Name Type: hostname
+    ];
+    let name_len = hostname_bytes.len() as u16;
+    sni_ext.push((name_len >> 8) as u8);
+    sni_ext.push((name_len & 0xFF) as u8);
+    sni_ext.extend_from_slice(hostname_bytes);
+
+    let list_len = (hostname_bytes.len() + 3) as u16;
+    sni_ext[4] = (list_len >> 8) as u8;
+    sni_ext[5] = (list_len & 0xFF) as u8;
+    let ext_len = (hostname_bytes.len() + 5) as u16;
+    sni_ext[2] = (ext_len >> 8) as u8;
+    sni_ext[3] = (ext_len & 0xFF) as u8;
+
+    let versions_ext = vec![
+        0x00, 0x2b, // supported_versions
+        0x00, 0x03, // length
+        0x02, // list length
+        0x03, 0x04, // TLS 1.3
+    ];
+
+    let extensions_len = (sni_ext.len() + versions_ext.len()) as u16;
+    let mut extensions = vec![(extensions_len >> 8) as u8, (extensions_len & 0xFF) as u8];
+    extensions.extend(sni_ext);
+    extensions.extend(versions_ext);
+
+    let mut data = vec![
+        0x16, // Handshake
+        0x03, 0x01, // record version
+        0x00, 0x00, // record length placeholder
+    ];
+    data.push(0x01); // ClientHello
+    data.extend_from_slice(&[0x00, 0x00, 0x00]); // handshake length placeholder
+    data.extend_from_slice(&[0x03, 0x03]); // client version
+    data.extend_from_slice(&[0u8; 32]); // random
+    data.push(0x00); // session id length
+    data.extend_from_slice(&[0x00, 0x02]); // cipher suites length
+    data.extend_from_slice(&[0x13, 0x01]); // TLS_AES_128_GCM_SHA256
+    data.push(0x01); // compression methods length
+    data.push(0x00); // null compression
+    data.extend(extensions);
+
+    let handshake_len = data.len() - 9;
+    let record_len = data.len() - 5;
+    data[6] = ((handshake_len >> 16) & 0xFF) as u8;
+    data[7] = ((handshake_len >> 8) & 0xFF) as u8;
+    data[8] = (handshake_len & 0xFF) as u8;
+    data[3] = ((record_len >> 8) & 0xFF) as u8;
+    data[4] = (record_len & 0xFF) as u8;
+    data
+}
+
 #[test]
 fn protocol_stack_pushes_in_order_and_reports_master_app() {
     let mut stack = ProtocolStack::new();
@@ -491,6 +551,79 @@ fn dns_over_tcp_buffers_split_length_prefix() {
             assert_eq!(meta.query_domain.as_deref(), Some("example.com"));
         }
         _ => panic!("expected DNS metadata"),
+    }
+}
+
+#[test]
+fn tls_client_hello_split_across_tcp_packets_is_reassembled() {
+    let mut detector = Detector::new();
+    let hello = make_tls_client_hello_with_sni("example.com");
+    let split = 7; // record header + 2 bytes of handshake header
+    let first_packet =
+        make_l3_tcp_packet_between([192, 168, 1, 1], 12345, [10, 0, 0, 1], 443, &hello[..split]);
+    let second_packet =
+        make_l3_tcp_packet_between([192, 168, 1, 1], 12345, [10, 0, 0, 1], 443, &hello[split..]);
+    let parsed = parse_l3_packet(&first_packet).unwrap();
+    let packet_key = FlowKey {
+        src_ip: parsed.src_ip,
+        dst_ip: parsed.dst_ip,
+        src_port: parsed.src_port,
+        dst_port: parsed.dst_port,
+        transport: parsed.transport,
+    };
+    let mut flow = Flow::new_bidirectional(packet_key);
+
+    let first = detector
+        .process_l3_packet(&mut flow, &first_packet, 1)
+        .unwrap();
+    assert!(first.is_none(), "partial TLS record must wait");
+    assert!(matches!(flow.dissector_state, DissectorState::Tls(_)));
+    assert_eq!(flow.classification_state, ClassificationState::Inspecting);
+
+    let second = detector
+        .process_l3_packet(&mut flow, &second_packet, 2)
+        .unwrap()
+        .expect("complete TLS record should classify");
+    assert_eq!(second.protocol, Protocol::Tls);
+    match second.metadata {
+        Metadata::Tls(meta) => assert_eq!(meta.sni.as_deref(), Some("example.com")),
+        _ => panic!("expected TLS metadata"),
+    }
+}
+
+#[test]
+fn tls_record_header_split_across_tcp_packets_is_reassembled() {
+    let mut detector = Detector::new();
+    let hello = make_tls_client_hello_with_sni("example.com");
+    let split = 3; // inside the 5-byte TLS record header
+    let first_packet =
+        make_l3_tcp_packet_between([192, 168, 1, 1], 12346, [10, 0, 0, 1], 443, &hello[..split]);
+    let second_packet =
+        make_l3_tcp_packet_between([192, 168, 1, 1], 12346, [10, 0, 0, 1], 443, &hello[split..]);
+    let parsed = parse_l3_packet(&first_packet).unwrap();
+    let packet_key = FlowKey {
+        src_ip: parsed.src_ip,
+        dst_ip: parsed.dst_ip,
+        src_port: parsed.src_port,
+        dst_port: parsed.dst_port,
+        transport: parsed.transport,
+    };
+    let mut flow = Flow::new_bidirectional(packet_key);
+
+    let first = detector
+        .process_l3_packet(&mut flow, &first_packet, 1)
+        .unwrap();
+    assert!(first.is_none(), "partial record header must be buffered");
+    assert!(matches!(flow.dissector_state, DissectorState::Tls(_)));
+
+    let second = detector
+        .process_l3_packet(&mut flow, &second_packet, 2)
+        .unwrap()
+        .expect("record after split header should classify");
+    assert_eq!(second.protocol, Protocol::Tls);
+    match second.metadata {
+        Metadata::Tls(meta) => assert_eq!(meta.sni.as_deref(), Some("example.com")),
+        _ => panic!("expected TLS metadata"),
     }
 }
 

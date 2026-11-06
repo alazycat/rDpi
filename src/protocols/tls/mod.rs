@@ -13,7 +13,15 @@ pub use parser::{
     parse_server_hello, parse_server_hello_alpn,
 };
 
+use crate::core::types::{
+    DetectContext, Direction, DissectorOutcome, DissectorState, TlsDissectorState,
+};
 use crate::protocols::Registry;
+
+/// TLS 记录载荷上限（RFC 5246：ciphertext ≤ 2^14 + 2048）
+const TLS_MAX_RECORD_BYTES: usize = 18_432;
+/// 单方向不完整记录的缓冲上限（5 字节记录头 + 最大记录）
+const TLS_MAX_BUFFER_BYTES: usize = 5 + TLS_MAX_RECORD_BYTES;
 
 pub fn register(registry: &mut Registry) {
     registry.register(Box::new(TlsDetector::new()));
@@ -55,6 +63,78 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
     /// 首字节门：TLS 记录层 handshake content_type=0x16。
     fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
         Some(&[(0x16u8, 0x16u8)])
+    }
+
+    /// 有状态逐包 TLS 记录重组
+    ///
+    /// 两个方向独立缓冲；凑齐完整 TLS record（5 字节头 + record_len）后交给
+    /// 无状态 [`Self::detect`]。非 handshake 记录（CCS/Alert/AppData）直接
+    /// 丢弃，继续等待后续记录。当前只做 record 级重组，不处理 handshake
+    /// 消息跨 TLS record 分片。
+    fn process(
+        &self,
+        state: &mut DissectorState,
+        payload: &[u8],
+        direction: Direction,
+        ctx: &DetectContext,
+    ) -> Option<DissectorOutcome> {
+        // 端口 53 的 TCP 流交给 DNS-over-TCP，避免长度前缀首字节恰为 0x16 时误接管。
+        if ctx.src_port == 53 || ctx.dst_port == 53 {
+            return None;
+        }
+
+        match state {
+            DissectorState::None => {
+                if payload.first() != Some(&0x16) {
+                    return None;
+                }
+                *state = DissectorState::Tls(TlsDissectorState::default());
+            }
+            DissectorState::Tls(_) => {}
+            _ => return None,
+        }
+
+        let DissectorState::Tls(tls_state) = state else {
+            return None;
+        };
+        let buffer = match direction {
+            Direction::Forward => &mut tls_state.client_buffer,
+            Direction::Reverse => &mut tls_state.server_buffer,
+        };
+        buffer.extend_from_slice(payload);
+
+        loop {
+            if buffer.len() < 5 {
+                break;
+            }
+            let content_type = buffer[0];
+            if !(0x14..=0x17).contains(&content_type) || buffer[1] != 0x03 {
+                return Some(DissectorOutcome::GiveUp);
+            }
+            let record_len = u16::from_be_bytes([buffer[3], buffer[4]]) as usize;
+            if record_len > TLS_MAX_RECORD_BYTES {
+                return Some(DissectorOutcome::GiveUp);
+            }
+            if buffer.len() < 5 + record_len {
+                break;
+            }
+
+            let detected = if content_type == 0x16 {
+                self.detect(&buffer[..5 + record_len])
+            } else {
+                None
+            };
+            if let Some(result) = detected {
+                buffer.clear();
+                return Some(DissectorOutcome::Classified(result));
+            }
+            buffer.drain(..5 + record_len);
+        }
+
+        if buffer.len() > TLS_MAX_BUFFER_BYTES {
+            return Some(DissectorOutcome::GiveUp);
+        }
+        Some(DissectorOutcome::Continue)
     }
 
     fn detect(&self, payload: &[u8]) -> Option<crate::core::types::DetectionResult> {

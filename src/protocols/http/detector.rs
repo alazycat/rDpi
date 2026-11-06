@@ -72,7 +72,7 @@ impl ProtocolDetector for HttpDetector {
                 *state = DissectorState::Http(HttpDissectorState::default());
             }
             DissectorState::Http(_) => {}
-            DissectorState::DnsTcp(_) => return None,
+            DissectorState::DnsTcp(_) | DissectorState::Tls(_) => return None,
         }
 
         let DissectorState::Http(http_state) = state else {

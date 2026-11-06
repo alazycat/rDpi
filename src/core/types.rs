@@ -80,6 +80,18 @@ pub struct DnsTcpDissectorState {
     pub buffer: Vec<u8>,
 }
 
+/// TLS 有状态 dissector 的 per-flow 状态
+///
+/// 两个方向独立缓冲：ClientHello（客户端方向）与 ServerHello（服务端方向）
+/// 不会混入同一记录流。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TlsDissectorState {
+    /// 客户端方向（Forward）缓冲
+    pub client_buffer: Vec<u8>,
+    /// 服务端方向（Reverse）缓冲
+    pub server_buffer: Vec<u8>,
+}
+
 /// per-flow 有状态 dissector 状态
 ///
 /// 当前只支持一个活跃的有状态协议（HTTP）；后续按协议扩展枚举。
@@ -92,6 +104,8 @@ pub enum DissectorState {
     Http(HttpDissectorState),
     /// DNS over TCP 长度前缀重组
     DnsTcp(DnsTcpDissectorState),
+    /// TLS 记录跨包重组
+    Tls(TlsDissectorState),
 }
 
 /// 协议栈最大层数（与 nDPI `NDPI_PROTOCOL_STACK_SIZE` 对齐）
