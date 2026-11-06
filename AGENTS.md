@@ -29,7 +29,8 @@ lib.rs (Detector 编排) → parser (以太网/IP/TCP/UDP) → core (FlowTable/g
 - **JA4H 客户端 HTTP 指纹（F31，2026-11-05）**：`application::compute_ja4h`（官方 ja4h.py to_ja4h 语义：头序敏感+原始大小写、cookie/referer 仅作 c/r 标志、cookie 字段/值按名排序哈希、语言 4 位右补 0、header_len 与 lang 间无分隔符）；`http::parse_header_lines` 提供头行输入；仅 HTTP/1.x 请求路径产出（响应与 h2 为 None）。
 - **JA4X X.509 证书指纹（F32，2026-11-05）**：`application::compute_ja4x`（官方 rust/ja4x hash12 语义：`{issuer12}_{subject12}_{扩展12}`，OID DER 内容字节 hex 逗号拼接哈希、不排序，空列表记 12 个 0）；`tls/certificate.rs` `extract_dn` 返回 OID 列表 + `extract_extension_oids`（`[3] EXPLICIT` 双层解封装）；CertInfo.ja4x 解析期一次算好，经 tls detector 识别路径与 enrich_tls_cert 富化路径双接入，`TlsMetadata.cert_ja4x`。
 - **JA4T 客户端 TCP 指纹（F33，2026-11-05）**：`application::compute_ja4t`（官方 rust/ja4 tcp.rs `to_ja4t` 语义：`{window}_{options}_{mss}_{wscale}`，选项 kind 序列含 NOP/EOL 终止、空记 "00"、mss 最少两位、wscale=0 记 "00"）；`parser::tcp::TcpHeaderInfo` 固定容量栈结构零堆分配提取 flags/window/选项 kind/MSS/wscale（ParsedPacket.tcp）；detect 主流程初始 SYN（SYN 置位且 ACK 清零）每流一次写入 `Flow.ja4t` 流级旁路字段——**不占用 protocol/metadata 一次定型语义**；DetectionResult.ja4t 随回显/规则分支携带。
-- **JA4TS 服务端 TCP 指纹（F34，2026-11-06）**：`application::compute_ja4ts`（格式与 JA4T 完全一致，规格权威为官方 zeek/ja4t/main.zeek——rust/ja4 未实现）；detect 主流程 SYN-ACK（flags **精确等于** 0x12，带额外标志位不触发）每流一次写入服务端方向流 `Flow.ja4ts` 旁路字段（FlowKey 方向性：与客户端 SYN 属两条流，互不干扰）；DetectionResult.ja4ts 随回显/规则分支携带；重传延迟序列（官方第 5 段）需跨包计时状态，不实现（risks.md F34 边界）。
+- **JA4TS 服务端 TCP 指纹（F34，2026-11-06）**：`application::compute_ja4ts`（格式与 JA4T 完全一致，规格权威为官方 zeek/ja4t/main.zeek——rust/ja4 未实现）；detect 主流程 SYN-ACK（flags **精确等于** 0x12，带额外标志位不触发）每流一次写入服务端方向流 `Flow.ja4ts` 旁路字段（FlowKey 方向性：与客户端 SYN 属两条流，互不干扰）；DetectionResult.ja4ts 随回显/规则分支携带。
+- **JA4TS 第 5 段重传延迟 + RST 后缀（F40，2026-11-06）**：兑现 F34 登记边界，官方 zeek/ja4t/main.zeek（commit 27f0cbf9）状态机全量复刻——首个精确 0x12 启动收集（Flow.ja4ts 恒为 4 段基串一次定型）；收集期内超 **120 秒**停止（F34 登记"10 秒"系笔误）/ RST 记 `-R{整秒}` 后缀并停止 / 精确 0x12 重传记相邻间隔整秒至多 **10 项**；**任一客户端方向包即停止**（`observe_ja4ts_shutdown` 于 get_or_create 前借流表反查对端关闭，mid-stream 无关闭信号）；输出由 `application::compose_ja4ts` 落库时组合 `{基串}_{d1-d2-...}-R{n}`，**RST 后缀仅在存在延迟段时追加**；`Flow` 新增 `ja4ts_synack_time/ja4ts_delays/ja4ts_rst_delay/ja4ts_tracking` 旁路字段（仅重传发生时分配）。
 - **JA4L-C/S 时延指纹（F35，2026-11-06）**：`application::compute_ja4ls/ja4lc`（官方 zeek ja4l/main.zeek + python ja4.py 同源：`{半程时延µs}_{TTL}`，半程时延 = 包间总微秒**整除 2**）；A（SYN 时戳+TTL）/B（SYN-ACK 时戳+TTL）记录在两方向流（`Flow.syn_time/syn_ttl/synack_time/synack_ttl`），JA4L-S 在 SYN-ACK 到达时反查对端 A 算出（写服务端流）、JA4L-C 在其后首个客户端包到达时反查对端 B 算出（写客户端流）——跨流计算在 `Detector::observe_ja4l`（lib.rs）于 get_or_create 之前独立借流表完成；时延需真实包间隔，新增 `Detector::detect_at(packet, SystemTime)` 时间戳入口（detect 以处理时刻委托），CLI pcap 路径已传捕获时戳；乱序时戳回退/mid-stream 缺握手起点跳过；QUIC 变体与 zeek 的 TLS 精化段（delta）不实现（risks.md F35 边界）。
 - **JA4SSH 会话指纹（F36，2026-11-06）**：`application::compute_ja4ssh`（官方 FoxIO ja4 仓库 zeek/ja4ssh/main.zeek 语义：`c{c众数}s{s众数}_c{c载荷包数}s{s载荷包数}_c{c纯ACK数}s{s纯ACK数}`，众数平局取较小值，纯 ACK = 无载荷且 flags 精确等于 0x10，窗口 = 双向载荷包合计 200 滚动）；`Flow.ssh_payload_lens/ssh_ack_count/ja4ssh` 流级旁路字段（非 SSH 流零堆分配）；`Detector::observe_ja4ssh`（lib.rs，get_or_create 之前独立借流表）门控两级——流已定型 Ssh + 连接自初始 SYN 起（借 syn_time）；方向归位 SYN 发送端为客户端；指纹写两方向流，保留**最近完成窗口**（zeek 逐窗口出日志、尾窗冲刷不实现，见 risks.md F36 边界）。
 - **JA4D/JA4D6 DHCP 指纹（F37，2026-11-06）**：`application::compute_ja4d/ja4d6`（格式 `{类型助记符5}{尺寸4}{i|n}{d|n}_{选项列表}_{参数列表}`；v4 权威 zeek/ja4d/main.zeek + Wireshark packet-ja4.c 终版 commit d21d63f9/11ae927f——选项列表剔除 {0/53/50/81}、尺寸 = option 57、未知类型 %05d、缺 53 记 "00000"；v6 权威仅 Wireshark 插件——尺寸 = option 1/2 首个 DUID 长度、选项列表不剔除、ORO = option 6 大端项）；**per-message 指纹放 metadata**（同 JA4H）：`dhcp/parser.rs parse_dhcp_options`（offset 240 单遍 TLV）→ `DhcpMetadata.ja4d`；`dhcpv6/parser.rs parse_dhcpv6_info`（is_dhcpv6 同门控识别语义不变，Relay 12/13 起始偏移 34）→ 新增 `Dhcpv6Metadata{msg_type, ja4d6}` + `Metadata::Dhcpv6`（cfg(infra)）；relay 只解析外层选项不递归 option 9（risks.md F37 边界）。
@@ -41,9 +42,9 @@ lib.rs (Detector 编排) → parser (以太网/IP/TCP/UDP) → core (FlowTable/g
 ## 3. 常用命令
 
 ```bash
-cargo test                    # 默认 features (dns+http+tls)，328 测试全绿（2026-11-06 F39 JA4 官方格式轮实测）
-cargo test --all-features     # 1175 测试全绿（10 ignored = test_regression 存量）；F39 后实测
-cargo test --features risk    # 373 测试全绿（含风险处理器相关探针 a1_risk/a6/r5）
+cargo test                    # 默认 features (dns+http+tls)，335 测试全绿（2026-11-06 F40 JA4TS 第 5 段轮实测）
+cargo test --all-features     # 1182 测试全绿（10 ignored = test_regression 存量）；F40 后实测
+cargo test --features risk    # 380 测试全绿（含风险处理器相关探针 a1_risk/a6/r5）
 cargo build --features pcap   # 构建 CLI
 cargo bench                   # criterion 基准（benches/bench_detect.rs）；基线见 docs/architecture/performance.md
 cargo bench --features quic   # 全量 9 项（含 QUIC 头部判定/Initial 解密冷+稳态）
@@ -102,6 +103,7 @@ cargo fmt ; cargo clippy      # 提交前（lib+bins 门槛 0 警告；验证须
 | F37 | JA4D/JA4D6 DHCP 指纹：per-message 指纹放 metadata（DhcpMetadata.ja4d / 新增 Dhcpv6Metadata.ja4d6），v4 对齐 zeek ja4d + Wireshark 终版（选项剔除 {0/53/50/81}）、v6 对齐 Wireshark 插件（DUID 长度尺寸段、选项不剔除）；识别语义不变 | 中 | ✅ 已完成 2026-11-06（parse_dhcp_options/parse_dhcpv6_info + compute_ja4d/ja4d6 + CLI；官方黄金向量 + 博客样例直证；relay 不递归等边界登记；默认 322 / all-features 1156 / risk 367 全绿，详见 risks.md F37） |
 | F38 | DTLS 识别（新 detector，feature dtls）+ d 前缀 JA4/JA4S（compute_ja4s 重构 Ja4Transport + 版本码 d1/d2/d3）；合成 TLS 记录复用 tls 解析器（QUIC 先例）；"JA4DS" 独立指纹名不存在，官方规格即 DTLS 变体 | 中 | ✅ 已完成 2026-11-06（dtls 模块 + Ja4Transport + 443 端口表/rule/CLI/behavioral 接入；JA4.md 与 zeek 基线 proto 字符分歧登记；分片/epoch>0 等边界登记；默认 324 / all-features 1171 / risk 369 全绿，详见 risks.md F38） |
 | F39 | 客户端 JA4 对齐官方 ja4.py to_ja4（计数/sni/alpn 段 + 升序排序双哈希段 + sig_algs 追加；协商版本回退 client_version，JA4 恒可计算；alpn_code 逐位 '9' 同改 JA4S） | 中 | ✅ 已完成 2026-11-06（ClientHelloInfo 增 negotiated_version/client_version/signature_algorithms；官方黄金向量直证；F38 边界③消除、test_pin_rules a5 语义更新；默认 328 / all-features 1175 / risk 373 全绿，详见 risks.md F39） |
+| F40 | JA4TS 第 5 段重传延迟 + RST 后缀：兑现 F34 边界，官方 zeek/ja4t 状态机全量复刻（120 秒超时更正/至多 10 项/客户端包即停/纯 RST 无后缀）；compose_ja4ts 落库组合，Flow.ja4ts 恒为 4 段基串 | 中 | ✅ 已完成 2026-11-06（compose_ja4ts + JA4TS_MAX_DELAYS/JA4TS_TRACK_TIMEOUT + Flow 4 旁路字段 + observe_ja4ts_shutdown；故意分歧：基串产出宽松于 zeek；默认 335 / all-features 1182 / risk 380 全绿，详见 risks.md F40） |
 
 ## 7. 文档索引
 

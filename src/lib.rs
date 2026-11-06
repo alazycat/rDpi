@@ -317,9 +317,12 @@ impl Detector {
         // 方向流上），在 get_or_create 之前独立完成流表读写，避免借用冲突。
         // 仅 TCP 参与（TcpHeaderInfo 携带 TTL）。
         // F36：JA4SSH 会话观测——同样需跨方向流聚合双向窗口计数，同址复用。
+        // F40：JA4TS 第 5 段收集的客户端关闭观测——同址复用（服务端方向包的
+        // 延迟收集在 get_or_create 之后的主流程块内完成）。
         if let Some(tcp) = parsed.tcp.as_ref() {
             Self::observe_ja4l(&mut self.flow_table, &key, arrival, tcp);
             Self::observe_ja4ssh(&mut self.flow_table, &key, tcp.flags, parsed.payload.len());
+            Self::observe_ja4ts_shutdown(&mut self.flow_table, &key);
         }
 
         // 获取或创建流
@@ -352,10 +355,40 @@ impl Detector {
             ));
         }
 
+        // F40：JA4TS 第 5 段收集——SYN-ACK 重传延迟 / RST 后缀（官方 zeek
+        // ja4t/main.zeek：距最近 SYN-ACK 超 120 秒停止；RST 记 `-R{整秒}` 后缀
+        // 并停止；精确 0x12 重传记相邻间隔整秒，至多 10 项满即停；其余包不动
+        // 状态）。客户端方向包的关闭在 observe_ja4ts_shutdown（get_or_create
+        // 之前）完成。本块先于首个 SYN-ACK 捕获块执行，避免同一包既当基串
+        // 又当重传。
+        if flow.ja4ts.is_some()
+            && flow.ja4ts_tracking
+            && let Some(tcp) = parsed.tcp.as_ref()
+            && let Some(last) = flow.ja4ts_synack_time
+            && let Ok(d) = arrival.duration_since(last)
+        {
+            if d > application::JA4TS_TRACK_TIMEOUT {
+                flow.ja4ts_tracking = false;
+            } else if tcp.flags & 0x04 != 0 {
+                // RST（含 RST|ACK 等）：记后缀延迟（整秒截断，官方
+                // double_to_count 语义）并停止收集
+                flow.ja4ts_rst_delay = Some(u32::try_from(d.as_secs()).unwrap_or(u32::MAX));
+                flow.ja4ts_tracking = false;
+            } else if tcp.flags == 0x12 && flow.ja4ts_delays.len() < application::JA4TS_MAX_DELAYS {
+                flow.ja4ts_delays
+                    .push(u32::try_from(d.as_secs()).unwrap_or(u32::MAX));
+                flow.ja4ts_synack_time = Some(arrival);
+                if flow.ja4ts_delays.len() == application::JA4TS_MAX_DELAYS {
+                    flow.ja4ts_tracking = false;
+                }
+            }
+        }
+
         // F34：JA4TS 服务端 TCP 指纹——服务端 SYN-ACK（flags 精确等于 SYN|ACK，
         // 对齐官方 zeek/ja4t/main.zeek），每流只取第一个满足的包。存服务端方向流
         // （FlowKey 方向性：SYN-ACK 与 SYN 属两条流）的旁路字段，不占用
         // protocol/metadata 的一次定型语义，不影响后续协议识别。
+        // F40：首个 SYN-ACK 同时启动第 5 段重传延迟收集（官方 last_ts 语义）。
         if flow.ja4ts.is_none() && parsed.tcp.is_some_and(|tcp| tcp.flags == 0x12) {
             // unwrap 安全：is_some_and 已确认 tcp 存在
             let tcp = parsed.tcp.unwrap();
@@ -365,6 +398,8 @@ impl Detector {
                 tcp.mss,
                 tcp.window_scale,
             ));
+            flow.ja4ts_synack_time = Some(arrival);
+            flow.ja4ts_tracking = true;
         }
 
         // 计算 giveup 阈值
@@ -405,7 +440,7 @@ impl Detector {
                 };
                 if let Some(mut r) = engine.match_rule(&rule_ctx) {
                     r.ja4t = flow.ja4t.clone();
-                    r.ja4ts = flow.ja4ts.clone();
+                    r.ja4ts = Self::flow_ja4ts_full(flow);
                     r.ja4ls = flow.ja4ls.clone();
                     r.ja4lc = flow.ja4lc.clone();
                     r.ja4ssh = flow.ja4ssh.clone();
@@ -506,7 +541,7 @@ impl Detector {
         // 如果有检测结果，保存元数据（并携带流级 JA4T/JA4TS/JA4L/JA4SSH，若此前已捕获）
         if let Some(ref mut r) = result {
             r.ja4t = flow.ja4t.clone();
-            r.ja4ts = flow.ja4ts.clone();
+            r.ja4ts = Self::flow_ja4ts_full(flow);
             r.ja4ls = flow.ja4ls.clone();
             r.ja4lc = flow.ja4lc.clone();
             r.ja4ssh = flow.ja4ssh.clone();
@@ -713,6 +748,40 @@ impl Detector {
             f.ssh_payload_lens.clear();
             f.ssh_ack_count = 0;
         }
+    }
+
+    /// F40：JA4TS 第 5 段收集的客户端关闭观测（官方 zeek/ja4t/main.zeek：
+    /// 任一 orig 方向包即停止 SYN-ACK 重传延迟收集——正常握手里客户端的
+    /// 完成 ACK 到达后，后续 SYN-ACK 重传不再计入）
+    ///
+    /// 在 [`Detector::detect_at`] 的 get_or_create 之前调用，独立持有流表借用
+    /// （关闭的是对端方向流）。客户端方向判定：syn_time 由 [`Self::observe_ja4l`]
+    /// 记录在 SYN 发送端流——mid-stream 客户端流无 syn_time，无关闭信号
+    /// （见 risks.md F40 边界）。
+    fn observe_ja4ts_shutdown(flow_table: &mut FlowTable, key: &FlowKey) {
+        // 仅客户端方向包参与关闭（服务端方向包走主流程的延迟收集块）
+        if !flow_table.get(key).is_some_and(|f| f.syn_time.is_some()) {
+            return;
+        }
+        let mut reverse = key.clone();
+        std::mem::swap(&mut reverse.src_ip, &mut reverse.dst_ip);
+        std::mem::swap(&mut reverse.src_port, &mut reverse.dst_port);
+        if let Some(peer) = flow_table.get_mut(&reverse)
+            && peer.ja4ts_tracking
+        {
+            peer.ja4ts_tracking = false;
+        }
+    }
+
+    /// F40：组合 JA4TS 完整官方格式（4 段基串 + 第 5 段重传延迟 + RST 后缀）。
+    ///
+    /// `Flow.ja4ts` 恒为 [`application::compute_ja4ts`] 的 4 段基串（一次定型，
+    /// 重传不覆盖），扩展段在结果落库时按跟踪状态组合——无重传时输出与基串
+    /// 一致（官方语义），热路径零额外分配（组合仅在结果构建处发生一次）。
+    fn flow_ja4ts_full(flow: &Flow) -> Option<String> {
+        flow.ja4ts
+            .as_ref()
+            .map(|base| application::compose_ja4ts(base, &flow.ja4ts_delays, flow.ja4ts_rst_delay))
     }
 
     /// F3：已定型 TLS 流收到 Certificate 记录时，补解析证书字段（每流至多一次）

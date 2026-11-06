@@ -417,3 +417,290 @@ fn test_ja4ts_absent_without_syn_ack() {
     let flows: Vec<_> = d.flows().map(|(_, f)| f).collect();
     assert!(flows[0].ja4ts.is_none());
 }
+
+// ==== F40：JA4TS 第 5 段重传延迟 + RST 后缀（官方 zeek/ja4t/main.zeek）====
+
+use std::time::{Duration, SystemTime};
+
+/// 以 UNIX 纪元起算的秒级时戳（detect_at 捕获时戳语义）
+fn ts(secs: u64) -> SystemTime {
+    SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
+}
+
+/// 服务端方向 HTTP 响应包（检测结果载体：空载荷握手包通常无识别结果）
+fn http_response() -> Vec<u8> {
+    build_tcp_packet_with_options(
+        [93, 184, 216, 34],
+        80,
+        [192, 168, 1, 10],
+        54321,
+        0x18, // PSH|ACK
+        29200,
+        &[],
+        b"HTTP/1.1 200 OK\r\n\r\n",
+    )
+}
+
+#[test]
+fn test_ja4ts_retrans_delays_fifth_segment() {
+    let mut d = Detector::new();
+    let syn_ack = |flags: u8| {
+        build_tcp_packet_with_options(
+            [93, 184, 216, 34],
+            80,
+            [192, 168, 1, 10],
+            54321,
+            flags,
+            29200,
+            SYN_ACK_OPTIONS_LINUX,
+            &[],
+        )
+    };
+    // 首个 SYN-ACK（t=100）开始收集；重传（t=101、t=103）记相邻间隔整秒
+    d.detect_at(&syn_ack(0x12), ts(100)).unwrap();
+    d.detect_at(&syn_ack(0x12), ts(101)).unwrap();
+    d.detect_at(&syn_ack(0x12), ts(103)).unwrap();
+    // 服务端数据包触发检测结果落库，验证组合输出
+    let r = d.detect_at(&http_response(), ts(104)).unwrap();
+    let server_flow = d
+        .flows()
+        .find(|(k, _)| k.src_port == 80)
+        .map(|(_, f)| f)
+        .expect("服务端方向流应存在");
+    // 流字段：基串一次定型不覆盖，延迟序列单独累积
+    assert_eq!(
+        server_flow.ja4ts.as_deref(),
+        Some("29200_2-1-3-1-1-4_1460_7"),
+        "重传不得覆盖 4 段基串"
+    );
+    assert_eq!(server_flow.ja4ts_delays, vec![1, 2]);
+    // 检测结果携带完整官方格式：第 5 段 = `1-2`
+    assert_eq!(
+        r.expect("HTTP 响应应被识别").ja4ts.as_deref(),
+        Some("29200_2-1-3-1-1-4_1460_7_1-2")
+    );
+}
+
+#[test]
+fn test_ja4ts_client_packet_stops_collection() {
+    let mut d = Detector::new();
+    // 官方语义：任一客户端方向包（此处为握手完成 ACK）即停止收集——
+    // 其后的 SYN-ACK 重传不计入延迟
+    let syn = build_tcp_packet_with_options(
+        [192, 168, 1, 10],
+        54321,
+        [93, 184, 216, 34],
+        80,
+        0x02,
+        64240,
+        SYN_OPTIONS_WIN11,
+        &[],
+    );
+    d.detect_at(&syn, ts(100)).unwrap();
+    let syn_ack = build_tcp_packet_with_options(
+        [93, 184, 216, 34],
+        80,
+        [192, 168, 1, 10],
+        54321,
+        0x12,
+        29200,
+        SYN_ACK_OPTIONS_LINUX,
+        &[],
+    );
+    d.detect_at(&syn_ack, ts(101)).unwrap();
+    let ack = build_tcp_packet_with_options(
+        [192, 168, 1, 10],
+        54321,
+        [93, 184, 216, 34],
+        80,
+        0x10, // 纯 ACK
+        64240,
+        &[],
+        &[],
+    );
+    d.detect_at(&ack, ts(102)).unwrap();
+    // 关闭后的重传不计数；服务端数据包验证组合输出
+    let retrans = build_tcp_packet_with_options(
+        [93, 184, 216, 34],
+        80,
+        [192, 168, 1, 10],
+        54321,
+        0x12,
+        29200,
+        SYN_ACK_OPTIONS_LINUX,
+        &[],
+    );
+    d.detect_at(&retrans, ts(110)).unwrap();
+    let r = d.detect_at(&http_response(), ts(111)).unwrap();
+    let server_flow = d
+        .flows()
+        .find(|(k, _)| k.src_port == 80)
+        .map(|(_, f)| f)
+        .expect("服务端方向流应存在");
+    assert!(
+        server_flow.ja4ts_delays.is_empty(),
+        "客户端包到达后的重传不得计入"
+    );
+    assert_eq!(
+        r.expect("HTTP 响应应被识别").ja4ts.as_deref(),
+        Some("29200_2-1-3-1-1-4_1460_7"),
+        "无重传延迟时输出恰为 4 段基串"
+    );
+}
+
+#[test]
+fn test_ja4ts_rst_suffix_only_with_delays() {
+    let syn_ack = build_tcp_packet_with_options(
+        [93, 184, 216, 34],
+        80,
+        [192, 168, 1, 10],
+        54321,
+        0x12,
+        29200,
+        SYN_ACK_OPTIONS_LINUX,
+        &[],
+    );
+    let rst = build_tcp_packet_with_options(
+        [93, 184, 216, 34],
+        80,
+        [192, 168, 1, 10],
+        54321,
+        0x04,
+        29200,
+        &[],
+        &[],
+    );
+
+    // 纯 RST（无重传）：官方门控下不带 -R 后缀，输出仍为 4 段
+    let mut d = Detector::new();
+    d.detect_at(&syn_ack, ts(100)).unwrap();
+    d.detect_at(&rst, ts(101)).unwrap();
+    let r = d.detect_at(&http_response(), ts(102)).unwrap();
+    assert_eq!(
+        r.expect("HTTP 响应应被识别").ja4ts.as_deref(),
+        Some("29200_2-1-3-1-1-4_1460_7")
+    );
+
+    // 有重传延迟的连接：RST 追加 `-R{整秒}`（RST 距最近 SYN-ACK 3 秒）
+    let mut d2 = Detector::new();
+    d2.detect_at(&syn_ack, ts(100)).unwrap();
+    d2.detect_at(&syn_ack, ts(102)).unwrap(); // 延迟 2
+    d2.detect_at(&rst, ts(105)).unwrap();
+    let r = d2.detect_at(&http_response(), ts(106)).unwrap();
+    assert_eq!(
+        r.expect("HTTP 响应应被识别").ja4ts.as_deref(),
+        Some("29200_2-1-3-1-1-4_1460_7_2-R3")
+    );
+}
+
+#[test]
+fn test_ja4ts_timeout_stops_collection() {
+    let mut d = Detector::new();
+    let syn_ack = build_tcp_packet_with_options(
+        [93, 184, 216, 34],
+        80,
+        [192, 168, 1, 10],
+        54321,
+        0x12,
+        29200,
+        SYN_ACK_OPTIONS_LINUX,
+        &[],
+    );
+    d.detect_at(&syn_ack, ts(100)).unwrap();
+    // 距最近 SYN-ACK 超 120 秒：官方语义停止收集，重传不计入
+    d.detect_at(&syn_ack, ts(100) + Duration::from_secs(121))
+        .unwrap();
+    // 超时后跟踪已关闭：其后 1 秒内的重传同样不计入
+    d.detect_at(&syn_ack, ts(100) + Duration::from_secs(122))
+        .unwrap();
+    let server_flow = d
+        .flows()
+        .find(|(k, _)| k.src_port == 80)
+        .map(|(_, f)| f)
+        .expect("服务端方向流应存在");
+    assert!(server_flow.ja4ts_delays.is_empty(), "超时后的重传不得计入");
+    assert!(
+        !server_flow.ja4ts_tracking,
+        "超时后跟踪应关闭（官方 synack_done 语义）"
+    );
+}
+
+#[test]
+fn test_ja4ts_max_ten_delays() {
+    let mut d = Detector::new();
+    let syn_ack = build_tcp_packet_with_options(
+        [93, 184, 216, 34],
+        80,
+        [192, 168, 1, 10],
+        54321,
+        0x12,
+        29200,
+        SYN_ACK_OPTIONS_LINUX,
+        &[],
+    );
+    d.detect_at(&syn_ack, ts(100)).unwrap();
+    // 11 次重传：官方至多收集 10 项，满即停
+    for i in 1..=11u64 {
+        d.detect_at(&syn_ack, ts(100 + i)).unwrap();
+    }
+    let server_flow = d
+        .flows()
+        .find(|(k, _)| k.src_port == 80)
+        .map(|(_, f)| f)
+        .expect("服务端方向流应存在");
+    assert_eq!(server_flow.ja4ts_delays.len(), 10);
+    assert!(
+        !server_flow.ja4ts_tracking,
+        "满 10 项后跟踪应关闭（官方 |delays|==10 return 语义）"
+    );
+    assert_eq!(
+        server_flow.ja4ts_delays,
+        vec![1; 10],
+        "延迟均为相邻 SYN-ACK 间隔整秒"
+    );
+}
+
+#[test]
+fn test_ja4ts_retrans_wins_base_and_records_delay() {
+    // 更新 F34 语义钉住：重传不覆盖 4 段基串，但按官方记入延迟序列
+    let mut d = Detector::new();
+    let syn_ack1 = build_tcp_packet_with_options(
+        [93, 184, 216, 34],
+        80,
+        [192, 168, 1, 10],
+        54321,
+        0x12,
+        29200,
+        SYN_ACK_OPTIONS_LINUX,
+        &[],
+    );
+    d.detect_at(&syn_ack1, ts(100)).unwrap();
+    // 同秒重传（不同窗口/无选项）：基串不变，延迟记 0（整秒截断）
+    let syn_ack2 = build_tcp_packet_with_options(
+        [93, 184, 216, 34],
+        80,
+        [192, 168, 1, 10],
+        54321,
+        0x12,
+        9999,
+        &[],
+        &[],
+    );
+    d.detect_at(&syn_ack2, ts(100)).unwrap();
+    let r = d.detect_at(&http_response(), ts(101)).unwrap();
+    let server_flow = d
+        .flows()
+        .find(|(k, _)| k.src_port == 80)
+        .map(|(_, f)| f)
+        .expect("服务端方向流应存在");
+    assert_eq!(
+        server_flow.ja4ts.as_deref(),
+        Some("29200_2-1-3-1-1-4_1460_7"),
+        "重传 SYN-ACK 不得覆盖 4 段基串"
+    );
+    assert_eq!(server_flow.ja4ts_delays, vec![0], "同秒重传延迟记 0");
+    assert_eq!(
+        r.expect("HTTP 响应应被识别").ja4ts.as_deref(),
+        Some("29200_2-1-3-1-1-4_1460_7_0")
+    );
+}

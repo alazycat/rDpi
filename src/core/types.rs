@@ -607,7 +607,9 @@ pub struct DetectionResult {
     pub app_protocol: Option<Application>,
     /// JA4T 客户端 TCP 指纹（F33：来自流的初始 SYN 包；非 TCP / 无 SYN 时为 None）
     pub ja4t: Option<String>,
-    /// JA4TS 服务端 TCP 指纹（F34：来自服务端方向的 SYN-ACK 包；非 TCP / 无 SYN-ACK 时为 None）
+    /// JA4TS 服务端 TCP 指纹（F34：来自服务端方向的 SYN-ACK 包；非 TCP / 无
+    /// SYN-ACK 时为 None。F40 起为完整官方格式——存在 SYN-ACK 重传时第 4 段
+    /// 后追加 `_d1-d2-...` 整秒延迟段、跟踪期内 RST 再追加 `-R{sec}`）
     pub ja4ts: Option<String>,
     /// JA4L-S 服务端时延指纹（F35：`{半程时延µs}_{SYN-ACK TTL}`；无 TCP 握手起点时为 None）
     pub ja4ls: Option<String>,

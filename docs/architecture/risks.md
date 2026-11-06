@@ -274,7 +274,7 @@
   - `DetectionResult.ja4ts`（types.rs 新字段）：规则分支与结果落库处统一携带（回显/DPI/guess 全分支覆盖）。
   - CLI：文本输出追加 ` ja4ts=...`（rdpi.rs print_detection）；json feature 随 derive 自动序列化。
 - **测试**：tests/test_ja4t.rs 扩至 11 项（新增 5：SYN-ACK 捕获、首个 SYN-ACK 优先/重传不覆盖、SYN 不触发 JA4TS 且 SYN-ACK 不触发 JA4T 双向互斥、flags 精确等于门（0x1A 不触发、同流后续精确 0x12 仍捕获）、无握手不产出）。JA4TS 无哈希段（纯格式化，格式经 F33 官方 3 向量直证），无需交叉验证。三配置全绿：默认 315 / all-features 1117（10 ignored）/ risk 360；clippy --all-features --all-targets 0 警告。
-- **已知边界**：官方 JA4TS 在 SYN-ACK 重传时追加第 5 段重传延迟序列（及 RST 后缀 `-R{sec}`，10 秒窗口、至多 10 项）——需跨包计时状态（last_ts/delays 向量），超出每流旁路字段语义，本库不实现（无重传时官方输出恰为本库 4 字段格式，前缀语义无损）；窗口缩放后实际窗口、IP 分片重组不感知等边界与 F33 相同。
+- **已知边界**：官方 JA4TS 在 SYN-ACK 重传时追加第 5 段重传延迟序列（及 RST 后缀 `-R{sec}`）——需跨包计时状态，F34 当轮不实现（**✅ 已由 F40 兑现，2026-11-06**，详见 risks.md F40；本条原记"10 秒窗口"系登记笔误，官方 zeek/ja4t/main.zeek 源码为 120 秒超时）；窗口缩放后实际窗口、IP 分片重组不感知等边界与 F33 相同。
 
 ## F35【中】JA4L-C/S 时延指纹（2026-11-06，新功能开发）—— ✅ 已完成
 
@@ -361,3 +361,18 @@
   - 调用点三处同步：[tls/mod.rs](file:///d:/rust_code/rDpi/src/protocols/tls/mod.rs)（JA4 不再依赖 `info.version` 展示串判空）、[quic/mod.rs](file:///d:/rust_code/rDpi/src/protocols/quic/mod.rs)（q 前缀，`ch` 直带新字段）、[dtls/mod.rs](file:///d:/rust_code/rDpi/src/protocols/dtls/mod.rs)（d 前缀 + DTLS 版本码；JA4 先于 sni/alpn 移动计算，borrow 顺序修正）。
 - **测试**：ja4.rs 单元 7 项重写（官方黄金向量直证 / 空列表 / GREASE 过滤与排序无关性 / 计数含 SNI-ALPN 但哈希剔除 / sig_algs 顺序敏感 + 空-ext-有-sig 照常哈希 / 版本码与传输前缀 / ALPN 编码全分支）；tests/test_ja4.rs 重写为 API 层钉住（5 项）；test_quic a2（q13d 前缀 36 字符）、test_dtls 1.3 客户端（`dd3d020200_` 前缀——F38 边界③消除）、test_pin_rules **a5 语义更新**（version 展示串仍 None，JA4 由 None 变恒可计算、回退 client_version 0x0303 → "t12d..."，改名 `a5_no_version_string_but_ja4_falls_back_to_client_version`）。三配置全绿：**默认 328 / all-features 1175（10 ignored）/ risk 373**（基线 +4：ja4 单元 +3、集成 +1）；clippy lib+bins 0 警告（--message-format=short；--all-targets 下 tests/integration_test.rs `build_tcp_packet` 未用警告经 stash 复核为 F38 提交态存量，调用方均在 cfg 门控测试内）；fmt 干净。
 - **已知边界**：① alpn 非 ASCII 回退按 ja4.py 逐位 '9'（与 JA4.md 的 hex 回退规则分歧，登记）；② QUIC 0-RTT/Handshake 等非 Initial 长包头无明文 ClientHello，JA4 不产出（原有边界）；③ DTLS 分片握手不解析（F38 边界①延续），其 JA4 同样不产出；④ 群组（supported_groups）不再参与 JA4——官方无此段，字段保留在 `ClientHelloInfo` 供他用。
+
+## F40【中】JA4TS 第 5 段重传延迟 + RST 后缀（2026-11-06，新功能开发）—— ✅ 已完成
+
+- **背景**：F34 登记的官方边界——FoxIO zeek/ja4t/main.zeek 的 ja4ts 字段在存在 SYN-ACK 重传时追加第 5 段重传延迟序列、跟踪期内 RST 追加 `-R{sec}` 后缀。本轮沿官方源码（commit 27f0cbf9）全量核对状态机并兑现，JA4TS 输出自此与官方格式完全对齐。规格权威核对更正：F34 登记的"10 秒窗口"系笔误，官方源码为 **120 秒**（`ts - last_ts > 120000000` µs）。
+- **官方语义全量复刻**（zeek/ja4t/main.zeek）：
+  - 首个精确 0x12 SYN-ACK：产出 4 段基串 + 启动收集（`last_ts` = 首捕时戳）；
+  - 收集期内服务端方向包逐包判定：距最近 SYN-ACK **超 120 秒** → 停止；flags 含 RST → 记 RST 距最近 SYN-ACK 的**整秒**（`double_to_count` 截断语义）并停止；flags **精确等于** 0x12 → 记相邻间隔整秒入延迟序列（至多 **10 项**，满即停），其余包不动状态；
+  - **任一客户端方向包即停止收集**（"Shut down on next orig packet"——正常握手里客户端完成 ACK 到达后，后续 SYN-ACK 重传不计入；客户端静默场景如扫描才有实际延迟段）；
+  - 输出组合（`connection_state_remove` 语义）：无延迟段 = 恰为 4 段基串；有延迟段 = `{基串}_{d1-d2-...}`；**RST 后缀仅在存在延迟段时追加**（纯 RST 连接不带）。
+- **实现**：
+  - [application/ja4.rs](file:///d:/rust_code/rDpi/src/application/ja4.rs)：新增 `compose_ja4ts(base, delays, rst_delay)`（纯格式化组合，单测全分支）+ 常量 `JA4TS_MAX_DELAYS = 10` / `JA4TS_TRACK_TIMEOUT = 120s`；`compute_ja4ts` 语义不变（恒产 4 段基串）。
+  - [core/flow.rs](file:///d:/rust_code/rDpi/src/core/flow.rs)：`Flow` 新增 4 个服务端方向流旁路字段——`ja4ts_synack_time`（最近 SYN-ACK 时戳）/`ja4ts_delays: Vec<u32>`（仅重传发生时分配，正常流零堆分配）/`ja4ts_rst_delay`/`ja4ts_tracking`（官方 synack_done 语义）。同 F33-F36 定型语义豁免。
+  - [lib.rs](file:///d:/rust_code/rDpi/src/lib.rs)：detect 主流程新增两个块——① 延迟收集块（先于首捕块执行，避免同一包既当基串又当重传；超时→RST→精确 0x12 三级判定对齐官方顺序）；② `observe_ja4ts_shutdown`（get_or_create 之前独立借流表，observe_ja4l 先例）：当前流 `syn_time` 已置（客户端方向，mid-stream 无关闭信号见边界）时反查对端流关闭跟踪。`DetectionResult.ja4ts` 改由 `flow_ja4ts_full` 落库时组合——`Flow.ja4ts` 恒为 4 段基串（一次定型不变），组合仅在结果构建处发生一次（无重传时输出与基串一致，热路径零额外分配）。
+- **测试**：ja4.rs 单元 +1（compose 全分支：空延迟/纯 RST 无后缀/延迟段/RST 后缀/0 秒延迟）；tests/test_ja4t.rs 扩至 17 项（新增 6：双重传第 5 段 `_1-2`、客户端 ACK 后重传不计数、RST 后缀双分支（纯 RST 无后缀 + 有延迟段 `-R3`）、120 秒超时停止、满 10 项即停、同秒重传基串不覆盖且记 0 延迟）。三配置全绿：**默认 335 / all-features 1182（10 ignored）/ risk 380**（基线 +7）；clippy --all-features lib+bins 0 警告；fmt 干净。
+- **已知边界**：① mid-stream 连接（未观测到 SYN）的客户端流无 `syn_time`，无关闭信号——但其 SYN-ACK 重传本身极罕见，登记不实现；② 客户端方向判定依赖 observe_ja4l 的 syn_time 记录（SYN 先于对端包到达），乱序捕获下可能漏关闭/漏收集，与 F35 乱序边界同源；③ zeek 在客户端包先于首个 SYN-ACK 到达时连基串都不产出（`synack_done` 先于 threshold 1 分支），本库保持 F34 的宽松语义（首个 0x12 恒产出基串）——**故意分歧**，避免既有行为回归；④ JA4T（客户端）官方 zeek 无第 5 段（JA4TScan 主动扫描变体的 section e 需主动发包，不在被动观测范围）。

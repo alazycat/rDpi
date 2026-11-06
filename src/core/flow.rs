@@ -66,9 +66,22 @@ pub struct Flow {
     /// JA4T 客户端 TCP 指纹（F33：初始 SYN 包一次性计算；流级旁路字段，
     /// 不占用 protocol/metadata 的一次定型语义）
     pub ja4t: Option<String>,
-    /// JA4TS 服务端 TCP 指纹（F34：SYN-ACK 包一次性计算；服务端方向流
-    /// 的旁路字段，不占用 protocol/metadata 的一次定型语义）
+    /// JA4TS 服务端 TCP 指纹 4 段基串（F34：SYN-ACK 包一次性计算；服务端方向流
+    /// 的旁路字段，不占用 protocol/metadata 的一次定型语义。F40 起第 5 段重传
+    /// 延迟/RST 后缀在 DetectionResult 落库时按跟踪状态组合，本字段不变）
     pub ja4ts: Option<String>,
+    /// JA4TS 第 5 段跟踪：最近一次 SYN-ACK（首捕或重传）到达时刻（F40，
+    /// 延迟 = 当前包时戳 - 该值，官方 zeek ja4t `last_ts` 语义）
+    pub ja4ts_synack_time: Option<std::time::SystemTime>,
+    /// JA4TS SYN-ACK 重传延迟序列（F40，整秒，官方 zeek ja4t `synack_delays`
+    /// 语义：至多 10 项；仅在重传发生时分配，正常流零堆分配）
+    pub ja4ts_delays: Vec<u32>,
+    /// JA4TS RST 后缀延迟（F40，整秒；跟踪期内服务端方向 RST 到达时记录一次，
+    /// 仅在存在延迟段时随第 5 段输出 `-R{n}`）
+    pub ja4ts_rst_delay: Option<u32>,
+    /// JA4TS 第 5 段收集是否进行中（F40：客户端方向包 / RST / 120 秒超时 /
+    /// 满 10 项后关闭，官方 zeek `synack_done` 语义）
+    pub ja4ts_tracking: bool,
     /// 客户端 SYN 到达时刻（F35：JA4L 的 A 时戳，TCP 客户端流记录一次）
     pub syn_time: Option<std::time::SystemTime>,
     /// 客户端 SYN 包的 IP TTL / IPv6 hop limit（F35：JA4L-C 的 TTL 段）
@@ -110,6 +123,10 @@ impl Flow {
             dpi_only: false,
             ja4t: None,
             ja4ts: None,
+            ja4ts_synack_time: None,
+            ja4ts_delays: Vec::new(),
+            ja4ts_rst_delay: None,
+            ja4ts_tracking: false,
             syn_time: None,
             syn_ttl: None,
             synack_time: None,

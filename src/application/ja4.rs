@@ -445,15 +445,54 @@ pub fn compute_ja4t(window: u16, option_kinds: &[u8], mss: u16, window_scale: u8
 /// `{window}_{options}_{mss:02}_{scale}`），差异仅在触发语义——取服务端
 /// SYN-ACK（flags 精确等于 SYN|ACK）而非客户端初始 SYN。
 ///
-/// 官方 JA4TS 在存在 SYN-ACK 重传时会追加第 5 段重传延迟序列（及 RST 后缀
-/// `-R{sec}`），需要跨包计时状态，超出每流旁路字段语义，本库不实现
-/// （见 risks.md F34 边界登记）。
+/// 官方 JA4TS 在存在 SYN-ACK 重传时追加第 5 段重传延迟序列（及 RST 后缀
+/// `-R{sec}`）——F40（2026-11-06）已实现：本函数产出 4 段基串，完整格式由
+/// [`compose_ja4ts`] 在跟踪状态下组合（见 [`JA4TS_MAX_DELAYS`]/[`JA4TS_TRACK_TIMEOUT`]）。
 ///
 /// # 参数
 ///
 /// 同 [`compute_ja4t`]：SYN-ACK 包的原始窗口值、选项 kind 序列、MSS、窗口缩放因子
 pub fn compute_ja4ts(window: u16, option_kinds: &[u8], mss: u16, window_scale: u8) -> String {
     compute_ja4t(window, option_kinds, mss, window_scale)
+}
+
+/// JA4TS 第 5 段重传延迟序列的最大项数（F40，官方 zeek ja4t：`|synack_delays| == 10`
+/// 即停止收集）
+pub const JA4TS_MAX_DELAYS: usize = 10;
+
+/// JA4TS 第 5 段收集的超时时长（F40，官方 zeek ja4t：距最近 SYN-ACK 超过
+/// 120 秒即停止收集；F34 登记"10 秒窗口"系笔误，官方源码为 120000000 µs）
+pub const JA4TS_TRACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// JA4TS 完整官方格式组合（F40，2026-11-06）
+///
+/// 官方 zeek/ja4t/main.zeek 的 `connection_state_remove` 输出语义：
+/// - 无重传延迟：恰为 4 段基串（RST 后缀仅在存在延迟段时追加——官方
+///   `if(|synack_delays| > 0)` 门控，纯 RST 连接不带后缀）
+/// - 有重传延迟：`{基串}_{d1-d2-...}`，延迟为相邻 SYN-ACK 间隔的**整秒**
+///   （官方 `double_to_count(ts - last_ts)/1000000` 截断），`-` 连接
+/// - 跟踪期内收到 RST：再追加 `-R{整秒}`（RST 距最近 SYN-ACK 的秒数）
+///
+/// # 参数
+///
+/// * `base` - [`compute_ja4ts`] 产出的 4 段基串
+/// * `delays` - SYN-ACK 重传延迟序列（整秒，升序到达序）
+/// * `rst_delay` - RST 距最近 SYN-ACK 的整秒数（None = 跟踪期内无 RST）
+pub fn compose_ja4ts(base: &str, delays: &[u32], rst_delay: Option<u32>) -> String {
+    if delays.is_empty() {
+        return base.to_string();
+    }
+    let mut s = format!("{base}_");
+    for (i, d) in delays.iter().enumerate() {
+        if i > 0 {
+            s.push('-');
+        }
+        s.push_str(&d.to_string());
+    }
+    if let Some(r) = rst_delay {
+        s.push_str(&format!("-R{r}"));
+    }
+    s
 }
 
 /// JA4L-S：服务端时延指纹（F35，2026-11-06）
@@ -715,6 +754,35 @@ mod tests {
         // mss/scale 补零语义：mss 9→"09"；scale 0→"00"
         assert_eq!(compute_ja4t(1024, &[2, 3], 9, 0), "1024_2-3_09_00");
         assert_eq!(compute_ja4t(1024, &[1, 1], 0, 2), "1024_1-1_00_2");
+    }
+
+    #[test]
+    fn test_compose_ja4ts_official_format() {
+        // F40：无重传延迟 → 恰为 4 段基串（官方语义，前缀无损）
+        assert_eq!(
+            compose_ja4ts("29200_2-1-3_1460_7", &[], None),
+            "29200_2-1-3_1460_7"
+        );
+        // 纯 RST（无延迟段）不带后缀——官方 `if(|synack_delays| > 0)` 门控
+        assert_eq!(
+            compose_ja4ts("29200_2-1-3_1460_7", &[], Some(3)),
+            "29200_2-1-3_1460_7"
+        );
+        // 有重传延迟：`{基串}_{d1-d2}`（整秒，`-` 连接）
+        assert_eq!(
+            compose_ja4ts("29200_2-1-3_1460_7", &[1, 2], None),
+            "29200_2-1-3_1460_7_1-2"
+        );
+        // 延迟段 + RST 后缀：`-R{整秒}`
+        assert_eq!(
+            compose_ja4ts("29200_2-1-3_1460_7", &[1, 2], Some(3)),
+            "29200_2-1-3_1460_7_1-2-R3"
+        );
+        // 单项延迟、0 秒延迟
+        assert_eq!(
+            compose_ja4ts("8192_00_00_00", &[0], None),
+            "8192_00_00_00_0"
+        );
     }
 
     // ==== JA4（官方 JA4.md 黄金向量 + ja4.py to_ja4 语义，F39）====
