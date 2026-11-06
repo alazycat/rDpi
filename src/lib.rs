@@ -319,10 +319,19 @@ impl Detector {
         // F36：JA4SSH 会话观测——同样需跨方向流聚合双向窗口计数，同址复用。
         // F40：JA4TS 第 5 段收集的客户端关闭观测——同址复用（服务端方向包的
         // 延迟收集在 get_or_create 之后的主流程块内完成）。
+        // F41：QUIC JA4L 时延观测——UDP 分支，长包头 type 位免解密判定。
         if let Some(tcp) = parsed.tcp.as_ref() {
             Self::observe_ja4l(&mut self.flow_table, &key, arrival, tcp);
             Self::observe_ja4ssh(&mut self.flow_table, &key, tcp.flags, parsed.payload.len());
             Self::observe_ja4ts_shutdown(&mut self.flow_table, &key);
+        } else if parsed.transport == TransportProto::Udp {
+            Self::observe_ja4l_quic(
+                &mut self.flow_table,
+                &key,
+                arrival,
+                &parsed.payload,
+                parsed.ttl,
+            );
         }
 
         // 获取或创建流
@@ -643,6 +652,116 @@ impl Detector {
                 let fp = application::compute_ja4lc(d.as_micros() as u64, ct);
                 flow_table.get_or_create(key.clone()).ja4lc = Some(fp);
             }
+        }
+    }
+
+    /// F41：QUIC JA4L 时延观测（官方 zeek ja4l/main.zeek `QUIC::initial_packet`
+    /// / `QUIC::handshake_packet` 语义）
+    ///
+    /// 在 [`Detector::detect_at`] 的 get_or_create 之前调用，独立持有流表
+    /// 借用（四时戳分布在两条方向流上，同 [`Self::observe_ja4l`]）。设计要点：
+    /// 1. 免解密判定：QUIC 长包头 packet-type 位不受 header protection 保护
+    ///    （RFC 9001 掩码仅异或首字节低 4 位）——首字节 `& 0xc0 == 0xc0`
+    ///    （fixed + long）后 type 位 = `(首字节 >> 4) & 0x03`：
+    ///    0 = Initial、2 = Handshake。
+    /// 2. 版本门控：仅 QUIC v1（version 字段 == 0x00000001；草稿版/版本
+    ///    协商跳过，见 risks.md F41 边界）。
+    /// 3. 四时点：client Initial（A'，记时戳 + TTL）→ server Initial（记
+    ///    时戳并一次算 JA4L-S = (server_init - client_init)/2 µs，三段
+    ///    `{µs}_{服务端TTL}_q`）→ server Handshake（B'，记时戳）→ client
+    ///    Handshake（算 JA4L-C = (client_hs - server_hs)/2 µs，`{µs}_{客户端
+    ///    Initial TTL}_q`，B' 未到时后续 Handshake 包继续尝试——乱序容忍）。
+    /// 4. 乱序（时戳回退）跳过；mid-stream 缺握手起点跳过（zeek 对缺失
+    ///    时戳按 0 参与计算会产出巨值，此处按 F35 先例显式跳过）；重传
+    ///    Initial 不覆盖（每流一次，zeek 无守卫，故意收紧）。
+    fn observe_ja4l_quic(
+        flow_table: &mut FlowTable,
+        key: &FlowKey,
+        arrival: std::time::SystemTime,
+        payload: &[u8],
+        ttl: u8,
+    ) {
+        // 长包头门：首字节 fixed+long 位 + 首字节与 4 字节 version 可读
+        if payload.len() < 5 || payload[0] & 0xc0 != 0xc0 {
+            return;
+        }
+        // 仅 QUIC v1（草稿版/版本协商不追踪，risks.md F41 边界）
+        if u32::from_be_bytes([payload[1], payload[2], payload[3], payload[4]]) != 0x0000_0001 {
+            return;
+        }
+        let pkt_type = (payload[0] >> 4) & 0x03;
+
+        // 对端方向流键（FlowKey 方向性）
+        let mut reverse = key.clone();
+        std::mem::swap(&mut reverse.src_ip, &mut reverse.dst_ip);
+        std::mem::swap(&mut reverse.src_port, &mut reverse.dst_port);
+        if *key == reverse {
+            return; // 自连路径保护
+        }
+
+        match pkt_type {
+            // Initial：对端已有 A'（本流为服务端）→ 记时戳并一次算 JA4L-S；
+            // 否则视为客户端首个 Initial，记 A'（时戳 + TTL，每流一次）
+            0x00 => {
+                let is_server = flow_table
+                    .get(&reverse)
+                    .is_some_and(|f| f.quic_client_init_time.is_some());
+                if is_server {
+                    let first = {
+                        let f = flow_table.get_or_create(key.clone());
+                        if f.quic_server_init_time.is_none() {
+                            f.quic_server_init_time = Some(arrival);
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if first
+                        && let Some(a) = flow_table
+                            .get(&reverse)
+                            .and_then(|p| p.quic_client_init_time)
+                        && let Some(d) = arrival.duration_since(a).ok()
+                    {
+                        let fp = application::compute_ja4ls_quic(d.as_micros() as u64, ttl);
+                        flow_table.get_or_create(key.clone()).ja4ls = Some(fp);
+                    }
+                } else {
+                    let f = flow_table.get_or_create(key.clone());
+                    if f.quic_client_init_time.is_none() {
+                        f.quic_client_init_time = Some(arrival);
+                        f.quic_client_init_ttl = Some(ttl);
+                    }
+                }
+            }
+            // Handshake：本流已有 A'（客户端）→ 对端 B' 已记则一次算
+            // JA4L-C；对端有 A'（本流为服务端）→ 记 B'；两侧均无 A'
+            // （mid-stream）→ 跳过
+            0x02 => {
+                let am_client = flow_table
+                    .get(key)
+                    .is_some_and(|f| f.quic_client_init_time.is_some());
+                if am_client {
+                    let b = flow_table.get(&reverse).and_then(|p| p.quic_server_hs_time);
+                    let ct = flow_table.get(key).and_then(|p| p.quic_client_init_ttl);
+                    let uncalced = flow_table.get(key).is_some_and(|f| f.ja4lc.is_none());
+                    if uncalced
+                        && let (Some(b), Some(ct)) = (b, ct)
+                        && let Some(d) = arrival.duration_since(b).ok()
+                    {
+                        let fp = application::compute_ja4lc_quic(d.as_micros() as u64, ct);
+                        flow_table.get_or_create(key.clone()).ja4lc = Some(fp);
+                    }
+                } else if flow_table
+                    .get(&reverse)
+                    .is_some_and(|f| f.quic_client_init_time.is_some())
+                {
+                    let f = flow_table.get_or_create(key.clone());
+                    if f.quic_server_hs_time.is_none() {
+                        f.quic_server_hs_time = Some(arrival);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 

@@ -18,6 +18,9 @@ pub struct ParsedPacket {
     pub payload: Vec<u8>,
     /// TCP 头部关键字段（F33：仅 TCP 包为 Some，供 JA4T 指纹使用）
     pub tcp: Option<TcpHeaderInfo>,
+    /// IP TTL / IPv6 hop limit（F41：QUIC JA4L 时延指纹所需，顶层对齐
+    /// TcpHeaderInfo.ttl——UDP 路径此前无 TTL 传递）
+    pub ttl: u8,
 }
 
 /// 解析原始包
@@ -31,7 +34,7 @@ pub fn parse_packet(data: &[u8]) -> Result<ParsedPacket> {
     // 根据协议解析传输层
     match ip_info.protocol {
         6 => tcp::parse(remainder, ip_info.src, ip_info.dst, ip_info.ttl),
-        17 => udp::parse(remainder, ip_info.src, ip_info.dst),
+        17 => udp::parse(remainder, ip_info.src, ip_info.dst, ip_info.ttl),
         1 => {
             // ICMP 没有端口
             Ok(ParsedPacket {
@@ -42,6 +45,7 @@ pub fn parse_packet(data: &[u8]) -> Result<ParsedPacket> {
                 transport: crate::core::TransportProto::Icmp,
                 payload: remainder.to_vec(),
                 tcp: None,
+                ttl: ip_info.ttl,
             })
         }
         p => Ok(ParsedPacket {
@@ -52,6 +56,7 @@ pub fn parse_packet(data: &[u8]) -> Result<ParsedPacket> {
             transport: crate::core::TransportProto::Other(p),
             payload: remainder.to_vec(),
             tcp: None,
+            ttl: ip_info.ttl,
         }),
     }
 }

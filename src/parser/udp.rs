@@ -3,7 +3,7 @@ use crate::error::{Error, Result};
 use crate::parser::ParsedPacket;
 use std::net::IpAddr;
 
-pub fn parse(data: &[u8], src_ip: IpAddr, dst_ip: IpAddr) -> Result<ParsedPacket> {
+pub fn parse(data: &[u8], src_ip: IpAddr, dst_ip: IpAddr, ttl: u8) -> Result<ParsedPacket> {
     if data.len() < 8 {
         return Err(Error::TruncatedHeader);
     }
@@ -26,5 +26,6 @@ pub fn parse(data: &[u8], src_ip: IpAddr, dst_ip: IpAddr) -> Result<ParsedPacket
         transport: TransportProto::Udp,
         payload,
         tcp: None,
+        ttl,
     })
 }

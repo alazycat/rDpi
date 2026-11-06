@@ -132,6 +132,7 @@ mod tests {
             transport: TransportProto::Tcp,
             payload: vec![],
             tcp: None,
+            ttl: 0,
         }
     }
 

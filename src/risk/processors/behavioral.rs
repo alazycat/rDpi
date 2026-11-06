@@ -187,6 +187,7 @@ mod tests {
             transport: TransportProto::Tcp,
             payload,
             tcp: None,
+            ttl: 0,
         }
     }
 

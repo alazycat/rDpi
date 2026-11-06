@@ -103,6 +103,7 @@ pub fn parse(data: &[u8], src_ip: IpAddr, dst_ip: IpAddr, ttl: u8) -> Result<Par
         transport: TransportProto::Tcp,
         payload,
         tcp: Some(tcp),
+        ttl,
     })
 }
 

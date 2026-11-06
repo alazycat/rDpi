@@ -82,6 +82,7 @@ mod tests {
             transport: TransportProto::Udp,
             payload: vec![0u8; payload_size],
             tcp: None,
+            ttl: 0,
         };
         (parsed, flow)
     }
@@ -102,6 +103,7 @@ mod tests {
             transport: TransportProto::Tcp,
             payload: vec![0u8; 1024],
             tcp: None,
+            ttl: 0,
         };
         (parsed, flow)
     }

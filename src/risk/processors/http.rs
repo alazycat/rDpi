@@ -212,6 +212,7 @@ mod tests {
             transport: TransportProto::Tcp,
             payload: payload.as_bytes().to_vec(),
             tcp: None,
+            ttl: 0,
         };
         (parsed, flow)
     }
@@ -286,6 +287,7 @@ mod tests {
             transport: TransportProto::Tcp,
             payload: b"password=secret".to_vec(),
             tcp: None,
+            ttl: 0,
         };
         let proc = HttpRiskProcessor::new();
         let risks = proc.analyze_packet(&parsed, &flow);

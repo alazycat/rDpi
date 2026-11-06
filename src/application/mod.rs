@@ -8,8 +8,9 @@ mod trie;
 
 pub use ja4::{
     JA4SSH_WINDOW_PACKETS, JA4TS_MAX_DELAYS, JA4TS_TRACK_TIMEOUT, Ja4Transport, compose_ja4ts,
-    compute_ja4, compute_ja4d, compute_ja4d6, compute_ja4h, compute_ja4lc, compute_ja4ls,
-    compute_ja4s, compute_ja4ssh, compute_ja4t, compute_ja4ts, compute_ja4x,
+    compute_ja4, compute_ja4d, compute_ja4d6, compute_ja4h, compute_ja4lc, compute_ja4lc_quic,
+    compute_ja4ls, compute_ja4ls_quic, compute_ja4s, compute_ja4ssh, compute_ja4t, compute_ja4ts,
+    compute_ja4x,
 };
 pub use mappings::DOMAIN_MAPPINGS;
 pub use trie::ReverseTrie;

@@ -162,6 +162,7 @@ mod tests {
             transport: TransportProto::Udp,
             payload: payload.to_vec(),
             tcp: None,
+            ttl: 0,
         }
     }
 

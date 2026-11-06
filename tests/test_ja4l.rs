@@ -244,3 +244,174 @@ fn test_ja4l_udp_flow_untouched() {
     assert!(ja4ls_by_src_port(&d, 5353).is_none());
     assert!(ja4lc_by_src_port(&d, 5353).is_none());
 }
+
+// ============================================================================
+// QUIC 变体（F41，2026-11-06）：官方 zeek ja4l/main.zeek QUIC 事件语义
+// ============================================================================
+
+/// 构造完整以太网+IPv4+UDP 包（带 TTL 参数）
+fn build_udp_packet(
+    src_ip: [u8; 4],
+    src_port: u16,
+    dst_ip: [u8; 4],
+    dst_port: u16,
+    ttl: u8,
+    payload: &[u8],
+) -> Vec<u8> {
+    let total_len = 14 + 20 + 8 + payload.len();
+    let mut pkt = Vec::with_capacity(total_len);
+    pkt.extend_from_slice(&[0x00; 6]);
+    pkt.extend_from_slice(&[0xff; 6]);
+    pkt.extend_from_slice(&[0x08, 0x00]);
+    pkt.push(0x45);
+    pkt.push(0x00);
+    pkt.extend_from_slice(&(total_len as u16 - 14).to_be_bytes());
+    pkt.extend_from_slice(&[0x00, 0x01]);
+    pkt.extend_from_slice(&[0x00, 0x00]);
+    pkt.push(ttl);
+    pkt.push(0x11); // protocol: UDP
+    pkt.extend_from_slice(&[0x00, 0x00]);
+    pkt.extend_from_slice(&src_ip);
+    pkt.extend_from_slice(&dst_ip);
+    pkt.extend_from_slice(&src_port.to_be_bytes());
+    pkt.extend_from_slice(&dst_port.to_be_bytes());
+    pkt.extend_from_slice(&(payload.len() as u16 + 8).to_be_bytes());
+    pkt.extend_from_slice(&[0x00, 0x00]);
+    pkt.extend_from_slice(payload);
+    pkt
+}
+
+/// QUIC v1 长包头载荷：首字节 fixed+long 位 + type 位 + version 0x00000001
+/// + 哑 DCID 等字段（本观测只读首字节与 version）
+fn quic_payload(first_byte: u8) -> Vec<u8> {
+    let mut p = vec![first_byte, 0x00, 0x00, 0x00, 0x01];
+    p.extend_from_slice(&[0xab; 16]);
+    p
+}
+
+/// QUIC Initial（长包头 type = 0）载荷
+fn quic_initial() -> Vec<u8> {
+    quic_payload(0xc0)
+}
+
+/// QUIC Handshake（长包头 type = 2）载荷
+fn quic_handshake() -> Vec<u8> {
+    quic_payload(0xe0)
+}
+
+#[test]
+fn test_ja4l_quic_handshake() {
+    let mut d = Detector::new();
+
+    // A'：客户端 Initial（t=0，客户端 TTL=128）
+    let c_init = build_udp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, &quic_initial());
+    d.detect_at(&c_init, ts(0)).unwrap();
+
+    // 服务端 Initial（t=10ms，服务端 TTL=57）→ JA4L-S = 10000/2 = 5000，三段 _q
+    let s_init = build_udp_packet(SERVER, 443, CLIENT, 54321, SERVER_TTL, &quic_initial());
+    d.detect_at(&s_init, ts(10_000)).unwrap();
+    assert_eq!(
+        ja4ls_by_src_port(&d, 443).as_deref(),
+        Some("5000_57_q"),
+        "QUIC JA4L-S = (server_init - client_init)/2 + TTL + '_q'（官方三段格式）"
+    );
+    assert!(
+        ja4ls_by_src_port(&d, 54321).is_none(),
+        "客户端流不携带 JA4L-S"
+    );
+
+    // B'：服务端 Handshake（t=15ms）
+    let s_hs = build_udp_packet(SERVER, 443, CLIENT, 54321, SERVER_TTL, &quic_handshake());
+    d.detect_at(&s_hs, ts(15_000)).unwrap();
+
+    // 客户端 Handshake（t=31ms）→ JA4L-C = (31-15)ms/2 = 8000，TTL 取客户端 Initial
+    let c_hs = build_udp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, &quic_handshake());
+    d.detect_at(&c_hs, ts(31_000)).unwrap();
+    assert_eq!(
+        ja4lc_by_src_port(&d, 54321).as_deref(),
+        Some("8000_128_q"),
+        "QUIC JA4L-C = (client_hs - server_hs)/2 + 客户端 Initial TTL + '_q'"
+    );
+    assert!(
+        ja4lc_by_src_port(&d, 443).is_none(),
+        "服务端流不携带 JA4L-C"
+    );
+}
+
+#[test]
+fn test_ja4l_quic_skipped_on_backward_timestamp() {
+    let mut d = Detector::new();
+    // 乱序：客户端 Initial（t=100ms）后服务端 Initial（t=40ms，时戳回退）
+    let c_init = build_udp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, &quic_initial());
+    d.detect_at(&c_init, ts(100_000)).unwrap();
+    let s_init = build_udp_packet(SERVER, 443, CLIENT, 54321, SERVER_TTL, &quic_initial());
+    d.detect_at(&s_init, ts(40_000)).unwrap();
+    assert!(
+        ja4ls_by_src_port(&d, 443).is_none(),
+        "时戳回退不产出 QUIC JA4L-S"
+    );
+}
+
+#[test]
+fn test_ja4l_quic_midstream_skipped() {
+    let mut d = Detector::new();
+    // mid-stream：首包即服务端 Initial（缺客户端 A'）→ 不产出（zeek 对缺失
+    // 时戳按 0 参与计算会产出巨值，此处按 F35 先例显式跳过）
+    let s_init = build_udp_packet(SERVER, 443, CLIENT, 54321, SERVER_TTL, &quic_initial());
+    d.detect_at(&s_init, ts(0)).unwrap();
+    // 后续服务端 Handshake / 客户端 Handshake 同样不产出 JA4L-C
+    let s_hs = build_udp_packet(SERVER, 443, CLIENT, 54321, SERVER_TTL, &quic_handshake());
+    d.detect_at(&s_hs, ts(5_000)).unwrap();
+    let c_hs = build_udp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, &quic_handshake());
+    d.detect_at(&c_hs, ts(9_000)).unwrap();
+    assert!(ja4ls_by_src_port(&d, 443).is_none());
+    assert!(ja4lc_by_src_port(&d, 443).is_none());
+    assert!(ja4lc_by_src_port(&d, 54321).is_none());
+}
+
+#[test]
+fn test_ja4l_quic_non_v1_version_skipped() {
+    let mut d = Detector::new();
+    // 草稿版版本号（0xff000020）不追踪：服务端 Initial 到达时对端无 A'
+    // → JA4L-S 不产出
+    let mut draft = vec![0xc0, 0xff, 0x00, 0x00, 0x20];
+    draft.extend_from_slice(&[0xab; 16]);
+    let c_init = build_udp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, &draft);
+    d.detect_at(&c_init, ts(0)).unwrap();
+    let s_init = build_udp_packet(SERVER, 443, CLIENT, 54321, SERVER_TTL, &quic_initial());
+    d.detect_at(&s_init, ts(10_000)).unwrap();
+    assert!(ja4ls_by_src_port(&d, 443).is_none(), "非 v1 不产出 JA4L-S");
+}
+
+#[test]
+fn test_ja4l_quic_malformed_and_ignored_types() {
+    let mut d = Detector::new();
+    // 短包（< 5 字节）与 0-RTT（type=1）/ 版本协商（type=3）长包头不参与
+    let short = build_udp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, &[0xc0, 0x00, 0x00]);
+    d.detect_at(&short, ts(0)).unwrap();
+    let zero_rtt = build_udp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, &quic_payload(0xd0));
+    d.detect_at(&zero_rtt, ts(1_000)).unwrap();
+    // 非 v1 门控后 type=3 长包头同样落入忽略分支
+    let vn = build_udp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, &quic_payload(0xf0));
+    d.detect_at(&vn, ts(2_000)).unwrap();
+    assert!(ja4ls_by_src_port(&d, 443).is_none());
+    assert!(ja4lc_by_src_port(&d, 54321).is_none());
+}
+
+#[test]
+fn test_ja4l_quic_retransmit_initial_keeps_first() {
+    let mut d = Detector::new();
+    // 客户端 Initial 重传不覆盖 A'（zeek 无守卫，此处每流一次故意收紧）：
+    // 首个 Initial t=0，重传 t=2ms，服务端 Initial t=10ms → 仍按 0 起算
+    let c_init = build_udp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, &quic_initial());
+    d.detect_at(&c_init, ts(0)).unwrap();
+    let c_retrans = build_udp_packet(CLIENT, 54321, SERVER, 443, CLIENT_TTL, &quic_initial());
+    d.detect_at(&c_retrans, ts(2_000)).unwrap();
+    let s_init = build_udp_packet(SERVER, 443, CLIENT, 54321, SERVER_TTL, &quic_initial());
+    d.detect_at(&s_init, ts(10_000)).unwrap();
+    assert_eq!(
+        ja4ls_by_src_port(&d, 443).as_deref(),
+        Some("5000_57_q"),
+        "重传 Initial 不覆盖客户端 A' 时戳"
+    );
+}

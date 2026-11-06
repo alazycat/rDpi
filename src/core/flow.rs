@@ -105,6 +105,14 @@ pub struct Flow {
     /// JA4SSH 会话指纹（F36：最近完成的 200 载荷包窗口指纹，存于两个
     /// 方向流；旁路字段，不占用 protocol/metadata 的一次定型语义）
     pub ja4ssh: Option<String>,
+    /// 客户端 QUIC Initial 到达时刻（F41：QUIC JA4L 的 A' 时戳，客户端流记录一次）
+    pub quic_client_init_time: Option<std::time::SystemTime>,
+    /// 客户端 QUIC Initial 包的 IP TTL / IPv6 hop limit（F41：QUIC JA4L-C 的 TTL 段）
+    pub quic_client_init_ttl: Option<u8>,
+    /// 服务端 QUIC Initial 到达时刻（F41：QUIC JA4L-S 计算基准，服务端流记录一次）
+    pub quic_server_init_time: Option<std::time::SystemTime>,
+    /// 服务端 QUIC Handshake 到达时刻（F41：QUIC JA4L-C 的 B' 时戳，服务端流记录一次）
+    pub quic_server_hs_time: Option<std::time::SystemTime>,
     /// 流关联的风险 (feature: risk)
     #[cfg(feature = "risk")]
     pub risks: Vec<crate::risk::types::RiskResult>,
@@ -136,6 +144,10 @@ impl Flow {
             ssh_payload_lens: Vec::new(),
             ssh_ack_count: 0,
             ja4ssh: None,
+            quic_client_init_time: None,
+            quic_client_init_ttl: None,
+            quic_server_init_time: None,
+            quic_server_hs_time: None,
             #[cfg(feature = "risk")]
             risks: Vec::new(),
         }

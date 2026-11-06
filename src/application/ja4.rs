@@ -523,6 +523,34 @@ pub fn compute_ja4lc(diff_micros: u64, client_ttl: u8) -> String {
     format!("{}_{client_ttl}", diff_micros / 2)
 }
 
+/// JA4L-S QUIC 变体（F41，2026-11-06）
+///
+/// 格式（官方 zeek ja4l/main.zeek QUIC 路径）与 TCP 两段格式不同，为三段：
+/// `{半程时延}_{服务端TTL}_q`（字面 `q` 后缀），半程时延 =
+/// 服务端 Initial → 客户端 Initial 时差总微秒数**截断整除 2**
+/// （zeek `double_to_count((b-a)/2)` 语义）。
+///
+/// # 参数
+///
+/// * `diff_micros` - 客户端 Initial（A'）到服务端 Initial 的总微秒数
+/// * `server_ttl` - 服务端 Initial 包的 IP TTL（IPv6 为 hop limit）
+pub fn compute_ja4ls_quic(diff_micros: u64, server_ttl: u8) -> String {
+    format!("{}_{server_ttl}_q", diff_micros / 2)
+}
+
+/// JA4L-C QUIC 变体（F41，2026-11-06）
+///
+/// 格式同 [`compute_ja4ls_quic`]（三段 `_q` 后缀），半程时延 =
+/// 服务端 Handshake → 客户端 Handshake 时差总微秒数截断整除 2。
+///
+/// # 参数
+///
+/// * `diff_micros` - 服务端 Handshake（B'）到客户端 Handshake 的总微秒数
+/// * `client_ttl` - 客户端 Initial 包的 IP TTL（IPv6 为 hop limit）
+pub fn compute_ja4lc_quic(diff_micros: u64, client_ttl: u8) -> String {
+    format!("{}_{client_ttl}_q", diff_micros / 2)
+}
+
 /// JA4SSH 滚动窗口大小（F36，2026-11-06）：双向载荷包合计达到该值即产出
 /// 一个指纹并清零窗口（官方 zeek ja4ssh `option ja4_ssh_packet_count = 200`）
 pub const JA4SSH_WINDOW_PACKETS: usize = 200;

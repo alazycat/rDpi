@@ -290,7 +290,7 @@
   - TTL 提取：`parser::ip::IpInfo.ttl`（IPv4 data[8] / IPv6 data[7]）→ `tcp::parse` 新增参数写入 `TcpHeaderInfo.ttl`——**未改 ParsedPacket**（复用 F33 教训，避开 12 处 risk 测试字面量波及）。
   - `DetectionResult.ja4ls/ja4lc` 全分支携带（回显/DPI/guess/规则分支）；CLI 文本输出 ` ja4ls=... ja4lc=...`；json feature 随 derive 序列化。
 - **测试**：tests/test_ja4l.rs 新增 7 项（完整握手双向数值直证 5000_57/10000_128、C 为数据包、首包优先/重传与后续包不覆盖、mid-stream 缺起点、无 SYN-ACK、时戳回退跳过、UDP 流不参与）。三配置全绿：默认 322 / all-features 1124（10 ignored）/ risk 367；clippy --all-features --all-targets 0 警告。
-- **已知边界**：① QUIC 变体（q 前缀，client Initial/server Initial/client Handshake 时戳）不实现——需 QUIC 包类型跟踪；python 另有 TLS 精化第 3 段（zeek 的 ja4l_delta：`(first_client_data-server_hello)/2`、`(server_hello-client_hello)/2`）依赖 TLS 事件，本库 2 字段格式取 python 语义（对任意 TCP 流可用，不依赖 TLS）；② 时戳回退（乱序）时 zeek 报错跳过、本库静默跳过；③ JA4L-C 在 B 未及时到达时由后续客户端包重试捕获（zeek 为一次性阈值，错过即放弃）——多包场景数值可能与 zeek 略偏；④ detect_at 调用方须保证时戳单调不回退，否则对应指纹跳过（不 panic）。
+- **已知边界**：① QUIC 变体（见 F41，2026-11-06 已兑现）——原登记不实现；python 另有 TLS 精化第 3 段（zeek 的 ja4l_delta：`(first_client_data-server_hello)/2`、`(server_hello-client_hello)/2`）依赖 TLS 事件，本库 2 字段格式取 python 语义（对任意 TCP 流可用，不依赖 TLS）；② 时戳回退（乱序）时 zeek 报错跳过、本库静默跳过；③ JA4L-C 在 B 未及时到达时由后续客户端包重试捕获（zeek 为一次性阈值，错过即放弃）——多包场景数值可能与 zeek 略偏；④ detect_at 调用方须保证时戳单调不回退，否则对应指纹跳过（不 panic）。
 
 ## F36【中】JA4SSH 会话指纹（2026-11-06，新功能开发）—— ✅ 已完成
 
@@ -376,3 +376,18 @@
   - [lib.rs](file:///d:/rust_code/rDpi/src/lib.rs)：detect 主流程新增两个块——① 延迟收集块（先于首捕块执行，避免同一包既当基串又当重传；超时→RST→精确 0x12 三级判定对齐官方顺序）；② `observe_ja4ts_shutdown`（get_or_create 之前独立借流表，observe_ja4l 先例）：当前流 `syn_time` 已置（客户端方向，mid-stream 无关闭信号见边界）时反查对端流关闭跟踪。`DetectionResult.ja4ts` 改由 `flow_ja4ts_full` 落库时组合——`Flow.ja4ts` 恒为 4 段基串（一次定型不变），组合仅在结果构建处发生一次（无重传时输出与基串一致，热路径零额外分配）。
 - **测试**：ja4.rs 单元 +1（compose 全分支：空延迟/纯 RST 无后缀/延迟段/RST 后缀/0 秒延迟）；tests/test_ja4t.rs 扩至 17 项（新增 6：双重传第 5 段 `_1-2`、客户端 ACK 后重传不计数、RST 后缀双分支（纯 RST 无后缀 + 有延迟段 `-R3`）、120 秒超时停止、满 10 项即停、同秒重传基串不覆盖且记 0 延迟）。三配置全绿：**默认 335 / all-features 1182（10 ignored）/ risk 380**（基线 +7）；clippy --all-features lib+bins 0 警告；fmt 干净。
 - **已知边界**：① mid-stream 连接（未观测到 SYN）的客户端流无 `syn_time`，无关闭信号——但其 SYN-ACK 重传本身极罕见，登记不实现；② 客户端方向判定依赖 observe_ja4l 的 syn_time 记录（SYN 先于对端包到达），乱序捕获下可能漏关闭/漏收集，与 F35 乱序边界同源；③ zeek 在客户端包先于首个 SYN-ACK 到达时连基串都不产出（`synack_done` 先于 threshold 1 分支），本库保持 F34 的宽松语义（首个 0x12 恒产出基串）——**故意分歧**，避免既有行为回归；④ JA4T（客户端）官方 zeek 无第 5 段（JA4TScan 主动扫描变体的 section e 需主动发包，不在被动观测范围）。
+
+## F41【中】QUIC JA4L-C/S 时延指纹（2026-11-06，新功能开发）—— ✅ 已完成
+
+- **背景**：兑现 F35 边界①——QUIC 握手同样三时点可度量"光距"，且**无需解密**：QUIC 长包头 packet-type 位不受 header protection 保护（RFC 9001 掩码仅异或首字节低 4 位），纯头部判定零新增依赖。输出复用 F35 既有 `Flow.ja4ls/ja4lc` 与 `DetectionResult.ja4ls/ja4lc` 全分支携带（types.rs/CLI 零改动）。
+- **规格来源**：官方 zeek/ja4l/main.zeek（commit 27f0cbf9，`QUIC::initial_packet`/`QUIC::handshake_packet` 事件全文核对；主仓库重构后纯脚本移入编译插件结构，以历史 commit 为准）：
+  - JA4L-S = `double_to_count((server_init - client_init)/2)` + `_{ttl_s}_q`：A'=客户端 Initial 时戳，B'=服务端 Initial 时戳，TTL 取**服务端 Initial 包**（当前包）；**三段格式，字面 `_q` 后缀**（delimiter + "q"——与 TCP 两段格式不同，直证第 189-199 行）；
+  - JA4L-C = `double_to_count((client_handshake - server_handshake)/2)` + `_{ttl_c}_q`：TTL 取客户端 Initial 包的 TTL；
+  - 负时延（时戳回退）zeek 报错跳过（`suppress_neg_ja4l_errors` 语义）——本库静默跳过（F35 边界②先例）。
+- **实现**：
+  - [parser/mod.rs](file:///d:/rust_code/rDpi/src/parser/mod.rs)：`ParsedPacket` 新增顶层 `ttl: u8`（UDP 路径此前无 TTL 传递；ICMP/Other 构造点同补；12 处 risk 测试构造点统一补 `ttl: 0`——F33 教训复用，本次改 ParsedPacket 是 UDP 观测所需、无 F35 时代的旁路替代）。
+  - [core/flow.rs](file:///d:/rust_code/rDpi/src/core/flow.rs)：`Flow` 新增 4 个旁路字段——`quic_client_init_time/quic_client_init_ttl`（A'，客户端流）、`quic_server_init_time`（服务端 Initial 时戳）、`quic_server_hs_time`（B'，服务端流），同 F33-F36 定型语义豁免；正常流零堆分配。
+  - [lib.rs](file:///d:/rust_code/rDpi/src/lib.rs) `Detector::observe_ja4l_quic`：detect_at 的 UDP 分支调用（get_or_create 之前独立借流表，observe_ja4l 先例）。长包头门（首字节 `& 0xc0 == 0xc0`）+ **版本门控仅 QUIC v1**（version == 0x00000001）+ type 位 `(首字节>>4)&0x03` 四时点状态机：client Initial（记 A'，每流一次）→ server Initial（记时戳并一次算 JA4L-S）→ server Handshake（记 B'）→ client Handshake（对端 B' 已到时一次算 JA4L-C，B' 未到由后续 Handshake 包继续尝试——乱序容忍，同 F35 TCP 语义）。自连路径保护同 observe_ja4ssh。
+  - [application/ja4.rs](file:///d:/rust_code/rDpi/src/application/ja4.rs)：`compute_ja4ls_quic/ja4lc_quic(diff_micros, ttl)` 三段 `_q` 纯格式化；应用模块重导出。
+- **测试**：tests/test_ja4l.rs 新增 6 项（UDP 包构造 helper + 四时点双向数值直证 `5000_57_q`/`8000_128_q`、时戳回退跳过、mid-stream 缺 A' 跳过、草稿版版本号跳过、短包/0-RTT(type=1)/type=3 忽略、重传 Initial 不覆盖 A'）。三配置全绿：**默认 341 / all-features 1188（10 ignored）/ risk 386**（基线 +6）；clippy lib+bins 0 警告（all-features 同）；fmt 干净。
+- **已知边界**：① 仅 QUIC v1——草稿版（0xff0000xx）/版本协商（version 0）不追踪（zeek 无版本过滤，QUIC 事件按解析产出；本库免解密门控只能认 v1 字面 version，收紧登记）；② 客户端 Initial 重传不覆盖 A'（zeek 逐 Initial 覆盖 `client_init`，本库每流一次**故意收紧**——重传 Initial 内容与时戳差在毫秒级，语义等价且状态机更简单）；③ mid-stream：zeek 对缺失时戳按 0 参与计算会产出巨值，本库缺 A'/B' 显式跳过（F35 TCP 先例）；④ zeek 依赖 QUIC 事件解析后的类型（含密钥恢复后的重试 Initial 归类），本库按长包头裸 type 位判定，coalesced 多包/首个字节被加密的短包头（1-RTT）自然落在门外——type 位不受保护故无假阴，但 0-RTT 期间路径不参与度量（与 zeek QUIC 事件一致，Initial 之后的 0-RTT 包无类型位用途）；⑤ 无 QUIC delta 精化段（与 TCP F35 边界①同源，python TLS 精化段不实现）。
