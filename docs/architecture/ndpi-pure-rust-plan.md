@@ -294,10 +294,12 @@
   - `DissectorState`（per-flow 状态枚举，当前 `Http` 变体）；
   - `ProtocolDetector::process`（默认无状态）+ `Registry::process_stateful`；
   - HTTP 头跨包重组（`HTTP_MAX_HEADER_BYTES = 8 KiB`，`\r\n\r\n` 边界，首包方向门控）；
+  - DNS over TCP 长度前缀重组（RFC 1035 §4.2.2；长度前缀与消息体均可跨包；仅端口 53 + 客户端方向）；
+  - 有状态路径仅对 TCP 生效（HTTP / DNS-over-TCP 均为 TCP 专用，避免 UDP DNS 被误接管）；
   - `Detector::process_l3_packet` 优先走有状态 disector，`Continue` 不回退、`GiveUp` 清状态后回退无状态。
-- **验证**：`tests/test_p1_flow.rs` 10 个用例；`cargo test` 与 `cargo test --all-features` 全绿；clippy lib+bins 0 警告。
+- **验证**：`tests/test_p1_flow.rs` 12 个用例；`cargo test` 与 `cargo test --all-features` 全绿；clippy lib+bins 0 警告。
 
 ### 待办
 
 - **P0**：nDPI JSON → 归一化适配器；rDpi per-flow JSONL 输出；20–50 个 pcap 语料；CI（Linux runner 跑 nDPI）。
-- **P1**：迁移更多有状态协议（DNS over TCP、TLS 跨包、HTTP/2）；VLAN/QinQ/IP-in-IP；规则/风险/JA4 接入新入口；迁移现有 50 个 detector；L2 与双向流整合。
+- **P1**：迁移更多有状态协议（TLS 跨包、HTTP/2）；VLAN/QinQ/IP-in-IP；规则/风险/JA4 接入新入口；迁移现有 50 个 detector；L2 与双向流整合。
