@@ -30,12 +30,42 @@ pub fn parse_packet(data: &[u8]) -> Result<ParsedPacket> {
     parse_l3_packet(remainder)
 }
 
+/// IP-in-IP 封装协议号：IPv4-in-IP（4）、IPv6-in-IP（41）
+const TUNNEL_PROTOCOLS: [u8; 2] = [4, 41];
+/// IP-in-IP 解封装深度上限（防止恶意嵌套隧道耗尽栈/时间）
+const MAX_TUNNEL_DEPTH: usize = 4;
+
 /// 解析 L3 包（IPv4/IPv6 头起始，不含以太网头）
+///
+/// 逐层剥离 IP-in-IP 封装（4/41），传输层信息取自最内层；最外层端点
+/// 保留为流身份（与 nDPI 一致：隧道流按外层 5 元组归并）。超过
+/// [`MAX_TUNNEL_DEPTH`] 时按不透明载荷处理，避免无限递归。
 ///
 /// 与 [`parse_packet`] 共用传输层解析逻辑，供调用方持有 flow 的
 /// `Detector::process_l3_packet` 入口使用。
 pub fn parse_l3_packet(data: &[u8]) -> Result<ParsedPacket> {
-    let (remainder, ip_info) = ip::parse(data)?;
+    let (mut remainder, mut ip_info) = ip::parse(data)?;
+    let mut depth = 0usize;
+
+    while TUNNEL_PROTOCOLS.contains(&ip_info.protocol) {
+        if depth == MAX_TUNNEL_DEPTH {
+            return Ok(ParsedPacket {
+                src_ip: ip_info.src,
+                dst_ip: ip_info.dst,
+                src_port: 0,
+                dst_port: 0,
+                transport: crate::core::TransportProto::Other(ip_info.protocol),
+                payload: remainder.to_vec(),
+                tcp: None,
+                ttl: ip_info.ttl,
+            });
+        }
+        let (inner_remainder, inner_info) = ip::parse(remainder)?;
+        ip_info.protocol = inner_info.protocol;
+        remainder = inner_remainder;
+        depth += 1;
+    }
+
     parse_l4(remainder, ip_info)
 }
 

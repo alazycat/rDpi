@@ -269,7 +269,7 @@
 2. ~~确认首批 Top-N~~ 已完成：见 [protocol-coverage-plan.md](protocol-coverage-plan.md) 第 7 节。
 3. `tests/parity/` 骨架已建立；下一步接 nDPI JSON 适配器、rDpi per-flow 输出与 20 个 pcap。
 4. ~~双向流 + `Flow` API + 逐包 dissector~~ 已完成；HTTP / DNS-over-TCP / TLS / HTTP2 状态机 + TCP 序列号重组已落地。
-5. 下一步：VLAN/QinQ/IP-in-IP、规则/风险/JA4 接入新入口、迁移现有 detector、P0 差分链路。
+5. ~~VLAN/QinQ/IP-in-IP~~ 已完成；下一步：规则/风险/JA4 接入新入口、迁移现有 detector、P0 差分链路。
 
 ---
 
@@ -288,6 +288,8 @@
   - `ClassificationState`（Inspecting/Partial/Monitoring/Classified）；
   - `ProtocolStack`（固定 8 层、去重、零堆分配）；
   - `parser::parse_l3_packet`（L3 入口，L2 `parse_packet` 复用）；
+  - VLAN/QinQ：以太网解析剥离 802.1Q（0x8100）、802.1ad（0x88A8）与 legacy 0x9100 标签栈（上限 4 层）；
+  - IP-in-IP：逐层剥离 IPv4-in-IP（协议 4）与 IPv6-in-IP（协议 41）；保留最外层端点作为流身份，传输层取自内层；解封装深度上限 4 层，超限按不透明载荷处理；
   - `Detector::process_l3_packet`（caller-owned Flow、双向、partial → classified 升级）。
 - **P1 有状态 dissector 框架**
   - `DissectorOutcome`（Continue/Partial/Classified/GiveUp）；
@@ -306,5 +308,5 @@
 ### 待办
 
 - **P0**：nDPI JSON → 归一化适配器；rDpi per-flow JSONL 输出；20–50 个 pcap 语料；CI（Linux runner 跑 nDPI）。
-- **P1**：VLAN/QinQ/IP-in-IP；规则/风险/JA4 接入新入口；迁移现有 50 个 detector；L2 与双向流整合。
+- **P1**：规则/风险/JA4 接入新入口；迁移现有 50 个 detector；L2 与双向流整合。
 - **P1 边界**：HTTP/2 CONTINUATION/HPACK 动态表跨帧；TLS 大 Certificate（>64 KiB）分片；TCP FIN/RST 与窗口跟踪；多活跃有状态协议（当前一个 flow 只允许一个 `DissectorState` 变体）。
