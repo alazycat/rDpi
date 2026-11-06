@@ -118,7 +118,9 @@ cargo fmt ; cargo clippy      # 提交前（lib+bins 门槛 0 警告；验证须
 | [docs/architecture/dependencies.md](file:///d:/rust_code/rDpi/docs/architecture/dependencies.md) | 依赖方向、外部 crate 审计（etherparse/rustls 死依赖已于 2026-11-04 移除） |
 | [docs/architecture/business-flows.md](file:///d:/rust_code/rDpi/docs/architecture/business-flows.md) | 五条高层业务流 |
 | [docs/architecture/risks.md](file:///d:/rust_code/rDpi/docs/architecture/risks.md) | 风险清单 R1-R11 + 探针 P1-P5 |
-| [docs/architecture/ndpi-comparison-and-roadmap.md](file:///d:/rust_code/rDpi/docs/architecture/ndpi-comparison-and-roadmap.md) | 与 nDPI 5.0 的能力对比与替换路线（2026-11-06） |
+| [docs/architecture/ndpi-comparison-and-roadmap.md](file:///d:/rust_code/rDpi/docs/architecture/ndpi-comparison-and-roadmap.md) | 与 nDPI 5.0 的能力对比与替换路线（历史版，2026-11-06） |
+| [docs/architecture/ndpi-pure-rust-plan.md](file:///d:/rust_code/rDpi/docs/architecture/ndpi-pure-rust-plan.md) | 类比 nDPI 的纯 Rust 实现方案与路线（2026-11-06） |
+| [docs/architecture/protocol-coverage-plan.md](file:///d:/rust_code/rDpi/docs/architecture/protocol-coverage-plan.md) | 协议/应用覆盖候选清单与首批 Top-N 建议（2026-11-06） |
 | [docs/business/tls-sni-application.md](file:///d:/rust_code/rDpi/docs/business/tls-sni-application.md) | TLS SNI→应用→风险 全链路深挖（F1-F5, P6-P10） |
 | [docs/decisions/](file:///d:/rust_code/rDpi/docs/decisions) | ADR（追溯记录的历史决策） |
 

@@ -4,6 +4,8 @@
 > 对比版本：rDpi 0.4.2（commit `002870b`） / nDPI 5.0（本地 `D:\c_code\nDPI-5.0`）
 > 文档性质：研究/规划产出，不含代码改动
 > 结论口径：以“替换 nDPI”为目标，但替换形态（嵌入式 C ABI / 独立引擎）尚待确认
+>
+> **目标更新（2026-11-06）**：项目目标已调整为“类比 nDPI + 纯 Rust 实现”，不要求 C ABI；后续路线以 [ndpi-pure-rust-plan.md](ndpi-pure-rust-plan.md) 为准。本文保留为“替换 nDPI”场景的历史分析。
 
 ---
 
@@ -41,7 +43,7 @@
 | 分类数 | 26 个 `ProtocolCategory` | 95 个 category |
 | Breed | 8 级 `ProtocolBreed` | 8 级，已基本对齐 |
 | Confidence | 7 级 | 10 级 |
-| 应用识别 | 49 个 `Application` 枚举 + 477 条域名后缀映射，编译期固定 | app/subprotocol + 约 4.75 万行生成匹配表 + 1.6 万行 Public Suffix List + ASN/IP 列表 + 运行期文件 |
+| 应用识别 | 46 个 `Application` 枚举 + 477 条域名后缀映射，编译期固定 | app/subprotocol + 约 4.75 万行生成匹配表 + 1.6 万行 Public Suffix List + ASN/IP 列表 + 运行期文件 |
 | 协议栈 | 单个 `Protocol` + `Application`；`master()` 返回自身 | master/app + protocol stack（可超过两层） |
 | 自定义协议 | 编译期 feature gate + JSON 规则（端口/SNI/payload） | 运行期无限自定义协议；规则支持 JA4、指纹、HTTP URL、category/breed；nBPF |
 
@@ -135,7 +137,7 @@ nDPI 的识别能力很大一部分来自生成数据：
 - 运行期加载的自定义 category/protocol 文件；
 - 动态 address/hostname cache。
 
-rDpi 是 477 条编译期域名映射 + 49 个 `Application` 枚举。**每加一个应用都要改 Rust 枚举并重新编译**，无法支撑 nDPI 级别的长尾覆盖。
+rDpi 是 477 条编译期域名映射 + 46 个 `Application` 枚举。**每加一个应用都要改 Rust 枚举并重新编译**，无法支撑 nDPI 级别的长尾覆盖。
 
 ---
 
