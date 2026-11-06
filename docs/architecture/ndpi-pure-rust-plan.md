@@ -268,7 +268,7 @@
 1. ~~从 A–E 组选择首批组合~~ 已完成：A + B。
 2. ~~确认首批 Top-N~~ 已完成：见 [protocol-coverage-plan.md](protocol-coverage-plan.md) 第 7 节。
 3. `tests/parity/` 骨架已建立；下一步接 nDPI JSON 适配器、rDpi per-flow 输出与 20 个 pcap。
-4. 双向流 + `Flow` API 首个切片已完成；下一步设计逐包 dissector trait + per-flow 协议状态。
+4. ~~双向流 + `Flow` API + 逐包 dissector~~ 已完成首个切片；下一步迁移更多有状态协议（DNS over TCP/TLS 跨包）。
 5. 协议状态机模板：从 A 组 DoH/DoT 或 B 组 SMB 开始。
 
 ---
@@ -289,9 +289,15 @@
   - `ProtocolStack`（固定 8 层、去重、零堆分配）；
   - `parser::parse_l3_packet`（L3 入口，L2 `parse_packet` 复用）；
   - `Detector::process_l3_packet`（caller-owned Flow、双向、partial → classified 升级）。
-- **验证**：`tests/test_p1_flow.rs` 9 个用例；`cargo test` 与 `cargo test --all-features` 全绿；clippy lib+bins 0 警告。
+- **P1 有状态 dissector 框架**
+  - `DissectorOutcome`（Continue/Partial/Classified/GiveUp）；
+  - `DissectorState`（per-flow 状态枚举，当前 `Http` 变体）；
+  - `ProtocolDetector::process`（默认无状态）+ `Registry::process_stateful`；
+  - HTTP 头跨包重组（`HTTP_MAX_HEADER_BYTES = 8 KiB`，`\r\n\r\n` 边界，首包方向门控）；
+  - `Detector::process_l3_packet` 优先走有状态 disector，`Continue` 不回退、`GiveUp` 清状态后回退无状态。
+- **验证**：`tests/test_p1_flow.rs` 10 个用例；`cargo test` 与 `cargo test --all-features` 全绿；clippy lib+bins 0 警告。
 
 ### 待办
 
 - **P0**：nDPI JSON → 归一化适配器；rDpi per-flow JSONL 输出；20–50 个 pcap 语料；CI（Linux runner 跑 nDPI）。
-- **P1**：逐包 `Dissector` trait + per-flow 协议状态；VLAN/QinQ/IP-in-IP；规则/风险/JA4 接入新入口；迁移现有 50 个 detector；L2 与双向流整合。
+- **P1**：迁移更多有状态协议（DNS over TCP、TLS 跨包、HTTP/2）；VLAN/QinQ/IP-in-IP；规则/风险/JA4 接入新入口；迁移现有 50 个 detector；L2 与双向流整合。
