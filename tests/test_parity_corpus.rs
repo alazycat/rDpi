@@ -128,6 +128,11 @@ fn corpus_classification_matches_ndpi_golden() {
                     if (diff.expected.eq_ignore_ascii_case("Match by port")
                         || diff.expected.eq_ignore_ascii_case("DPI (partial)"))
                         && diff.actual.eq_ignore_ascii_case("Dpi") => {}
+                // F44：rDpi 的 DoT 853 端口回退按设计保守降为 DpiPartial
+                // （nDPI 5.0 对同流报 DPI），视为可接受
+                "confidence"
+                    if diff.expected.eq_ignore_ascii_case("DPI")
+                        && diff.actual.eq_ignore_ascii_case("DpiPartial") => {}
                 "confidence" => {
                     failures.push(format!(
                         "{name}: {} expected {} actual {}",
@@ -184,6 +189,7 @@ fn corpus_classification_matches_ndpi_golden() {
 
 use rdpi::core::types::Protocol;
 use rdpi::protocols::ProtocolDetector;
+#[cfg(feature = "proto3")]
 use rdpi::protocols::ftp::FtpDetector;
 use rdpi::protocols::http::HttpDetector;
 use rdpi::protocols::tls::TlsDetector;
@@ -220,6 +226,7 @@ fn corpus_dot_alpn_and_port() {
     assert_eq!(result.protocol, Protocol::Dot);
 }
 
+#[cfg(feature = "proto3")]
 #[test]
 fn corpus_ftp_transfer_commands() {
     let detector = FtpDetector::new();

@@ -109,8 +109,10 @@ fn normalized_risk_mask(values: &[String]) -> Vec<String> {
 ///
 /// 这些风险依赖 nDPI 内部指纹库（`malicious_fingerprint`）、IP/ASN 元数据
 /// （`mismatching_protocol_with_server_ip_address`）、端到端流量统计
-/// （`unidirectional_traffic`）或其自有解析器行为（`malformed_packet`、
-/// `tls_probably_not_carrying_https`）。差分时从两侧集合中剔除，避免把
+/// （`unidirectional_traffic`）、HTTP 解析器自有启发式（`malformed_packet`、
+/// `tls_probably_not_carrying_https`、`http_susp_user_agent`——nDPI 对
+/// 缺失/空 User-Agent 的 CONNECT/代理请求告警，rDpi 无此旗标）或端口启发式
+/// （`known_proto_on_non_std_port`）。差分时从两侧集合中剔除，避免把
 /// “未建模”误报为差异；其余风险要求两侧集合完全一致。
 pub const NDPI_UNMODELED_RISKS: &[&str] = &[
     "malicious_fingerprint",
@@ -118,19 +120,39 @@ pub const NDPI_UNMODELED_RISKS: &[&str] = &[
     "mismatching_protocol_with_server_ip_address",
     "tls_probably_not_carrying_https",
     "unidirectional_traffic",
+    "known_proto_on_non_std_port",
+    "http_susp_user_agent",
+];
+
+/// rDpi 与 nDPI 5.0 同语义风险的名称别名（风险名统一到右侧 nDPI 命名）
+///
+/// 仅列同语义不同名的映射；nDPI 端名称须真实存在于 golden 输出中。
+pub const NDPI_RISK_ALIASES: &[(&str, &str)] = &[
+    // rDpi RiskFlag::TlsMissingSni ↔ nDPI TLS 解析器 missing_sni_tls_extn
+    ("tls_missing_sni", "missing_sni_tls_extn"),
 ];
 
 /// 判断 `compare_flows` 报告中的两条 risk_mask 是否等价
 ///
 /// 输入为 `FlowDiff` 里的逗号分隔字符串（风险名均为 snake_case，不含逗号）。
-/// 忽略 [`NDPI_UNMODELED_RISKS`] 后按大小写不敏感、顺序不敏感、去重比较。
+/// 名称先经 [`NDPI_RISK_ALIASES`] 归一，忽略 [`NDPI_UNMODELED_RISKS`] 后按
+/// 大小写不敏感、顺序不敏感、去重比较。
 pub fn risk_masks_equivalent(expected: &str, actual: &str) -> bool {
+    fn canonical(name: &str) -> &str {
+        for (from, to) in NDPI_RISK_ALIASES {
+            if name.eq_ignore_ascii_case(from) || name.eq_ignore_ascii_case(to) {
+                return to;
+            }
+        }
+        name
+    }
+
     fn normalized(value: &str) -> Vec<String> {
         let mut out: Vec<String> = value
             .split(',')
             .map(str::trim)
             .filter(|name| !name.is_empty())
-            .map(str::to_ascii_lowercase)
+            .map(|name| canonical(name).to_ascii_lowercase())
             .filter(|name| !NDPI_UNMODELED_RISKS.contains(&name.as_str()))
             .collect();
         out.sort();

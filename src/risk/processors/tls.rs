@@ -31,7 +31,9 @@ impl TlsRiskProcessor {
     fn get_tls<'a>(&self, flow: &'a Flow) -> Option<&'a TlsMetadata> {
         match &flow.metadata {
             Some(Metadata::Tls(tls)) => {
-                if flow.protocol == Some(Protocol::Tls) {
+                // F44：Dot 子分类流（853 端口回退/ALPN dot）与 Tls 流共用
+                // TlsMetadata，风险分析不得遗漏
+                if flow.protocol == Some(Protocol::Tls) || flow.protocol == Some(Protocol::Dot) {
                     Some(tls)
                 } else {
                     None
@@ -185,6 +187,17 @@ mod tests {
         let parsed = make_parsed();
         let risks = proc.analyze_packet(&parsed, &flow);
         assert!(!risks.iter().any(|r| r.flag == RiskFlag::TlsMissingSni));
+    }
+
+    // F44：Dot 子分类流（metadata 同为 Tls）不得被风险门控挡住
+    #[test]
+    fn test_dot_flow_missing_sni_still_flagged() {
+        let proc = TlsRiskProcessor::new();
+        let mut flow = make_tls_flow(None, Some("1.3"), vec![]);
+        flow.protocol = Some(Protocol::Dot);
+        let parsed = make_parsed();
+        let risks = proc.analyze_packet(&parsed, &flow);
+        assert!(risks.iter().any(|r| r.flag == RiskFlag::TlsMissingSni));
     }
 
     #[test]

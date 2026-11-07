@@ -27,30 +27,42 @@ fn flow_with_protocol(protocol: Protocol) -> Flow {
 fn test_protocol_name_http_connect_proxy() {
     let flow = flow_with_protocol(Protocol::HttpConnect);
     let normalized = NormalizedFlow::from_flow(&flow);
-    assert_eq!(normalized.master_protocol.as_deref(), Some("HTTP_CONNECT"));
+    assert_eq!(normalized.master_protocol.as_deref(), Some("HTTP_Connect"));
     assert_eq!(normalized.category.as_deref(), Some("Web"));
     assert_eq!(normalized.breed.as_deref(), Some("Acceptable"));
 
     let flow = flow_with_protocol(Protocol::HttpProxy);
     let normalized = NormalizedFlow::from_flow(&flow);
-    assert_eq!(normalized.master_protocol.as_deref(), Some("HTTP_PROXY"));
+    assert_eq!(normalized.master_protocol.as_deref(), Some("HTTP_Proxy"));
     assert_eq!(normalized.category.as_deref(), Some("Web"));
     assert_eq!(normalized.breed.as_deref(), Some("Acceptable"));
 }
 
 #[test]
 fn test_protocol_name_doh_dot_doq() {
-    for (protocol, expected) in [
-        (Protocol::Doh, "DNSoverHTTPS"),
-        (Protocol::Dot, "DNSoverTLS"),
-        (Protocol::Doq, "DNSoverQUIC"),
-    ] {
-        let flow = flow_with_protocol(protocol);
-        let normalized = NormalizedFlow::from_flow(&flow);
-        assert_eq!(normalized.master_protocol.as_deref(), Some(expected));
-        assert_eq!(normalized.category.as_deref(), Some("Network"));
-        assert_eq!(normalized.breed.as_deref(), Some("Acceptable"));
-    }
+    // 真实 ndpiReader 5.0 golden：DoH/DoQ → TLS.DoH_DoT（Network/Acceptable），
+    // DoT 不子分类 → 纯 TLS（Web/Safe）
+    let flow = flow_with_protocol(Protocol::Doh);
+    let normalized = NormalizedFlow::from_flow(&flow);
+    assert_eq!(normalized.master_protocol.as_deref(), Some("TLS"));
+    assert_eq!(normalized.app_protocol.as_deref(), Some("DoH_DoT"));
+    assert_eq!(normalized.category.as_deref(), Some("Network"));
+    assert_eq!(normalized.breed.as_deref(), Some("Acceptable"));
+    assert!(normalized.protocol_stack.contains(&"DoH_DoT".to_string()));
+
+    let flow = flow_with_protocol(Protocol::Doq);
+    let normalized = NormalizedFlow::from_flow(&flow);
+    assert_eq!(normalized.master_protocol.as_deref(), Some("TLS"));
+    assert_eq!(normalized.app_protocol.as_deref(), Some("DoH_DoT"));
+    assert_eq!(normalized.category.as_deref(), Some("Network"));
+    assert_eq!(normalized.breed.as_deref(), Some("Acceptable"));
+
+    let flow = flow_with_protocol(Protocol::Dot);
+    let normalized = NormalizedFlow::from_flow(&flow);
+    assert_eq!(normalized.master_protocol.as_deref(), Some("TLS"));
+    assert_eq!(normalized.app_protocol, None);
+    assert_eq!(normalized.category.as_deref(), Some("Web"));
+    assert_eq!(normalized.breed.as_deref(), Some("Safe"));
 }
 
 #[test]
@@ -61,7 +73,7 @@ fn test_protocol_stack_uses_compat_names() {
     assert!(
         normalized
             .protocol_stack
-            .contains(&"HTTP_CONNECT".to_string())
+            .contains(&"HTTP_Connect".to_string())
     );
 }
 

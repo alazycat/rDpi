@@ -88,7 +88,12 @@ impl RiskProcessor for HttpRiskProcessor {
     }
 
     fn analyze_packet(&self, parsed: &ParsedPacket, flow: &Flow) -> Vec<RiskResult> {
-        if flow.protocol != Some(Protocol::Http) {
+        // F44：HttpConnect/HttpProxy 子分类流与 Http 共用 HttpMetadata，
+        // 风险分析不得遗漏
+        if !matches!(
+            flow.protocol,
+            Some(Protocol::Http) | Some(Protocol::HttpConnect) | Some(Protocol::HttpProxy)
+        ) {
             return vec![];
         }
 
@@ -227,6 +232,25 @@ mod tests {
                 .iter()
                 .any(|r| r.flag == RiskFlag::ClearTextCredentials)
         );
+    }
+
+    // F44：HttpConnect/HttpProxy 子分类流与 Http 共用风险分析路径
+    #[test]
+    fn test_connect_and_proxy_flows_analyzed() {
+        let proc = HttpRiskProcessor::new();
+        for protocol in [Protocol::HttpConnect, Protocol::HttpProxy] {
+            let (p, mut f) = make_http_flow(
+                "POST http://api.example.com/login HTTP/1.1\r\npassword=secret123\r\n",
+            );
+            f.protocol = Some(protocol);
+            let risks = proc.analyze_packet(&p, &f);
+            assert!(
+                risks
+                    .iter()
+                    .any(|r| r.flag == RiskFlag::ClearTextCredentials),
+                "{protocol:?} 流应参与风险分析"
+            );
+        }
     }
 
     #[test]

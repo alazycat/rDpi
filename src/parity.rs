@@ -55,7 +55,10 @@ impl NormalizedFlow {
             .metadata
             .as_ref()
             .and_then(|metadata| metadata.application());
-        let app_protocol = application.map(ndpi_compat_app_name);
+        // F44：DoH/DoQ 子分类流的 app 层记 DoH_DoT（对齐 nDPI `TLS.DoH_DoT`）
+        let app_protocol = application
+            .map(ndpi_compat_app_name)
+            .or_else(|| flow.protocol.and_then(doh_dot_app_name).map(str::to_string));
         let (category, breed) = match flow.protocol {
             Some(protocol) => {
                 let (category, breed) = ndpi_compat_classification(protocol, application);
@@ -64,7 +67,14 @@ impl NormalizedFlow {
             None => (None, None),
         };
         let confidence = flow.confidence.map(|confidence| format!("{confidence:?}"));
-        let protocol_stack = flow.protocol_stack.iter().map(protocol_name).collect();
+        let mut protocol_stack: Vec<String> =
+            flow.protocol_stack.iter().map(protocol_name).collect();
+        // nDPI 协议栈含 app 层（`TLS.DoH_DoT` → [TLS, DoH_DoT]）
+        if let Some(app) = app_protocol.as_deref()
+            && matches!(flow.protocol, Some(Protocol::Doh | Protocol::Doq))
+        {
+            protocol_stack.push(app.to_string());
+        }
 
         // 风险名导出为 nDPI 5.0 兼容名（`tls_missing_sni` → `missing_sni_tls_extn`）；
         // 逐包分析可能重复累积同一风险，导出前排序去重
@@ -171,15 +181,26 @@ fn protocol_name(protocol: Protocol) -> String {
         Protocol::Redis => "RESP".to_string(),
         #[cfg(feature = "proto3")]
         Protocol::Ftp => "FTP_CONTROL".to_string(),
-        // F44 子分类：与 nDPI 5.0 `ndpi_check_http_url`/`ndpi_search_dns` 的
-        // 子协议判定结果对齐（nDPI 分别报告 HTTP CONNECT/HTTP Proxy 与
-        // DNSoverHTTPS/DNSoverTLS/DNSoverQUIC）
-        Protocol::HttpConnect => "HTTP_CONNECT".to_string(),
-        Protocol::HttpProxy => "HTTP_PROXY".to_string(),
-        Protocol::Doh => "DNSoverHTTPS".to_string(),
-        Protocol::Dot => "DNSoverTLS".to_string(),
-        Protocol::Doq => "DNSoverQUIC".to_string(),
+        // F44 子分类（真实 ndpiReader 5.0 golden 验证）：
+        // - HTTP CONNECT/Proxy 是独立协议 ID（130/131），名称 HTTP_Connect/HTTP_Proxy
+        // - DoH/DoT/DoQ 共用 NDPI_PROTOCOL_DOH_DOT（196），JSON 输出为
+        //   `TLS.DoH_DoT` 拆分到 master/app；rDpi 的 Dot 子分类在 nDPI 5.0
+        //   中不单独识别（golden 中仍报 TLS），导出统一记 TLS
+        Protocol::HttpConnect => "HTTP_Connect".to_string(),
+        Protocol::HttpProxy => "HTTP_Proxy".to_string(),
+        Protocol::Doh | Protocol::Dot | Protocol::Doq => "TLS".to_string(),
         _ => format!("{protocol:?}"),
+    }
+}
+
+/// DNS-over-X 家族的 nDPI 5.0 应用层名称（NDPI_PROTOCOL_DOH_DOT = 196）
+///
+/// nDPI 对 DoH/DoQ 子分类流输出 `TLS.DoH_DoT`（master TLS + app DoH_DoT）；
+/// DoT 在 nDPI 5.0 中不子分类（golden 中报纯 TLS），故仅 Doh/Doq 产出 app。
+fn doh_dot_app_name(protocol: Protocol) -> Option<&'static str> {
+    match protocol {
+        Protocol::Doh | Protocol::Doq => Some("DoH_DoT"),
+        _ => None,
     }
 }
 
@@ -227,10 +248,11 @@ fn ndpi_compat_classification(
     };
     match protocol {
         Protocol::Dns => ("Network".to_string(), "Acceptable".to_string()),
-        // F44 子分类：DNS 家族在 nDPI 5.0 中归 Network/Acceptable
-        Protocol::Doh | Protocol::Dot | Protocol::Doq => {
-            ("Network".to_string(), "Acceptable".to_string())
-        }
+        // F44 子分类（真实 ndpiReader 5.0 golden 验证）：DoH/DoQ 在 nDPI 中
+        // 为 TLS.DoH_DoT → Network/Acceptable；DoT 不子分类，golden 报纯
+        // TLS → Web/Safe（与 Tls 分支一致）
+        Protocol::Doh | Protocol::Doq => ("Network".to_string(), "Acceptable".to_string()),
+        Protocol::Dot => ("Web".to_string(), "Safe".to_string()),
         Protocol::Http => app_taxonomy(application)
             .unwrap_or_else(|| ("Web".to_string(), "Acceptable".to_string())),
         // F44 子分类：HTTP CONNECT/Proxy 在 nDPI 中归 Web/Acceptable
