@@ -25,7 +25,7 @@ fn decode_nbns_name(encoded: &[u8]) -> Option<[u8; 16]> {
         return None;
     }
     let mut decoded = [0u8; 16];
-    for (index, pair) in encoded.chunks_exact(2).enumerate() {
+    for (index, pair) in encoded.as_chunks::<2>().0.iter().enumerate() {
         let hi = pair[0].checked_sub(b'A')?;
         let lo = pair[1].checked_sub(b'A')?;
         if hi > 15 || lo > 15 {
@@ -94,10 +94,15 @@ pub(crate) fn parse_nbss(payload: &[u8]) -> Option<NetBiosParsed> {
     if length < 33 {
         return None;
     }
+    // RFC 1002 名字段：1 字节长度（0x20）+ 32 字符编码 + 终止字节
+    if payload.len() < 38 || payload[4] != 0x20 {
+        return None;
+    }
+    let decoded = decode_nbns_name(&payload[5..37])?;
     Some(NetBiosParsed {
         service: NetBiosService::SessionService,
-        name: trim_name(&payload[4..20]),
-        suffix: None,
+        name: trim_name(&decoded[..15]),
+        suffix: Some(decoded[15]),
     })
 }
 
@@ -133,7 +138,9 @@ mod tests {
     }
 
     fn nbns_query() -> Vec<u8> {
-        let mut payload = vec![0x12, 0x34, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let mut payload = vec![
+            0x12, 0x34, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
         payload.push(0x20);
         payload.extend(encode_name("SERVER", 0x20));
         payload.push(0x00);
@@ -154,10 +161,12 @@ mod tests {
 
     fn nbss_session_request() -> Vec<u8> {
         let mut payload = vec![0x81, 0x00, 0x00, 0x44];
-        payload.extend_from_slice(b"SERVER          ");
-        payload.extend_from_slice(b"CLIENT          ");
-        payload.extend_from_slice(&[0x20]);
-        payload.extend_from_slice(&[0x00; 35]);
+        payload.push(0x20);
+        payload.extend(encode_name("SERVER", 0x20));
+        payload.push(0x00);
+        payload.push(0x20);
+        payload.extend(encode_name("CLIENT", 0x20));
+        payload.push(0x00);
         payload
     }
 
@@ -203,6 +212,7 @@ mod tests {
         let parsed = parse_nbss(&payload).unwrap();
         assert_eq!(parsed.service, NetBiosService::SessionService);
         assert_eq!(parsed.name.as_deref(), Some("SERVER"));
+        assert_eq!(parsed.suffix, Some(0x20));
     }
 
     #[test]
@@ -211,6 +221,8 @@ mod tests {
         let parsed = parse_nbss_session_message(&payload).unwrap();
         assert_eq!(parsed.service, NetBiosService::SessionService);
         assert!(parsed.name.is_none());
-        assert!(parse_nbss_session_message(&[0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00]).is_none());
+        assert!(
+            parse_nbss_session_message(&[0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00]).is_none()
+        );
     }
 }

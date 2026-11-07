@@ -45,6 +45,7 @@
 | quic | quic（crypto.rs Initial 解密 + parser.rs，无 detector.rs 目录结构；F44，2026-11-07：ALPN doq 前缀 → Doq 子分类） |
 | dtls | dtls（F38，2026-11-06：DTLS 握手识别 + d 前缀 JA4/JA4S，合成 TLS 记录复用 tls 解析器，无 detector.rs 目录结构） |
 | ssh | ssh |
+| smb | netbios, smb（F45，2026-11-07：NBNS UDP137/NBDS UDP138/NBSS TCP139 会话请求 + SMBv1/v2/3 over TCP445，SMB1 Negotiate 跳过 + NBSS 头部跨段重组） |
 | smtp | smtp（F43，2026-11-06：有状态跨段行重组 + MAIL FROM/RCPT TO 提取 sender/recipient 元数据） |
 | mail | pop3, imap（F43，2026-11-06：有状态跨段行重组 + USER/LOGIN 提取 username 元数据） |
 | infra | ntp, dhcp, bgp, dhcpv6, vxlan, netflow, ike, ptpv2 |

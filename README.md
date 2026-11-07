@@ -11,7 +11,7 @@ Rust Deep Packet Inspection library - 轻量级、高性能的深度包检测库
 ## 特性
 
 - **传输层解析**: TCP/UDP/ICMP 协议识别
-- **协议检测**: DNS、HTTP、TLS、QUIC、SSH、SMTP、POP3/IMAP、NTP/DHCP、SNMP、Modbus、MySQL/PostgreSQL/Redis、FTP/SIP/RTP、MQTT、WireGuard/OpenVPN、STUN 等 49 个 detector（见下表）
+- **协议检测**: DNS、HTTP、TLS、QUIC、SSH、NetBIOS/SMB（`smb` feature）、SMTP、POP3/IMAP、NTP/DHCP、SNMP、Modbus、MySQL/PostgreSQL/Redis、FTP/SIP/RTP、MQTT、WireGuard/OpenVPN、STUN 等 51 个 detector（见下表）
 - **元数据提取**: DNS 域名、HTTP 方法/路径/Host、TLS SNI/版本/证书、QUIC 版本/连接 ID/SNI/ALPN/JA4/Transport Parameters、SSH 版本等
 - **应用识别**: TLS SNI → 应用归属（反向 Trie 域名匹配）
 - **流管理**: 五元组追踪、超时清理、容量上限（满载先清超时流，再按最久未活跃逐出）
@@ -58,6 +58,7 @@ fn main() -> rdpi::error::Result<()> {
 | `http` | ✅ | HTTP 协议检测，提取方法、路径、Host |
 | `tls` | ✅ | TLS 协议检测，提取 SNI、版本、证书 |
 | `ssh` | ❌ | SSH 协议检测，提取协议和软件版本 |
+| `smb` | ❌ | NetBIOS（NBNS/NBDS/NBSS）+ SMBv1/v2/3 识别，提取 SMB 命令/NT status、NetBIOS 名称；SMBv1 触发风险旗标（`risk` feature） |
 | `smtp` | ❌ | SMTP 协议检测，提取主机名 |
 | `quic` | ❌ | QUIC 协议检测：长包头全类型识别（Initial/0-RTT/Handshake/Retry/VN）+ Initial 包解密提取 SNI/ALPN/JA4 + Retry 完整性校验（手写 AES-GCM/HKDF，零新增依赖） |
 | `mail` | ❌ | POP3/POP3S/IMAP/IMAPS 协议检测 |
@@ -93,6 +94,7 @@ rdpi = { version = "0.4.2", default-features = false, features = ["http", "tls",
 | HTTP | `http` | 方法、路径、Host 头 |
 | TLS | `tls` | SNI、TLS 版本、应用、证书 |
 | SSH | `ssh` | 协议版本、软件版本 |
+| NetBIOS（NBNS/NBDS/NBSS）、SMBv1/v2/3 | `smb` | NetBIOS 服务类型/名称/后缀、SMB 命令/NT status |
 | SMTP | `smtp` | 主机名、客户端标识 |
 | QUIC | `quic` | 版本、连接 ID、SNI、ALPN、JA4、应用、Transport Parameters |
 | POP3/POP3S、IMAP/IMAPS | `mail` | - |

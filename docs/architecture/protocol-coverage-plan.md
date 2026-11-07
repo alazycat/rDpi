@@ -55,11 +55,11 @@
 
 | 类别 | nDPI 代表性协议/应用 | rDpi 差距 |
 |---|---|---|
-| Web / 云 / CDN | HTTP、HTTP2、TLS、QUIC、WebSocket、DoH/DoT/DoQ、HTTP CONNECT、HTTP Proxy、SOAP、JSON-RPC、WebDAV、AWS（Cognito/API Gateway/Kinesis/EC2/EMR/S3/CloudFront/DynamoDB）、Azure、Google Cloud、阿里云、Cloudflare、Akamai、DigitalOcean、Salesforce、GitHub、GitLab | DoH/DoT、HTTP CONNECT/Proxy、SOAP/JSON-RPC/WebDAV、AWS 细分、Akamai 等缺失 |
+| Web / 云 / CDN | HTTP、HTTP2、TLS、QUIC、WebSocket、DoH/DoT/DoQ、HTTP CONNECT、HTTP Proxy、SOAP、JSON-RPC、WebDAV、AWS（Cognito/API Gateway/Kinesis/EC2/EMR/S3/CloudFront/DynamoDB）、Azure、Google Cloud、阿里云、Cloudflare、Akamai、DigitalOcean、Salesforce、GitHub、GitLab | SOAP/JSON-RPC/WebDAV、AWS 细分、Akamai 等缺失（DoH/DoT/DoQ、HTTP CONNECT/Proxy 已于 F44 补齐） |
 | 邮件 | SMTP/SMTPS、POP/POPS、IMAP/IMAPS、Outlook、Gmail、Yandex Mail | 基本覆盖，缺应用级细分 |
-| DNS / 基础设施 | DNS、mDNS、DoH/DoT、DNSCrypt、NTP、DHCP、DHCPv6、SNMP、Syslog、NetFlow、sFlow、BGP、OSPF、LDP、BFD、VRRP、HSRP、GLBP、PTPv2、LLMNR、SSDP、WSD、NetBIOS、NAT-PMP | DoH/DoT、DNSCrypt、OSPF/LDP/BFD/VRRP/HSRP/GLBP、LLMNR/SSDP/WSD/NetBIOS 缺失 |
+| DNS / 基础设施 | DNS、mDNS、DoH/DoT、DNSCrypt、NTP、DHCP、DHCPv6、SNMP、Syslog、NetFlow、sFlow、BGP、OSPF、LDP、BFD、VRRP、HSRP、GLBP、PTPv2、LLMNR、SSDP、WSD、NetBIOS、NAT-PMP | DNSCrypt、OSPF/LDP/BFD/VRRP/HSRP/GLBP、LLMNR/SSDP/WSD 缺失（DoH/DoT 已于 F44 补齐、NetBIOS 已于 F45 补齐） |
 | 远程访问 | SSH、RDP、VNC、Telnet、TeamViewer、AnyDesk、Citrix、GoTo、NoMachine、Radmin、RSH、XDMCP | TeamViewer/AnyDesk/Citrix/GoTo/NoMachine 等缺失 |
-| 文件 / 存储 | FTP Control/Data、FTPS、TFTP、SMBv1/v2/v3、NFS、AFP、Rsync、Dropbox、Google Drive、OneDrive、iCloud、Ceph、Lustre、Syncthing | SMB、AFP、Google Drive/OneDrive/iCloud、Ceph/Lustre/Syncthing 缺失 |
+| 文件 / 存储 | FTP Control/Data、FTPS、TFTP、SMBv1/v2/v3、NFS、AFP、Rsync、Dropbox、Google Drive、OneDrive、iCloud、Ceph、Lustre、Syncthing | AFP、Google Drive/OneDrive/iCloud、Ceph/Lustre/Syncthing 缺失（SMB 已于 F45 补齐） |
 | 数据库 / 数据 | MySQL、PostgreSQL、MSSQL_TDS、Oracle、RESP（Redis）、MongoDB、Cassandra、Memcached、Elasticsearch、ClickHouse、DRDA | MSSQL、Oracle、Cassandra、Memcached、Elasticsearch、ClickHouse、DRDA 缺失 |
 | 消息 / 数据管道 | Kafka、AMQP、MQTT、NATS、STOMP、OpenWire、ZeroMQ、Gearman、Thrift、Protobuf、JSON-RPC、SOAP | 除 MQTT 外基本缺失 |
 | VoIP / 流媒体 | SIP、RTP、RTCP、SRTP、RTSP、H.323、MGCP、Megaco、Skinny、IAX、STUN、Icecast、MPEGTS、MPEGDASH、HLS、RTMP、RTPS、BFCP | RTSP、SRTP、MPEGTS/MPEGDASH/HLS、RTPS、BFCP、Megaco/Skinny/IAX 缺失 |
@@ -77,10 +77,10 @@
 
 | 协议 | 类别 | 价值 | 实现难度 |
 |---|---|---|---|
-| DoH / DoT / DoQ | DNS / Web | 加密 DNS 识别，现代网络必备 | 中 |
-| HTTP CONNECT / HTTP Proxy | Web | 代理/隧道识别 | 低 |
-| SMBv1 / SMBv2 / SMBv3 | 文件 | 企业内网最大流量之一 | 中 |
-| NetBIOS | 基础设施 | Windows 内网发现 | 低 |
+| DoH / DoT / DoQ | DNS / Web | 加密 DNS 识别，现代网络必备 | 中 |（✅ F44 完成）
+| HTTP CONNECT / HTTP Proxy | Web | 代理/隧道识别 | 低 |（✅ F44 完成）
+| SMBv1 / SMBv2 / SMBv3 | 文件 | 企业内网最大流量之一 | 中 |（✅ F45 完成，2026-11-07）
+| NetBIOS | 基础设施 | Windows 内网发现 | 低 |（✅ F45 完成，2026-11-07）
 | MSSQL / TDS | 数据库 | 企业数据库 | 中 |
 | Oracle | 数据库 | 企业数据库 | 中 |
 | Cassandra | 数据库 | 分布式数据库 | 中 |
@@ -204,8 +204,8 @@
 10. IMAP
 11. POP3
 12. FTP
-13. SMBv2/v3
-14. NetBIOS
+13. ~~SMBv2/v3~~（✅ F45 完成，含 SMBv1 风险旗标）
+14. ~~NetBIOS~~（✅ F45 完成）
 15. LDAP
 16. Kerberos
 17. RDP
@@ -280,7 +280,7 @@
 
 ### 10.2 阶段 2：企业协议补齐（P2 Wave 1B）
 
-- SMBv1/v2/v3、NetBIOS、AFP、MSSQL/TDS、Oracle、Cassandra、Memcached、Elasticsearch、Kafka、AMQP、NATS、STOMP、OpenWire。
+- SMBv1/v2/v3、NetBIOS（✅ F45 完成）、AFP、MSSQL/TDS、Oracle、Cassandra、Memcached、Elasticsearch、Kafka、AMQP、NATS、STOMP、OpenWire。
 - 验收：每个协议有正/负样本；Top-20 协议 precision/recall ≥ 0.95。
 
 ### 10.3 阶段 3：应用数据管线（P2 Wave 1C）

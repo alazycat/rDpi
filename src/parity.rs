@@ -50,14 +50,13 @@ impl NormalizedFlow {
         }
         .to_string();
 
-        let master_protocol = flow.protocol.map(protocol_name);
+        // F44：DoH/DoQ 子分类流的 app 层记 DoH_DoT（对齐 nDPI `TLS.DoH_DoT`）；
+        // F45（真实 ndpiReader 5.0 golden 验证）：SMB 流输出 `NetBIOS.SMBv1` /
+        // `NetBIOS.SMBv23`（proto_id 10.16 / 10.41）——master 为 NetBIOS
         let application = flow
             .metadata
             .as_ref()
             .and_then(|metadata| metadata.application());
-        // F44：DoH/DoQ 子分类流的 app 层记 DoH_DoT（对齐 nDPI `TLS.DoH_DoT`）；
-        // F45（真实 ndpiReader 5.0 golden 验证）：SMB 流输出 `NetBIOS.SMBv1` /
-        // `NetBIOS.SMBv23`（proto_id 10.16 / 10.41）——master 为 NetBIOS
         let mut master_protocol = flow.protocol.map(protocol_name);
         let app_protocol = application
             .map(ndpi_compat_app_name)

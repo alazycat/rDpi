@@ -55,11 +55,7 @@ impl ProtocolDetector for SmbDetector {
         Some(result_from(header))
     }
 
-    fn detect_with_context(
-        &self,
-        payload: &[u8],
-        ctx: &DetectContext,
-    ) -> Option<DetectionResult> {
+    fn detect_with_context(&self, payload: &[u8], ctx: &DetectContext) -> Option<DetectionResult> {
         if ctx.src_port != 445 && ctx.dst_port != 445 {
             return None;
         }
@@ -107,7 +103,7 @@ impl ProtocolDetector for SmbDetector {
             if smb.buffer.len() < 8 {
                 return Some(DissectorOutcome::Continue);
             }
-            let is_v1 = &smb.buffer[4..8] == &b"\xFFSMB"[..];
+            let is_v1 = smb.buffer[4..8] == *b"\xFFSMB";
             if is_v1 && smb.buffer.len() < 9 {
                 return Some(DissectorOutcome::Continue);
             }
@@ -149,7 +145,12 @@ mod tests {
 
     fn nbss(payload: &[u8]) -> Vec<u8> {
         let length = payload.len();
-        let mut out = vec![0x00, (length >> 16) as u8, (length >> 8) as u8, length as u8];
+        let mut out = vec![
+            0x00,
+            (length >> 16) as u8,
+            (length >> 8) as u8,
+            length as u8,
+        ];
         out.extend_from_slice(payload);
         out
     }
@@ -197,17 +198,21 @@ mod tests {
     #[test]
     fn stateless_skips_smb1_negotiate() {
         let detector = SmbDetector::new();
-        assert!(detector
-            .detect_with_context(&smb1(0x72), &ctx(50000, 445))
-            .is_none());
+        assert!(
+            detector
+                .detect_with_context(&smb1(0x72), &ctx(50000, 445))
+                .is_none()
+        );
     }
 
     #[test]
     fn ignores_non_445_port() {
         let detector = SmbDetector::new();
-        assert!(detector
-            .detect_with_context(&smb1(0x73), &ctx(50000, 139))
-            .is_none());
+        assert!(
+            detector
+                .detect_with_context(&smb1(0x73), &ctx(50000, 139))
+                .is_none()
+        );
     }
 
     #[test]
