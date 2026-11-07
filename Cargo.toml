@@ -2,6 +2,7 @@
 name = "rdpi"
 version = "0.4.2"
 edition = "2024"
+rust-version = "1.88"
 description = "Rust Deep Packet Inspection library"
 license = "MIT"
 repository = "https://github.com/yourname/rdpi"

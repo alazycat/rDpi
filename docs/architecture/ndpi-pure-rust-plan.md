@@ -267,7 +267,7 @@
 
 1. ~~从 A–E 组选择首批组合~~ 已完成：A + B。
 2. ~~确认首批 Top-N~~ 已完成：见 [protocol-coverage-plan.md](protocol-coverage-plan.md) 第 7 节。
-3. ~~rDpi per-flow 输出~~、~~nDPI JSON 适配器~~、~~20 个自生成 pcap + golden~~、~~nDPI 兼容分类映射~~ 已完成；下一步补目标环境真实 pcap 与 CI。
+3. ~~rDpi per-flow 输出~~、~~nDPI JSON 适配器~~、~~20 个自生成 pcap + golden~~、~~nDPI 兼容分类映射~~、~~CI~~ 已完成；下一步补目标环境真实 pcap。
 4. ~~双向流 + `Flow` API + 逐包 dissector~~ 已完成；HTTP / DNS-over-TCP / TLS / HTTP2 状态机 + TCP 序列号重组已落地。
 5. ~~VLAN/QinQ/IP-in-IP~~、~~规则/风险/JA4 接入新入口~~ 已完成；下一步：迁移现有 detector、L2 与双向流整合、P0 差分链路。
 
@@ -303,6 +303,11 @@
   - DNS 保持 master taxonomy（nDPI 不对 DNS 查询做 app 分类），rDpi 仍保留应用识别结果；
   - 未覆盖组合回退原生名称并在 diff 中暴露；
   - 语料测试升级为 gate master/app/category/breed/confidence：20/20 用例全部一致，risk_mask 仅报告。
+- **P0 CI 接入**
+  - `.github/workflows/ci.yml`：Ubuntu + Windows 矩阵；
+  - `cargo fmt --check`、`cargo clippy --all-features --all-targets -D warnings`、默认 features 测试、全 features 测试（含 20 个语料的差分测试）；
+  - 语料与 golden 已提交，CI 不依赖 nDPI 可执行文件；
+  - `Cargo.toml` 声明 `rust-version = "1.88"`（edition 2024 + let-chains）。
 - **P1 首个垂直切片**
   - `FlowKey::canonical/reverse` + `Direction`；
   - `Flow::new_bidirectional/direction_of`（方向相对首包 initiator，而非任意规范键）；
@@ -335,6 +340,6 @@
 
 ### 待办
 
-- **P0**：目标环境真实 pcap 扩充（20 个自生成用例已就绪）；CI 接入；映射表随语料扩展继续补充。
+- **P0**：目标环境真实 pcap 扩充（20 个自生成用例已就绪）；映射表随语料扩展继续补充。
 - **P1**：迁移现有 50 个 detector；L2 与双向流整合。
 - **P1 边界**：QUIC JA4L 与流级风险分析（`analyze_flow`）仍仅在 `detect_at`/`drain_risks` 路径；HTTP/2 CONTINUATION/HPACK 动态表跨帧；TLS 大 Certificate（>64 KiB）分片；TCP FIN/RST 与窗口跟踪；多活跃有状态协议（当前一个 flow 只允许一个 `DissectorState` 变体）。

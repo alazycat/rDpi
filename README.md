@@ -1,6 +1,7 @@
 # rDpi
 
-[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
+[![CI](https://github.com/alazycat/rDpi/actions/workflows/ci.yml/badge.svg)](https://github.com/alazycat/rDpi/actions/workflows/ci.yml)
+[![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Rust Deep Packet Inspection library - 轻量级、高性能的深度包检测库。

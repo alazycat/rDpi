@@ -188,5 +188,6 @@ cargo test --all-features --test test_parity_corpus -- --nocapture
 1. ~~nDPI JSON → 归一化 schema 适配器~~ 已完成（`parse_ndpi_jsonl`）；
 2. ~~rDpi per-flow JSONL 输出~~ 已完成（`-o flows-jsonl` / `Detector::normalized_flows()`）；
 3. ~~20 个自生成 pcap + golden output~~ 已完成；目标环境真实 pcap 待补；
-4. 纳入 CI（Linux runner；语料与 golden 已提交，无需运行时依赖 nDPI）；
-5. category/breed/app protocol 映射表（使差异报告可判定）。
+4. ~~纳入 CI~~ 已完成（`.github/workflows/ci.yml`，Ubuntu + Windows）；
+5. ~~category/breed/app protocol 映射表~~ 已完成（`src/parity.rs`）；
+6. 扩充目标环境真实 pcap；risk_mask 映射与门禁。
