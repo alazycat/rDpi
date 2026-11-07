@@ -343,6 +343,8 @@ pub fn register_defaults(_registry: &mut Registry) {
     elasticsearch::register(_registry);
     #[cfg(feature = "database")]
     memcached::register(_registry);
+    #[cfg(feature = "messaging")]
+    amqp::register(_registry);
     #[cfg(feature = "smtp")]
     smtp::register(_registry);
     #[cfg(feature = "mail")]
@@ -550,5 +552,21 @@ mod database_registry_tests {
             names.contains(&"elasticsearch"),
             "elasticsearch detector must be registered"
         );
+    }
+}
+
+#[cfg(all(test, feature = "messaging"))]
+mod messaging_registry_tests {
+    use super::*;
+
+    #[test]
+    fn test_amqp_detector_registered() {
+        let registry = Registry::default();
+        let names: Vec<&str> = registry
+            .detectors
+            .iter()
+            .map(|entry| entry.detector.name())
+            .collect();
+        assert!(names.contains(&"amqp"), "amqp detector must be registered");
     }
 }
