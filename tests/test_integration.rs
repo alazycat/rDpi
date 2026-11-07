@@ -205,7 +205,11 @@ fn test_registry_default_detector_count() {
         }
         #[cfg(feature = "database")]
         {
-            count += 4; // MySQL + PostgreSQL + Redis + MongoDB
+            count += 6; // MySQL + PostgreSQL + Redis + MongoDB + Memcached + Elasticsearch（F46）
+        }
+        #[cfg(feature = "messaging")]
+        {
+            count += 1; // AMQP（F46）
         }
         #[cfg(feature = "proto3")]
         {
