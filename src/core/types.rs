@@ -277,6 +277,10 @@ pub enum Protocol {
     // 核心应用层（内置）
     Dns,
     Http,
+    /// HTTP CONNECT 隧道（feature: http）
+    HttpConnect,
+    /// HTTP 正向代理（绝对 URI，feature: http）
+    HttpProxy,
     Tls,
     Ssh,
     Smtp,
@@ -286,6 +290,12 @@ pub enum Protocol {
     // 扩展协议
     Quic,
     Http3,
+    /// DNS over HTTPS（RFC 8484，feature: tls）
+    Doh,
+    /// DNS over TLS（RFC 7858，feature: tls）
+    Dot,
+    /// DNS over QUIC（RFC 9250，feature: quic）
+    Doq,
     /// DTLS（RFC 6347/9147，feature: dtls，F38）
     Dtls,
     // 邮件协议 (feature: mail)
@@ -1100,7 +1110,7 @@ impl Protocol {
             Protocol::Tcp | Protocol::Udp | Protocol::Icmp => ProtocolCategory::Network,
 
             // Web
-            Protocol::Http => ProtocolCategory::Web,
+            Protocol::Http | Protocol::HttpConnect | Protocol::HttpProxy => ProtocolCategory::Web,
             #[cfg(feature = "proto3")]
             Protocol::Http2 | Protocol::WebSocket => ProtocolCategory::Web,
 
@@ -1121,7 +1131,9 @@ impl Protocol {
             | Protocol::Imaps => ProtocolCategory::Mail,
 
             // DNS
-            Protocol::Dns => ProtocolCategory::Dns,
+            Protocol::Dns | Protocol::Doh | Protocol::Dot | Protocol::Doq => {
+                ProtocolCategory::Dns
+            }
 
             // Database
             Protocol::Mysql | Protocol::Postgresql | Protocol::Redis | Protocol::Mongodb => {
@@ -1222,7 +1234,12 @@ impl Protocol {
             | Protocol::Redis
             | Protocol::Mongodb
             | Protocol::Snmp
-            | Protocol::Modbus => ProtocolBreed::Acceptable,
+            | Protocol::Modbus
+            | Protocol::Doh
+            | Protocol::Dot
+            | Protocol::Doq
+            | Protocol::HttpConnect
+            | Protocol::HttpProxy => ProtocolBreed::Acceptable,
             #[cfg(feature = "proto3")]
             Protocol::Ftp => ProtocolBreed::Fun,
             #[cfg(feature = "iot")]

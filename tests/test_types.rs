@@ -417,3 +417,17 @@ fn test_protocol_category_exhaustive() {
         );
     }
 }
+
+#[test]
+fn test_new_protocol_classification() {
+    use rdpi::core::types::{Protocol, ProtocolBreed, ProtocolCategory};
+
+    for protocol in [Protocol::Doh, Protocol::Dot, Protocol::Doq] {
+        assert_eq!(protocol.category(), ProtocolCategory::Dns);
+        assert_eq!(protocol.breed(), ProtocolBreed::Acceptable);
+    }
+    for protocol in [Protocol::HttpConnect, Protocol::HttpProxy] {
+        assert_eq!(protocol.category(), ProtocolCategory::Web);
+        assert_eq!(protocol.breed(), ProtocolBreed::Acceptable);
+    }
+}

@@ -184,3 +184,35 @@ fn test_detector_new_with_rule_feature() {
     let detector = Detector::new();
     let _ = detector;
 }
+
+#[test]
+fn test_rule_parser_new_protocol_names() {
+    let json = r#"{
+        "rules": [
+            {"id": "doh", "protocol": "doh", "condition": {"dst_port": 443}},
+            {"id": "dot", "protocol": "dot", "condition": {"dst_port": 853}},
+            {"id": "doq", "protocol": "doq", "condition": {"dst_port": 784}},
+            {"id": "connect", "protocol": "http_connect", "condition": {"dst_port": 8080}},
+            {"id": "proxy", "protocol": "http_proxy", "condition": {"dst_port": 3128}}
+        ]
+    }"#;
+    let engine = RuleEngine::from_json(json).unwrap();
+
+    let cases = [
+        (443, Protocol::Doh),
+        (853, Protocol::Dot),
+        (784, Protocol::Doq),
+        (8080, Protocol::HttpConnect),
+        (3128, Protocol::HttpProxy),
+    ];
+    for (dst_port, expected) in cases {
+        let ctx = RuleContext {
+            src_port: 12345,
+            dst_port,
+            sni: None,
+            payload: Vec::new(),
+        };
+        let result = engine.match_rule(&ctx).expect("rule should match");
+        assert_eq!(result.protocol, expected);
+    }
+}
