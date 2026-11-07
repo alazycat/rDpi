@@ -12,6 +12,8 @@ pub mod dhcp;
 pub mod dns;
 #[cfg(feature = "dtls")]
 pub mod dtls;
+#[cfg(feature = "database")]
+pub mod elasticsearch;
 #[cfg(feature = "proto3")]
 pub mod ftp;
 #[cfg(feature = "http")]
