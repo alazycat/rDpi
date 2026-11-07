@@ -47,8 +47,8 @@ lib.rs (Detector 编排) → parser (以太网/IP/TCP/UDP) → core (FlowTable/g
 
 ```bash
 cargo test                    # 默认 features (dns+http+tls)，389 测试全绿（2026-11-07 F44 子分类 + FTP 有状态实测）
-cargo test --all-features     # 1310 测试全绿（10 ignored = test_regression 存量）；F44 后实测
-cargo test --features risk    # 437 测试全绿（含风险处理器相关探针 a1_risk/a6/r5）
+cargo test --all-features     # 1312 测试全绿（10 ignored = test_regression 存量）；F44 golden 差分闭环后实测
+cargo test --features risk    # 439 测试全绿（含风险处理器相关探针 a1_risk/a6/r5）
 cargo build --features pcap   # 构建 CLI
 cargo bench                   # criterion 基准（benches/bench_detect.rs）；基线见 docs/architecture/performance.md
 cargo bench --features quic   # 全量 9 项（含 QUIC 头部判定/Initial 解密冷+稳态）
@@ -111,7 +111,7 @@ cargo fmt ; cargo clippy      # 提交前（lib+bins 门槛 0 警告；验证须
 | F41 | QUIC JA4L-C/S 时延指纹：兑现 F35 边界①，免解密长包头 type 位判定 + 仅 QUIC v1 门控 + 四时点状态机；三段 `{µs}_{TTL}_q` 官方格式；ParsedPacket.ttl 顶层字段 + Flow 4 个 quic_* 旁路字段，结果复用 F35 出口 | 中 | ✅ 已完成 2026-11-06（compute_ja4ls_quic/ja4lc_quic + observe_ja4l_quic UDP 分支；重传 Initial 不覆盖/乱序/mid-stream 跳过为故意收紧；默认 341 / all-features 1188 / risk 386 全绿，详见 risks.md F41） |
 | F42 | JA4L TLS 精化段 delta：兑现 F35 边界②，官方 zeek ja4l TLS delta 语义（仅 TCP）——D/E/F 三时点每流一次，`(E-D)/2`/`(F-E)/2` µs 追加 ja4ls/ja4lc 第三段（F 需有载荷，纯 ACK 不触发）；信号取自元数据 ja4/ja4s Some 精确推断；方向判定借 F35 握手时戳放宽 | 中 | ✅ 已完成 2026-11-06（observe_ja4l_tls 于 DPI 之后调用 + Flow 3 个 tls_* 时戳旁路字段；zeek ja4l_delta 比值字段不实现等边界登记；默认 347 / all-features 1194 / risk 392 全绿，详见 risks.md F42） |
 | F43 | SMTP/IMAP/POP3 有状态会话 + WebSocket 升级握手：推广 process()/DissectorState 框架，跨段行/头重组 + 多命令元数据（SMTP sender/recipient、POP3/IMAP username）；邮件协议服务端响应前缀接管避免抢 HTTP，SMTP/FTP 220 共有语法端口门控对称让位；WebSocket 需 upgrade 子串才接管 | 中 | ✅ 已完成 2026-11-06（4 个 DissectorState 变体 + SmtpMetadata 增字段 + 新增 Pop3/ImapMetadata；merge_detected_metadata 增三协议合并 + flow.monitoring 含 Smtp/Pop3/Imap；默认 376 / all-features 1279 / risk 424 全绿，详见 risks.md F43） |
-| F44 | DNS 家族与 HTTP 代理子分类 + FTP 传输元数据：Protocol 增 Doh/Dot/Doq/HttpConnect/HttpProxy + 规则名映射；TLS（ALPN dot/SNI DoH 域名表/853 端口回退）、QUIC（ALPN doq）、HTTP（CONNECT/绝对 URI）子分类；FTP 有状态会话（USER→username、RETR/STOR→filename，进入 monitoring）；parity nDPI 兼容导出；语料 +6 pcap | 中 | ✅ 已完成 2026-11-07（新增语料 golden 待 ndpiReader 生成、DoQ pcap 需加密构造不语料化等边界登记；默认 389 / all-features 1310 / risk 437 全绿，详见 risks.md F44） |
+| F44 | DNS 家族与 HTTP 代理子分类 + FTP 传输元数据：Protocol 增 Doh/Dot/Doq/HttpConnect/HttpProxy + 规则名映射；TLS（ALPN dot/SNI DoH 域名表/853 端口回退）、QUIC（ALPN doq）、HTTP（CONNECT/绝对 URI）子分类；FTP 有状态会话（USER→username、RETR/STOR→filename，进入 monitoring）；parity nDPI 兼容导出（真实 golden 验证：DoH/DoQ→TLS.DoH_DoT、DoT 在 nDPI 5.0 不子分类→导出纯 TLS）；语料 +6 pcap + 真实 golden 差分全绿；连带修复 Tls/Http 风险处理器对子分类流的门控遗漏 | 中 | ✅ 已完成 2026-11-07（DoQ pcap 需加密构造不语料化等边界登记；默认 389 / all-features 1312 / risk 439 全绿，详见 risks.md F44） |
 
 ## 7. 文档索引
 
