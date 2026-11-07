@@ -4,6 +4,7 @@
 //! to extract SNI (Server Name Indication) and TLS version.
 
 mod certificate;
+mod doh;
 mod parser;
 
 pub use certificate::{CertInfo, is_certificate_message, parse_certificate};
@@ -14,7 +15,8 @@ pub use parser::{
 };
 
 use crate::core::types::{
-    DetectContext, Direction, DissectorOutcome, DissectorState, TlsDissectorState,
+    Confidence, DetectContext, DetectionResult, Direction, DissectorOutcome, DissectorState,
+    Metadata, Protocol, TlsDissectorState, TlsMetadata,
 };
 use crate::protocols::Registry;
 
@@ -57,6 +59,36 @@ impl Default for TlsDetector {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// 按 ALPN/SNI 选择 TLS 子协议
+fn select_tls_protocol(tls_meta: &TlsMetadata) -> Protocol {
+    if tls_meta
+        .alpn
+        .as_deref()
+        .is_some_and(|alpn| alpn.eq_ignore_ascii_case("dot"))
+    {
+        return Protocol::Dot;
+    }
+    if tls_meta
+        .sni
+        .as_deref()
+        .is_some_and(doh::is_doh_resolver)
+    {
+        return Protocol::Doh;
+    }
+    Protocol::Tls
+}
+
+/// 无 ALPN/SNI 信号时，TCP 853 端口回退为 DoT（DpiPartial）
+fn apply_dot_port_hint(mut result: DetectionResult, ctx: &DetectContext) -> DetectionResult {
+    if result.protocol == Protocol::Tls && (ctx.src_port == 853 || ctx.dst_port == 853) {
+        result.protocol = Protocol::Dot;
+        result.category = Protocol::Dot.category();
+        result.breed = Protocol::Dot.breed();
+        result.confidence = Confidence::DpiPartial;
+    }
+    result
 }
 
 impl crate::protocols::ProtocolDetector for TlsDetector {
@@ -138,7 +170,7 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
                 if let Some(result) = process_handshake(self, handshake_buffer) {
                     record_buffer.clear();
                     handshake_buffer.clear();
-                    return Some(DissectorOutcome::Classified(result));
+                    return Some(DissectorOutcome::Classified(apply_dot_port_hint(result, ctx)));
                 }
             } else {
                 record_buffer.drain(..5 + record_len);
@@ -153,12 +185,10 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
         Some(DissectorOutcome::Continue)
     }
 
-    fn detect(&self, payload: &[u8]) -> Option<crate::core::types::DetectionResult> {
+    fn detect(&self, payload: &[u8]) -> Option<DetectionResult> {
         if !is_tls_record(payload) {
             return None;
         }
-
-        use crate::core::types::{Confidence, DetectionResult, Metadata, Protocol, TlsMetadata};
 
         let mut tls_meta = TlsMetadata::default();
 
@@ -235,10 +265,15 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
         }
 
         Some(
-            DetectionResult::new(Protocol::Tls)
+            DetectionResult::new(select_tls_protocol(&tls_meta))
                 .with_metadata(Metadata::Tls(tls_meta))
                 .with_confidence(Confidence::Dpi),
         )
+    }
+
+    fn detect_with_context(&self, payload: &[u8], ctx: &DetectContext) -> Option<DetectionResult> {
+        let result = self.detect(payload)?;
+        Some(apply_dot_port_hint(result, ctx))
     }
 }
 
@@ -298,5 +333,131 @@ mod tests {
             "门区间不覆盖合法样本首字节 0x{:02X}",
             sample[0]
         );
+    }
+
+    /// 构造带 SNI/ALPN 扩展的最小 ClientHello 记录
+    fn make_client_hello_with_alpn(sni: Option<&str>, alpn: Option<&str>) -> Vec<u8> {
+        let mut extensions = Vec::new();
+        if let Some(host) = sni {
+            let name = host.as_bytes();
+            let list_len = name.len() + 3;
+            let ext_len = name.len() + 5;
+            extensions.extend_from_slice(&[0x00, 0x00]);
+            extensions.extend_from_slice(&(ext_len as u16).to_be_bytes());
+            extensions.extend_from_slice(&(list_len as u16).to_be_bytes());
+            extensions.push(0x00);
+            extensions.extend_from_slice(&(name.len() as u16).to_be_bytes());
+            extensions.extend_from_slice(name);
+        }
+        if let Some(protocol) = alpn {
+            let mut list = vec![protocol.len() as u8];
+            list.extend_from_slice(protocol.as_bytes());
+            extensions.extend_from_slice(&[0x00, 0x10]);
+            extensions.extend_from_slice(&((list.len() + 2) as u16).to_be_bytes());
+            extensions.extend_from_slice(&(list.len() as u16).to_be_bytes());
+            extensions.extend_from_slice(&list);
+        }
+
+        let mut body = Vec::new();
+        body.extend_from_slice(&[0x03, 0x03]);
+        body.extend_from_slice(&[0x11u8; 32]);
+        body.push(0x00);
+        body.extend_from_slice(&[0x00, 0x02, 0x13, 0x01]);
+        body.extend_from_slice(&[0x01, 0x00]);
+        body.extend_from_slice(&(extensions.len() as u16).to_be_bytes());
+        body.extend_from_slice(&extensions);
+
+        let mut handshake = vec![0x01];
+        handshake.extend_from_slice(&(body.len() as u32).to_be_bytes()[1..4]);
+        handshake.extend_from_slice(&body);
+
+        let mut record = vec![0x16, 0x03, 0x03];
+        record.extend_from_slice(&(handshake.len() as u16).to_be_bytes());
+        record.extend_from_slice(&handshake);
+        record
+    }
+
+    /// 构造带 ALPN 扩展的最小 ServerHello 记录
+    fn make_server_hello_with_alpn(alpn: &str) -> Vec<u8> {
+        let mut list = vec![alpn.len() as u8];
+        list.extend_from_slice(alpn.as_bytes());
+        let mut extensions = vec![0x00, 0x10];
+        extensions.extend_from_slice(&((list.len() + 2) as u16).to_be_bytes());
+        extensions.extend_from_slice(&(list.len() as u16).to_be_bytes());
+        extensions.extend_from_slice(&list);
+
+        let mut body = vec![0x03, 0x03];
+        body.extend_from_slice(&[0x22u8; 32]);
+        body.push(0x00);
+        body.extend_from_slice(&[0x13, 0x01]);
+        body.extend_from_slice(&[0x01, 0x00]);
+        body.extend_from_slice(&(extensions.len() as u16).to_be_bytes());
+        body.extend_from_slice(&extensions);
+
+        let mut handshake = vec![0x02];
+        handshake.extend_from_slice(&(body.len() as u32).to_be_bytes()[1..4]);
+        handshake.extend_from_slice(&body);
+
+        let mut record = vec![0x16, 0x03, 0x03];
+        record.extend_from_slice(&(handshake.len() as u16).to_be_bytes());
+        record.extend_from_slice(&handshake);
+        record
+    }
+
+    #[test]
+    fn test_tls_alpn_dot_classified_as_dot() {
+        let detector = TlsDetector::new();
+        let record = make_client_hello_with_alpn(Some("example.com"), Some("dot"));
+        let result = detector.detect(&record).unwrap();
+        assert_eq!(result.protocol, Protocol::Dot);
+    }
+
+    #[test]
+    fn test_tls_doh_resolver_sni_classified_as_doh() {
+        let detector = TlsDetector::new();
+        let record = make_client_hello_with_alpn(Some("dns.google"), Some("h2"));
+        let result = detector.detect(&record).unwrap();
+        assert_eq!(result.protocol, Protocol::Doh);
+    }
+
+    #[test]
+    fn test_tls_normal_sni_stays_tls() {
+        let detector = TlsDetector::new();
+        let record = make_client_hello_with_alpn(Some("example.com"), Some("h2"));
+        let result = detector.detect(&record).unwrap();
+        assert_eq!(result.protocol, Protocol::Tls);
+    }
+
+    #[test]
+    fn test_tls_server_hello_alpn_dot_classified_as_dot() {
+        let detector = TlsDetector::new();
+        let record = make_server_hello_with_alpn("dot");
+        let result = detector.detect(&record).unwrap();
+        assert_eq!(result.protocol, Protocol::Dot);
+    }
+
+    #[test]
+    fn test_tls_dot_port_fallback_is_partial() {
+        use crate::core::types::{Confidence, DetectContext};
+        use crate::protocols::ProtocolDetector;
+
+        let detector = TlsDetector::new();
+        let record = make_client_hello_with_alpn(Some("example.com"), Some("h2"));
+        let ctx = DetectContext {
+            src_port: 50000,
+            dst_port: 853,
+            is_http3_port: false,
+        };
+        let result = detector.detect_with_context(&record, &ctx).unwrap();
+        assert_eq!(result.protocol, Protocol::Dot);
+        assert_eq!(result.confidence, Confidence::DpiPartial);
+    }
+
+    #[test]
+    fn test_tls_dot_alpn_wins_over_doh_sni() {
+        let detector = TlsDetector::new();
+        let record = make_client_hello_with_alpn(Some("dns.google"), Some("dot"));
+        let result = detector.detect(&record).unwrap();
+        assert_eq!(result.protocol, Protocol::Dot);
     }
 }
