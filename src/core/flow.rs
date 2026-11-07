@@ -182,6 +182,8 @@ pub struct Flow {
     pub dissector_state: DissectorState,
     /// TCP 每方向重组器（P1：乱序/重传；[Forward, Reverse]）
     pub tcp_reassembly: [TcpReassembler; 2],
+    /// 每方向 TCP 起始字节缓冲（P1：分片协议头识别；定型后清空）
+    pub tcp_prefix: [Vec<u8>; 2],
     /// 已观察包计数（用于 Giveup 机制）
     pub packets_seen: u32,
     /// 仅 DPI 模式（不做猜测）
@@ -276,6 +278,7 @@ impl Flow {
             protocol_stack: ProtocolStack::new(),
             dissector_state: DissectorState::None,
             tcp_reassembly: [TcpReassembler::new(), TcpReassembler::new()],
+            tcp_prefix: [Vec::new(), Vec::new()],
             packets_seen: 0,
             dpi_only: false,
             ja4t: None,

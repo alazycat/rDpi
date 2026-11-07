@@ -66,6 +66,13 @@ pub enum DissectorOutcome {
     GiveUp,
 }
 
+/// SSH 有状态 dissector 的 per-flow 状态
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SshDissectorState {
+    /// 跨包累积的版本标识行（上限由 dissector 控制）
+    pub buffer: Vec<u8>,
+}
+
 /// HTTP 有状态 dissector 的 per-flow 状态
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HttpDissectorState {
@@ -113,6 +120,8 @@ pub enum DissectorState {
     /// 无活跃有状态协议
     #[default]
     None,
+    /// SSH 版本标识行重组
+    Ssh(SshDissectorState),
     /// HTTP 头重组
     Http(HttpDissectorState),
     /// DNS over TCP 长度前缀重组

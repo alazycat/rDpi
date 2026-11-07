@@ -267,7 +267,7 @@
 
 1. ~~从 A–E 组选择首批组合~~ 已完成：A + B。
 2. ~~确认首批 Top-N~~ 已完成：见 [protocol-coverage-plan.md](protocol-coverage-plan.md) 第 7 节。
-3. ~~rDpi per-flow 输出~~、~~nDPI JSON 适配器~~、~~20 个自生成 pcap + golden~~、~~nDPI 兼容分类映射~~、~~CI~~ 已完成；语料已扩至 35 个（含 13 个企业协议）；下一步补目标环境真实 pcap。
+3. ~~rDpi per-flow 输出~~、~~nDPI JSON 适配器~~、~~20 个自生成 pcap + golden~~、~~nDPI 兼容分类映射~~、~~CI~~ 已完成；语料已扩至 44 个（含 13 个企业协议）；下一步补目标环境真实 pcap。
 4. ~~双向流 + `Flow` API + 逐包 dissector~~ 已完成；HTTP / DNS-over-TCP / TLS / HTTP2 状态机 + TCP 序列号重组已落地。
 5. ~~VLAN/QinQ/IP-in-IP~~、~~规则/风险/JA4 接入新入口~~、~~L2 与双向流整合（pcap/CLI 走 `process_packet`）~~ 已完成；下一步：迁移剩余无状态 detector、补充有状态协议覆盖。
 
@@ -293,7 +293,7 @@
   - `tests/test_ndpi_adapter.rs`：5 个用例（真实 ndpiReader 夹具、master/app 拆分、缺省字段、JSONL、错误输入）；
   - `tests/test_parity_harness.rs` 新增适配器输出与 rDpi 记录的端到端比较用例。
 - **P0 语料与 golden**
-  - `tests/parity/gen_corpus.py`：确定性生成 35 个 pcap（DNS/HTTP/TLS × 主机/方法/SNI 变体 + 13 个企业协议 + 6 个多流混合）；
+  - `tests/parity/gen_corpus.py`：确定性生成 44 个 pcap（DNS/HTTP/TLS × 主机/方法/SNI 变体 + 13 个企业协议 + 9 个跨段拆分 + 6 个多流混合）；
   - 企业协议语料：SSH / SMTP / FTP / MySQL / PostgreSQL / Redis(RESP) / DHCP / NTP / SNMP / Modbus / MQTT / SIP / DNS-over-TCP；
   - `tests/parity/corpus/` 与 `tests/parity/golden/` 随仓库提交（nDPI 5.0 真实输出，CI 无需安装 nDPI）；
   - `tests/test_parity_corpus.rs`：逐 pcap 跑 rDpi 库内检测并与 golden 比较。
@@ -305,10 +305,10 @@
   - 协议名差异：Redis → `RESP`、FTP → `FTP_CONTROL`（其余按大小写不敏感比较）；
   - DNS 保持 master taxonomy（nDPI 不对 DNS 查询做 app 分类），rDpi 仍保留应用识别结果；
   - 未覆盖组合回退原生名称并在 diff 中暴露；
-  - 语料测试 gate master/app/category/breed/confidence：35/35 用例全部一致，risk_mask 仅报告；nDPI `Match by port` 与 rDpi `Dpi` 视为“rDpi 置信度更强”放行。
+  - 语料测试 gate master/app/category/breed/confidence：44/44 用例全部一致，risk_mask 仅报告；nDPI `Match by port` 或 `DPI (partial)` 与 rDpi `Dpi` 视为“rDpi 置信度更强”放行。
 - **P0 CI 接入**
   - `.github/workflows/ci.yml`：Ubuntu + Windows 矩阵；
-  - `cargo fmt --check`、`cargo clippy --all-features --all-targets -D warnings`、默认 features 测试、全 features 测试（含 35 个语料的差分测试）；
+  - `cargo fmt --check`、`cargo clippy --all-features --all-targets -D warnings`、默认 features 测试、全 features 测试（含 44 个语料的差分测试）；
   - 语料与 golden 已提交，CI 不依赖 nDPI 可执行文件；
   - `Cargo.toml` 声明 `rust-version = "1.88"`（edition 2024 + let-chains）。
 - **P1 首个垂直切片**
@@ -344,12 +344,15 @@
   - `FlowTable::take/put`：双向入口临时持有 caller-owned `Flow` 后再放回，容量逐出策略复用；
   - `PcapProcessor` / CLI 改用 `process_packet`，pcap 回放与差分导出不再产生单向重复记录，HTTP / DNS-over-TCP / TLS / HTTP2 状态机在 pcap 路径生效；
   - Giveup 猜测回退抽取为 `Detector::guess_flow`，`detect_at` 与双向入口共用（端口 → IP 子网 → 域名三级匹配）；
+  - 每方向 TCP 起始字节缓冲（`Flow::tcp_prefix`，上限 2 KiB）：无状态检测只针对流前缀，续段不单独参与，既支持跨段协议头，也避免续段被低特异性 detector 误判；
+  - 有状态 dissector 只在方向起始包或已接管后运行，防止二进制前缀之后的协议片段另起炉灶；
+  - SSH 有状态版本标识行重组（`SshDissectorState`）：行未结束时接管，避免被 IKE/Whois 抢占；
   - MySQL 检测支持真实 4 字节包头（3 字节长度 + 1 字节序号），并校验长度字段；修复合成语料中 MySQL 被 NTP 抢先误判；
-  - `tests/test_pcap_bidirectional.rs`：双向聚合、pcap 入口有状态 DNS-over-TCP、giveup 猜测回退 3 个用例。
-- **验证**：`tests/test_p1_flow.rs` 20 个用例、`tests/test_p1_entry_features.rs` 7 个用例、`tests/test_parser.rs` 9 个用例、`tests/test_pcap_bidirectional.rs` 3 个用例；`cargo test` 与 `cargo test --all-features` 全绿；clippy 0 警告。
+  - `tests/test_pcap_bidirectional.rs`：双向聚合、pcap 入口有状态 DNS-over-TCP、giveup 猜测回退、SSH 跨段/行中断分片、续段非独立负载 6 个用例。
+- **验证**：`tests/test_p1_flow.rs` 20 个用例、`tests/test_p1_entry_features.rs` 7 个用例、`tests/test_parser.rs` 9 个用例、`tests/test_pcap_bidirectional.rs` 6 个用例；`cargo test` 与 `cargo test --all-features` 全绿；clippy 0 警告。
 
 ### 待办
 
-- **P0**：目标环境真实 pcap 扩充（35 个自生成用例已就绪，其中 13 个企业协议）；映射表随语料扩展继续补充；risk_mask 映射与门禁。
+- **P0**：目标环境真实 pcap 扩充（44 个自生成用例已就绪，其中 13 个企业协议）；映射表随语料扩展继续补充；risk_mask 映射与门禁。
 - **P1**：迁移剩余无状态 detector 到逐包框架（按需有状态化）；补充 SMTP/IMAP/POP3/FTP 多包会话、WebSocket 升级等有状态场景。
 - **P1 边界**：QUIC JA4L 与流级风险分析（`analyze_flow`）在 `process_packet` 路径尚未接入（`detect_at`/`drain_risks` 仍保留）；HTTP/2 CONTINUATION/HPACK 动态表跨帧；TLS 大 Certificate（>64 KiB）分片；TCP FIN/RST 与窗口跟踪；多活跃有状态协议（当前一个 flow 只允许一个 `DissectorState` 变体）。

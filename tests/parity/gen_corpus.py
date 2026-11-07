@@ -411,6 +411,50 @@ def build_dns_tcp():
     return tcp_session(CLIENT, SERVER, 50011, 53, [("c", message)])
 
 
+def split_tcp_payloads(packets):
+    """把每个带载荷的 TCP 报文从中间拆成两段，用于验证跨段重组。"""
+    out = []
+    for ts, frame in packets:
+        pieces = _split_tcp_frame(frame)
+        if pieces is None:
+            out.append((ts, frame))
+        else:
+            out.append((ts, pieces[0]))
+            out.append((ts + 1000, pieces[1]))
+    return out
+
+
+def _split_tcp_frame(frame):
+    if len(frame) < 54 or frame[12:14] != b"\x08\x00":
+        return None
+    ihl = (frame[14] & 0x0F) * 4
+    if frame[23] != 6:
+        return None
+    total_len = struct.unpack(">H", frame[16:18])[0]
+    tcp_off = 14 + ihl
+    payload = frame[tcp_off + 20 : 14 + total_len]
+    if len(payload) < 2:
+        return None
+    flags = frame[tcp_off + 13]
+    if flags & 0x02 or flags & 0x07:  # SYN/FIN/RST 不拆
+        return None
+
+    seq = struct.unpack(">I", frame[tcp_off + 4 : tcp_off + 8])[0]
+    first_len = len(payload) // 2
+
+    def rebuild(new_seq, new_payload):
+        tcp = bytearray(frame[tcp_off : tcp_off + 20])
+        tcp[4:8] = struct.pack(">I", new_seq)
+        ip = bytearray(frame[14:tcp_off])
+        ip[2:4] = struct.pack(">H", ihl + 20 + len(new_payload))
+        return frame[:14] + bytes(ip) + bytes(tcp) + new_payload
+
+    return [
+        rebuild(seq, payload[:first_len]),
+        rebuild(seq + first_len, payload[first_len:]),
+    ]
+
+
 def mixed(*builders):
     packets = []
     for builder in builders:
@@ -478,6 +522,16 @@ CORPUS = {
         build_ssh, build_mysql, build_redis, build_dns_tcp
     ),
     "mixed_infra": lambda: mixed(build_dhcp, build_ntp, build_snmp, build_sip),
+    # 跨 TCP 段重组（每个带载荷报文从中间拆成两段）
+    "ssh_banner_split": lambda: split_tcp_payloads(build_ssh()),
+    "smtp_session_split": lambda: split_tcp_payloads(build_smtp()),
+    "ftp_control_split": lambda: split_tcp_payloads(build_ftp()),
+    "mysql_handshake_split": lambda: split_tcp_payloads(build_mysql()),
+    "postgresql_startup_split": lambda: split_tcp_payloads(build_postgresql()),
+    "redis_ping_split": lambda: split_tcp_payloads(build_redis()),
+    "modbus_read_split": lambda: split_tcp_payloads(build_modbus()),
+    "mqtt_connect_split": lambda: split_tcp_payloads(build_mqtt()),
+    "dns_tcp_split": lambda: split_tcp_payloads(build_dns_tcp()),
 }
 
 

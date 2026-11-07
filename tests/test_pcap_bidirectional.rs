@@ -165,3 +165,115 @@ fn process_packet_applies_guess_after_giveup() {
         Protocol::Other(9000)
     );
 }
+
+fn ssh_banner_frames(split_at: Option<usize>) -> Vec<Vec<u8>> {
+    let banner = b"SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13\r\n";
+    let mut frames = vec![
+        eth_ipv4(CLIENT, SERVER, 6, &tcp(50030, 22, 3000, 0, 0x02, b"")),
+        eth_ipv4(SERVER, CLIENT, 6, &tcp(22, 50030, 7000, 3001, 0x12, b"")),
+        eth_ipv4(CLIENT, SERVER, 6, &tcp(50030, 22, 3001, 7001, 0x10, b"")),
+    ];
+    match split_at {
+        None => frames.push(eth_ipv4(
+            SERVER,
+            CLIENT,
+            6,
+            &tcp(22, 50030, 7001, 3001, 0x18, banner),
+        )),
+        Some(split) => {
+            frames.push(eth_ipv4(
+                SERVER,
+                CLIENT,
+                6,
+                &tcp(22, 50030, 7001, 3001, 0x18, &banner[..split]),
+            ));
+            frames.push(eth_ipv4(
+                SERVER,
+                CLIENT,
+                6,
+                &tcp(22, 50030, 7001 + split as u32, 3001, 0x18, &banner[split..]),
+            ));
+        }
+    }
+    frames
+}
+
+#[test]
+fn process_packet_reassembles_split_ssh_banner() {
+    let mut detector = Detector::new();
+    for (index, frame) in ssh_banner_frames(Some(8)).into_iter().enumerate() {
+        detector
+            .process_packet(&frame, BASE_TS_US / 1000 + index as u64)
+            .unwrap();
+    }
+
+    let flows = detector.normalized_flows();
+    assert_eq!(flows.len(), 1);
+    assert_eq!(
+        flows[0].master_protocol.as_deref(),
+        Some("Ssh"),
+        "跨 TCP 段的 SSH banner 必须按累积字节流识别"
+    );
+}
+
+#[test]
+fn process_packet_does_not_treat_continuation_as_new_payload() {
+    // 前半段为无法识别的二进制；后半段恰好是完整 HTTP 请求。
+    // 续段不得脱离流前缀单独参与无状态检测。
+    let mut detector = Detector::new();
+    let frames = vec![
+        eth_ipv4(SERVER, CLIENT, 6, &tcp(80, 50031, 9000, 0, 0x02, b"")),
+        eth_ipv4(CLIENT, SERVER, 6, &tcp(50031, 80, 500, 9001, 0x12, b"")),
+        eth_ipv4(SERVER, CLIENT, 6, &tcp(80, 50031, 9001, 501, 0x10, b"")),
+        eth_ipv4(
+            SERVER,
+            CLIENT,
+            6,
+            &tcp(80, 50031, 9001, 501, 0x18, b"\x00\x01\x02\x03"),
+        ),
+        eth_ipv4(
+            SERVER,
+            CLIENT,
+            6,
+            &tcp(
+                80,
+                50031,
+                9005,
+                501,
+                0x18,
+                b"GET / HTTP/1.1\r\nHost: late.example\r\n\r\n",
+            ),
+        ),
+    ];
+    for (index, frame) in frames.into_iter().enumerate() {
+        detector
+            .process_packet(&frame, BASE_TS_US / 1000 + index as u64)
+            .unwrap();
+    }
+
+    assert_eq!(
+        detector.normalized_flows()[0].master_protocol,
+        None,
+        "续段单独命中不得产生分类"
+    );
+}
+
+#[test]
+fn process_packet_reassembles_ssh_banner_split_mid_line() {
+    // 在 banner 中部切分：前半段仍以 "SSH-" 开头但行未结束。
+    // 若此时让低特异性 detector 先行，会被 IKE 等抢走。
+    let mut detector = Detector::new();
+    for (index, frame) in ssh_banner_frames(Some(23)).into_iter().enumerate() {
+        detector
+            .process_packet(&frame, BASE_TS_US / 1000 + index as u64)
+            .unwrap();
+    }
+
+    let flows = detector.normalized_flows();
+    assert_eq!(flows.len(), 1);
+    assert_eq!(
+        flows[0].master_protocol.as_deref(),
+        Some("Ssh"),
+        "banner 行未结束时不得被其他探测器抢占"
+    );
+}

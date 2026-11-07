@@ -72,7 +72,10 @@ impl ProtocolDetector for HttpDetector {
                 *state = DissectorState::Http(HttpDissectorState::default());
             }
             DissectorState::Http(_) => {}
-            DissectorState::DnsTcp(_) | DissectorState::Tls(_) | DissectorState::Http2(_) => {
+            DissectorState::Ssh(_)
+            | DissectorState::DnsTcp(_)
+            | DissectorState::Tls(_)
+            | DissectorState::Http2(_) => {
                 return None;
             }
         }

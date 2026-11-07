@@ -109,9 +109,11 @@ fn corpus_classification_matches_ndpi_golden() {
                         diff.field, diff.expected, diff.actual
                     ));
                 }
-                // nDPI 仅按端口匹配、rDpi 通过载荷解析出更高置信度时视为通过
+                // nDPI 仅按端口匹配或只完成部分 DPI、rDpi 通过载荷解析出
+                // 更高置信度时视为通过
                 "confidence"
-                    if diff.expected.eq_ignore_ascii_case("Match by port")
+                    if (diff.expected.eq_ignore_ascii_case("Match by port")
+                        || diff.expected.eq_ignore_ascii_case("DPI (partial)"))
                         && diff.actual.eq_ignore_ascii_case("Dpi") => {}
                 "confidence" => {
                     failures.push(format!(

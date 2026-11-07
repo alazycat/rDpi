@@ -82,6 +82,13 @@ pub const DEFAULT_TCP_GIVEUP: u32 = 20;
 /// UDP 流 DPI 放弃阈值（包数）
 pub const DEFAULT_UDP_GIVEUP: u32 = 5;
 
+/// 每方向 TCP 起始字节缓冲上限
+///
+/// 无状态检测只针对流起始字节（而不是每个续段），既能让跨 TCP 段的
+/// 协议头参与识别，也避免把续段内容误当成新负载（例如 SSH banner 后半段
+/// 被 Whois/IKE 等低特异性 detector 命中）。
+const TCP_PREFIX_MAX_BYTES: usize = 2048;
+
 /// 风险事件推送回调类型（观察者模式，见 [`Detector::set_risk_callback`]）
 #[cfg(feature = "risk")]
 type RiskCallback = Box<dyn Fn(FlowKey, &RiskResult) + Send + Sync>;
@@ -861,13 +868,30 @@ impl Detector {
                 }
                 return Ok(None);
             }
-            let stateful = self.registry.process_stateful(
-                &mut flow.dissector_state,
-                &stateful_payload,
-                direction,
-                parsed.src_port,
-                parsed.dst_port,
-            );
+
+            // 累积每方向流起始字节：无状态检测只看前缀，续段不单独参与，
+            // 既支持跨段协议头，也避免续段被低特异性 detector 误判。
+            let dir_idx = Self::direction_index(direction);
+            let is_first_payload = flow.tcp_prefix[dir_idx].is_empty();
+            let prefix = &mut flow.tcp_prefix[dir_idx];
+            let room = TCP_PREFIX_MAX_BYTES.saturating_sub(prefix.len());
+            if room > 0 {
+                let take = room.min(stateful_payload.len());
+                prefix.extend_from_slice(&stateful_payload[..take]);
+            }
+            // 有状态 dissector 只在方向起始包或已接管后运行：续段不能脱离
+            // 流前缀另起炉灶（避免二进制前缀之后的 HTTP 片段被误判）。
+            let stateful = if is_first_payload || flow.dissector_state != DissectorState::None {
+                self.registry.process_stateful(
+                    &mut flow.dissector_state,
+                    &stateful_payload,
+                    direction,
+                    parsed.src_port,
+                    parsed.dst_port,
+                )
+            } else {
+                None
+            };
             match stateful {
                 Some(DissectorOutcome::Classified(mut detected)) => {
                     if flow.classification_state == ClassificationState::Classified {
@@ -883,6 +907,8 @@ impl Detector {
                     detected.protocol_stack = flow.protocol_stack;
                     flow.classification_state = ClassificationState::Classified;
                     flow.monitoring = matches!(flow.dissector_state, DissectorState::Tls(_));
+                    // 已定型：释放前缀缓冲
+                    flow.tcp_prefix = [Vec::new(), Vec::new()];
                     return Ok(Some(detected));
                 }
                 Some(DissectorOutcome::Partial(mut detected)) => {
@@ -927,9 +953,15 @@ impl Detector {
         }
 
         // Inspecting / Partial：继续逐包检测，允许 partial → classified 升级。
+        // TCP 使用每方向流起始字节前缀；UDP 无重组，直接检测当前报文。
+        let detect_payload: &[u8] = if parsed.transport == TransportProto::Tcp {
+            &flow.tcp_prefix[Self::direction_index(direction)]
+        } else {
+            &parsed.payload
+        };
         let mut result =
             self.registry
-                .detect_with_ports(&parsed.payload, parsed.src_port, parsed.dst_port);
+                .detect_with_ports(detect_payload, parsed.src_port, parsed.dst_port);
         if let Some(ref mut detected) = result {
             flow.protocol = Some(detected.protocol);
             flow.confidence = Some(detected.confidence);
@@ -940,6 +972,9 @@ impl Detector {
                 Confidence::Dpi | Confidence::CustomRule => ClassificationState::Classified,
                 _ => ClassificationState::Partial,
             };
+            if flow.classification_state == ClassificationState::Classified {
+                flow.tcp_prefix = [Vec::new(), Vec::new()];
+            }
         } else if flow.protocol.is_none()
             && let Some(guessed) =
                 Self::guess_flow(flow, parsed, &mut self.guess_engine, self.guess_disabled)
@@ -953,6 +988,9 @@ impl Detector {
                 Confidence::Dpi | Confidence::CustomRule => ClassificationState::Classified,
                 _ => ClassificationState::Partial,
             };
+            if flow.classification_state == ClassificationState::Classified {
+                flow.tcp_prefix = [Vec::new(), Vec::new()];
+            }
             result = Some(guessed);
         } else if flow.protocol.is_some() {
             // 本包没有新结果：保留并回显已有 partial 分类。
