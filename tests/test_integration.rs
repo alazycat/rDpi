@@ -602,9 +602,7 @@ fn test_multiple_protocol_markers_confusion() {
 fn test_various_http_methods() {
     let registry = Registry::default();
 
-    let methods = [
-        "GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "TRACE", "CONNECT",
-    ];
+    let methods = ["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "TRACE"];
 
     for method in methods {
         let payload = format!("{} / HTTP/1.1\r\nHost: test.com\r\n\r\n", method);
@@ -619,6 +617,16 @@ fn test_various_http_methods() {
         } else {
             panic!("Expected HTTP metadata for {}", method);
         }
+    }
+
+    // F44：CONNECT 方法子分类为 HTTP CONNECT 隧道
+    let connect_payload = b"CONNECT / HTTP/1.1\r\nHost: test.com\r\n\r\n";
+    let detection = registry.detect(connect_payload).unwrap();
+    assert_eq!(detection.protocol, Protocol::HttpConnect);
+    if let Metadata::Http(meta) = detection.metadata {
+        assert_eq!(meta.method, Some("CONNECT".to_string()));
+    } else {
+        panic!("Expected HTTP metadata for CONNECT");
     }
 }
 

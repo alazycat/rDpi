@@ -133,6 +133,19 @@ impl ProtocolDetector for HttpDetector {
                     .map(|h| (h.name.clone(), h.value.clone()))
                     .collect::<Vec<_>>(),
             ));
+            // 子分类：CONNECT 隧道 / 绝对 URI 正向代理 / 普通 HTTP
+            let protocol = if req.method.eq_ignore_ascii_case("CONNECT") {
+                Protocol::HttpConnect
+            } else if req
+                .path
+                .as_bytes()
+                .get(..7)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"http://"))
+            {
+                Protocol::HttpProxy
+            } else {
+                Protocol::Http
+            };
             let metadata = Metadata::Http(HttpMetadata {
                 host,
                 method: Some(req.method),
@@ -142,7 +155,7 @@ impl ProtocolDetector for HttpDetector {
             });
 
             return Some(
-                DetectionResult::new(Protocol::Http)
+                DetectionResult::new(protocol)
                     .with_metadata(metadata)
                     .with_confidence(Confidence::Dpi),
             );
@@ -186,5 +199,41 @@ mod tests {
             "门区间不覆盖合法样本首字节 0x{:02X}",
             sample[0]
         );
+    }
+
+    #[test]
+    fn test_detect_http_connect() {
+        let detector = HttpDetector::new();
+        let result = detector
+            .detect(b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com\r\n\r\n")
+            .unwrap();
+        assert_eq!(result.protocol, Protocol::HttpConnect);
+    }
+
+    #[test]
+    fn test_detect_http_proxy_absolute_uri() {
+        let detector = HttpDetector::new();
+        let result = detector
+            .detect(b"GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n")
+            .unwrap();
+        assert_eq!(result.protocol, Protocol::HttpProxy);
+    }
+
+    #[test]
+    fn test_detect_http_proxy_case_insensitive_scheme() {
+        let detector = HttpDetector::new();
+        let result = detector
+            .detect(b"GET HTTP://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n")
+            .unwrap();
+        assert_eq!(result.protocol, Protocol::HttpProxy);
+    }
+
+    #[test]
+    fn test_detect_normal_http_stays_http() {
+        let detector = HttpDetector::new();
+        let result = detector
+            .detect(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
+            .unwrap();
+        assert_eq!(result.protocol, Protocol::Http);
     }
 }
