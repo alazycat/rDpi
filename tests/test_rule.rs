@@ -216,3 +216,32 @@ fn test_rule_parser_new_protocol_names() {
         assert_eq!(result.protocol, expected);
     }
 }
+
+#[cfg(feature = "smb")]
+#[test]
+fn test_rule_parser_smb_protocol_names() {
+    let json = r#"{
+        "rules": [
+            {"id": "netbios", "protocol": "netbios", "condition": {"dst_port": 137}},
+            {"id": "smb1", "protocol": "smb1", "condition": {"dst_port": 445}},
+            {"id": "smb23", "protocol": "smb23", "condition": {"dst_port": 446}}
+        ]
+    }"#;
+    let engine = RuleEngine::from_json(json).unwrap();
+
+    let cases = [
+        (137, Protocol::NetBios),
+        (445, Protocol::Smb1),
+        (446, Protocol::Smb23),
+    ];
+    for (dst_port, expected) in cases {
+        let ctx = RuleContext {
+            src_port: 12345,
+            dst_port,
+            sni: None,
+            payload: Vec::new(),
+        };
+        let result = engine.match_rule(&ctx).expect("rule should match");
+        assert_eq!(result.protocol, expected);
+    }
+}

@@ -80,7 +80,9 @@ impl ProtocolDetector for HttpDetector {
             | DissectorState::Pop3(_)
             | DissectorState::Imap(_)
             | DissectorState::WebSocket(_)
-            | DissectorState::Ftp(_) => {
+            | DissectorState::Ftp(_)
+            | DissectorState::NetBios(_)
+            | DissectorState::Smb(_) => {
                 return None;
             }
         }

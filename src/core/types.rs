@@ -167,6 +167,18 @@ pub struct FtpDissectorState {
     pub filename: Option<String>,
 }
 
+/// NetBIOS TCP 139 会话请求头部重组状态
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NetBiosDissectorState {
+    pub buffer: Vec<u8>,
+}
+
+/// SMB TCP 445 头部重组 + SMB1 Negotiate 跳过状态
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SmbDissectorState {
+    pub buffer: Vec<u8>,
+}
+
 /// per-flow 有状态 dissector 状态
 ///
 /// 当前只支持一个活跃的有状态协议（HTTP）；后续按协议扩展枚举。
@@ -195,6 +207,10 @@ pub enum DissectorState {
     WebSocket(WebSocketDissectorState),
     /// FTP 行跨段重组
     Ftp(FtpDissectorState),
+    /// NetBIOS TCP 139 头部重组
+    NetBios(NetBiosDissectorState),
+    /// SMB TCP 445 头部重组
+    Smb(SmbDissectorState),
 }
 
 /// 协议栈最大层数（与 nDPI `NDPI_PROTOCOL_STACK_SIZE` 对齐）
@@ -289,6 +305,8 @@ pub enum Protocol {
     Icmp,
     // 核心应用层（内置）
     Dns,
+    #[cfg(feature = "smb")]
+    NetBios,
     Http,
     /// HTTP CONNECT 隧道（feature: http）
     HttpConnect,
@@ -300,6 +318,10 @@ pub enum Protocol {
     // 文件传输
     #[cfg(feature = "proto3")]
     Ftp,
+    #[cfg(feature = "smb")]
+    Smb1,
+    #[cfg(feature = "smb")]
+    Smb23,
     // 扩展协议
     Quic,
     Http3,
@@ -522,6 +544,12 @@ pub enum Metadata {
     /// Kerberos 元数据 (feature: auth)
     #[cfg(feature = "auth")]
     Kerberos(KerberosMetadata),
+    /// NetBIOS 元数据 (feature: smb)
+    #[cfg(feature = "smb")]
+    NetBios(NetBiosMetadata),
+    /// SMB 元数据 (feature: smb)
+    #[cfg(feature = "smb")]
+    Smb(SmbMetadata),
 }
 
 impl Metadata {
@@ -1145,6 +1173,8 @@ impl Protocol {
 
             // DNS
             Protocol::Dns | Protocol::Doh | Protocol::Dot | Protocol::Doq => ProtocolCategory::Dns,
+            #[cfg(feature = "smb")]
+            Protocol::NetBios => ProtocolCategory::Infrastructure,
 
             // Database
             Protocol::Mysql | Protocol::Postgresql | Protocol::Redis | Protocol::Mongodb => {
@@ -1159,6 +1189,8 @@ impl Protocol {
             // FileTransfer
             #[cfg(feature = "proto3")]
             Protocol::Ftp => ProtocolCategory::FileTransfer,
+            #[cfg(feature = "smb")]
+            Protocol::Smb1 | Protocol::Smb23 => ProtocolCategory::FileTransfer,
 
             // VoIP
             #[cfg(feature = "proto3")]
@@ -1299,6 +1331,10 @@ impl Protocol {
             Protocol::Netflow | Protocol::Ike | Protocol::Ptpv2 | Protocol::Nfs => {
                 ProtocolBreed::Safe
             }
+            #[cfg(feature = "smb")]
+            Protocol::NetBios | Protocol::Smb23 => ProtocolBreed::Acceptable,
+            #[cfg(feature = "smb")]
+            Protocol::Smb1 => ProtocolBreed::Dangerous,
             Protocol::Tcp | Protocol::Udp | Protocol::Icmp | Protocol::Other(_) => {
                 ProtocolBreed::Unrated
             }
@@ -1827,6 +1863,37 @@ pub struct FtpMetadata {
     pub username: Option<String>,
     /// 已提取的文件名（RETR/STOR 命令，首个非空值）
     pub filename: Option<String>,
+}
+
+#[cfg(feature = "smb")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetBiosService {
+    NameService,
+    DatagramService,
+    SessionService,
+}
+
+#[cfg(feature = "smb")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone)]
+pub struct NetBiosMetadata {
+    /// 服务类型（NBNS / NBDS / NBSS）
+    pub service: NetBiosService,
+    /// 解码后的 NetBIOS 名称
+    pub name: Option<String>,
+    /// NBNS 名称第 16 字节后缀
+    pub suffix: Option<u8>,
+}
+
+#[cfg(feature = "smb")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone)]
+pub struct SmbMetadata {
+    /// SMB1 command（u8 扩展为 u16）或 SMB2 command（u16 LE）
+    pub command: Option<u16>,
+    /// NT status（SMB1 @9..13 / SMB2 @12..16，LE）
+    pub status: Option<u32>,
 }
 
 #[cfg(feature = "proto3")]

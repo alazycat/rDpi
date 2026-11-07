@@ -59,6 +59,12 @@ impl RuleFile {
                     "rtp" => Protocol::Rtp,
                     #[cfg(feature = "proto3")]
                     "rtcp" => Protocol::Rtcp,
+                    #[cfg(feature = "smb")]
+                    "netbios" => Protocol::NetBios,
+                    #[cfg(feature = "smb")]
+                    "smb1" => Protocol::Smb1,
+                    #[cfg(feature = "smb")]
+                    "smb23" => Protocol::Smb23,
                     _ => Protocol::Other(0),
                 };
                 Rule {

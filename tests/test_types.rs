@@ -431,3 +431,16 @@ fn test_new_protocol_classification() {
         assert_eq!(protocol.breed(), ProtocolBreed::Acceptable);
     }
 }
+
+#[cfg(feature = "smb")]
+#[test]
+fn test_smb_protocol_classification() {
+    use rdpi::core::types::{Protocol, ProtocolBreed, ProtocolCategory};
+
+    assert_eq!(Protocol::NetBios.category(), ProtocolCategory::Infrastructure);
+    assert_eq!(Protocol::NetBios.breed(), ProtocolBreed::Acceptable);
+    assert_eq!(Protocol::Smb1.category(), ProtocolCategory::FileTransfer);
+    assert_eq!(Protocol::Smb1.breed(), ProtocolBreed::Dangerous);
+    assert_eq!(Protocol::Smb23.category(), ProtocolCategory::FileTransfer);
+    assert_eq!(Protocol::Smb23.breed(), ProtocolBreed::Acceptable);
+}

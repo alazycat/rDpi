@@ -43,6 +43,7 @@ auth = []      # Kerberos, LDAP
 remote = []    # RDP
 risk = ["serde", "serde_json"]
 storage = []   # NFS
+smb = []       # SMBv1/v2/v3 + NetBIOS
 misc = []      # TFTP, Rsync, Whois, Syslog, Telnet, VNC（R7：纳入 feature 矩阵）
 
 [dev-dependencies]
