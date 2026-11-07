@@ -262,6 +262,7 @@ fn smb_master_name(protocol: Protocol) -> Option<&'static str> {
 /// 归一化为下划线。下表只列出与 rDpi `RiskFlag::name()` 存在命名差异且
 /// 语义等价的组合；未列出的名称保持原样（如 `unidirectional_traffic`
 /// 两侧已一致），差异会在差分报告中暴露。
+#[cfg(feature = "risk")]
 fn ndpi_compat_risk_name(name: &str) -> String {
     match name {
         "tls_missing_sni" => "missing_sni_tls_extn",

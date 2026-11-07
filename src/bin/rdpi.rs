@@ -300,6 +300,15 @@ fn print_detection(pkt_num: u64, det: &DetectionResult) {
         rdpi::Metadata::NetBios(nb) => nb.name.as_deref().unwrap_or(""),
         #[cfg(feature = "smb")]
         rdpi::Metadata::Smb(_) => "",
+        #[cfg(feature = "database")]
+        rdpi::Metadata::Memcached(m) => m.command.as_deref().unwrap_or(""),
+        #[cfg(feature = "database")]
+        rdpi::Metadata::Elasticsearch(e) => match e.source {
+            rdpi::ElasticsearchSource::Binary => "binary",
+            rdpi::ElasticsearchSource::Http => "http",
+        },
+        #[cfg(feature = "messaging")]
+        rdpi::Metadata::Amqp(a) => &a.version,
         _ => "",
     };
 
