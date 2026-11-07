@@ -57,15 +57,18 @@ impl NormalizedFlow {
             .metadata
             .as_ref()
             .and_then(|metadata| metadata.application());
-        let mut master_protocol = flow.protocol.map(protocol_name);
+        let master_protocol = flow.protocol.map(protocol_name);
+        #[cfg(feature = "smb")]
+        let master_protocol = match flow.protocol.and_then(smb_master_name) {
+            Some(master) => Some(master.to_string()),
+            None => master_protocol,
+        };
         let app_protocol = application
             .map(ndpi_compat_app_name)
-            .or_else(|| flow.protocol.and_then(doh_dot_app_name).map(str::to_string))
-            .or_else(|| flow.protocol.and_then(smb_app_name).map(str::to_string));
+            .or_else(|| flow.protocol.and_then(doh_dot_app_name).map(str::to_string));
         #[cfg(feature = "smb")]
-        if let Some(master) = flow.protocol.and_then(smb_master_name) {
-            master_protocol = Some(master.to_string());
-        }
+        let app_protocol =
+            app_protocol.or_else(|| flow.protocol.and_then(smb_app_name).map(str::to_string));
         let (category, breed) = match flow.protocol {
             Some(protocol) => {
                 let (category, breed) = ndpi_compat_classification(protocol, application);
@@ -214,6 +217,8 @@ fn protocol_name(protocol: Protocol) -> String {
         Protocol::Smb1 => "SMBv1".to_string(),
         #[cfg(feature = "smb")]
         Protocol::Smb23 => "SMBv23".to_string(),
+        #[cfg(feature = "messaging")]
+        Protocol::Amqp => "AMQP".to_string(),
         _ => format!("{protocol:?}"),
     }
 }
@@ -233,6 +238,7 @@ fn doh_dot_app_name(protocol: Protocol) -> Option<&'static str> {
 ///
 /// nDPI 对 SMB 流输出 `NetBIOS.SMBv1` / `NetBIOS.SMBv23`
 /// （master NetBIOS + app SMBv1/SMBv23）；纯 NetBIOS 流不产出 app。
+#[cfg(feature = "smb")]
 fn smb_app_name(protocol: Protocol) -> Option<&'static str> {
     match protocol {
         Protocol::Smb1 => Some("SMBv1"),
@@ -242,6 +248,7 @@ fn smb_app_name(protocol: Protocol) -> Option<&'static str> {
 }
 
 /// SMB 家族的 nDPI 5.0 master 协议名（恒为 NetBIOS，proto_id 10）
+#[cfg(feature = "smb")]
 fn smb_master_name(protocol: Protocol) -> Option<&'static str> {
     match protocol {
         Protocol::Smb1 | Protocol::Smb23 => Some("NetBIOS"),
@@ -318,6 +325,14 @@ fn ndpi_compat_classification(
         Protocol::Mysql | Protocol::Postgresql => {
             ("Database".to_string(), "Acceptable".to_string())
         }
+        // F46（nDPI 5.0 源码核对）：Memcached 归 Network/Acceptable，
+        // Elasticsearch 归 System/Acceptable，AMQP 归 RPC/Acceptable
+        #[cfg(feature = "database")]
+        Protocol::Memcached => ("Network".to_string(), "Acceptable".to_string()),
+        #[cfg(feature = "database")]
+        Protocol::Elasticsearch => ("System".to_string(), "Acceptable".to_string()),
+        #[cfg(feature = "messaging")]
+        Protocol::Amqp => ("RPC".to_string(), "Acceptable".to_string()),
         #[cfg(feature = "proto3")]
         Protocol::Ftp => ("Download".to_string(), "Unsafe".to_string()),
         #[cfg(feature = "proto3")]
