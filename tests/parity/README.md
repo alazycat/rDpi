@@ -1,6 +1,6 @@
 # P0 差分测试骨架（nDPI vs rDpi）
 
-> 状态：骨架（2026-11-06）
+> 状态：骨架 + 企业协议语料（2026-11-07）
 > 目标：用同一批 pcap 对比 nDPI 5.0 与 rDpi 的 flow 级分类结果，量化差距。
 
 ---
@@ -14,7 +14,8 @@
 | `tests/test_parity_harness.rs` | 比较器单元测试（需 `--all-features`） |
 | `tests/test_flow_export.rs` | per-flow 导出测试（需 `--features json`） |
 | `tests/test_ndpi_adapter.rs` | nDPI JSON 适配器测试（真实 ndpiReader 夹具） |
-| `tests/test_parity_corpus.rs` | 20 个 pcap 的语料差分 runner |
+| `tests/test_parity_corpus.rs` | 35 个 pcap 的语料差分 runner |
+| `tests/test_pcap_bidirectional.rs` | pcap/以太网入口的双向流接线测试 |
 | `tests/parity/corpus/` + `golden/` | 语料 pcap 与 nDPI golden JSONL |
 | `tests/parity/README.md` | 本文档：语料生成与运行方式 |
 
@@ -106,9 +107,13 @@ rdpi -i corpus.pcap -o flows-jsonl > rdpi.jsonl
 字段与第 2 节 schema 一致；库内亦可直接调用
 `Detector::normalized_flows()`（`feature: json`）。
 
-已知边界：`detect_at` 仍为单向流模型，同一条连接的两个方向各导出一条
-记录。导出按“信息量优先 + 端点字典序”稳定排序；比较器按双向规范五元组
-归并时，靠前的记录（元数据更完整）优先。双向流统一后将消除该重复。
+`PcapProcessor` / CLI 已接入双向流引擎（`Detector::process_packet`）：
+一条连接只产生一个 `Flow`、只导出一条记录，且 HTTP / DNS-over-TCP /
+TLS / HTTP2 有状态 dissector 在 pcap 路径生效。
+
+已知边界：直接调用 `Detector::detect_at` 的 API 仍为单向流模型，同一条
+连接的两个方向各导出一条记录。导出按“信息量优先 + 端点字典序”稳定排序；
+比较器按双向规范五元组归并时，靠前的记录（元数据更完整）优先。
 
 注意：`normalized_flows()` / `-o flows-jsonl` 的 category / breed /
 app protocol 按 **nDPI 5.0 兼容名称**输出（见第 6 节映射），不是 rDpi
@@ -132,9 +137,12 @@ app protocol 按 **nDPI 5.0 兼容名称**输出（见第 6 节映射），不�
 
 | 目录 | 内容 |
 |---|---|
-| `tests/parity/corpus/` | 20 个自生成 pcap（DNS / HTTP / TLS × 主机变体 + 4 个多流混合） |
+| `tests/parity/corpus/` | 35 个自生成 pcap（DNS/HTTP/TLS × 主机变体 + 13 个企业协议 + 6 个多流混合） |
 | `tests/parity/golden/` | 同语料上的真实 ndpiReader 5.0 JSONL（每条流一行） |
 | `tests/parity/gen_corpus.py` | 确定性语料生成脚本 |
+
+企业协议语料：SSH、SMTP、FTP、MySQL、PostgreSQL、Redis(RESP)、DHCP、
+NTP、SNMP、Modbus、MQTT、SIP、DNS-over-TCP。
 
 语料与 golden 均随仓库提交，CI 不需要安装 nDPI 即可回归。重新生成：
 
@@ -156,17 +164,20 @@ cargo test --all-features --test test_parity_corpus -- --nocapture
 - flow 集合一致（无 missing/extra）；
 - master protocol 一致（大小写不敏感）；
 - category / breed / confidence 一致（rDpi 导出时已转换为 nDPI 5.0 兼容名称）；
+  nDPI 为 `Match by port` 而 rDpi 为 `Dpi` 时视为 rDpi 置信度更强，放行；
 - app protocol：nDPI 明确识别出 app 时必须一致；nDPI 无 app（如 DNS 查询）
   时允许 rDpi 更丰富；
 - risk_mask 只报告（nDPI 的风控语义与合成语料仍会造成差异）。
 
-> category/breed/app 的兼容映射位于 `src/parity.rs` 的
-> `ndpi_compat_classification` / `ndpi_compat_app_name`，只覆盖已用真实
-> ndpiReader 5.0 输出验证过的组合（DNS、HTTP、TLS、YouTube、Facebook、
-> GitHub、Google）；未覆盖时回退 rDpi 原生名称，并在差分报告中暴露。
+> category/breed/app/protocol 名的兼容映射位于 `src/parity.rs` 的
+> `ndpi_compat_classification` / `ndpi_compat_app_name` / `protocol_name`，
+> 只覆盖已用真实 ndpiReader 5.0 输出验证过的组合：
+> DNS、HTTP、TLS、YouTube、Facebook、GitHub、Google，
+> 以及 SSH、SMTP、FTP、MySQL、PostgreSQL、Redis、DHCP、NTP、SNMP、
+> Modbus、MQTT、SIP；未覆盖时回退 rDpi 原生名称，并在差分报告中暴露。
 
-语料目标 20–50 个：当前 20 个自生成用例已覆盖基础协议与应用变体；
-下一批补目标环境真实 pcap（Web / 流媒体 / 企业网）。
+语料目标 20–50 个：当前 35 个自生成用例已覆盖基础协议、企业协议与应用
+变体；下一批补目标环境真实 pcap（Web / 流媒体 / 企业网）。
 
 ---
 
@@ -187,7 +198,7 @@ cargo test --all-features --test test_parity_corpus -- --nocapture
 
 1. ~~nDPI JSON → 归一化 schema 适配器~~ 已完成（`parse_ndpi_jsonl`）；
 2. ~~rDpi per-flow JSONL 输出~~ 已完成（`-o flows-jsonl` / `Detector::normalized_flows()`）；
-3. ~~20 个自生成 pcap + golden output~~ 已完成；目标环境真实 pcap 待补；
+3. ~~自生成 pcap + golden output~~ 已完成（35 个，含 13 个企业协议与 2 个企业混合）；目标环境真实 pcap 待补；
 4. ~~纳入 CI~~ 已完成（`.github/workflows/ci.yml`，Ubuntu + Windows）；
-5. ~~category/breed/app protocol 映射表~~ 已完成（`src/parity.rs`）；
+5. ~~category/breed/app/protocol 映射表~~ 已完成（`src/parity.rs`）；
 6. 扩充目标环境真实 pcap；risk_mask 映射与门禁。

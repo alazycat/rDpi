@@ -103,7 +103,17 @@ fn corpus_classification_matches_ndpi_golden() {
         for diff in &report.diffs {
             match diff.field {
                 // 已用真实 nDPI 5.0 验证的分类字段：语料上要求完全一致
-                "master_protocol" | "category" | "breed" | "confidence" => {
+                "master_protocol" | "category" | "breed" => {
+                    failures.push(format!(
+                        "{name}: {} expected {} actual {}",
+                        diff.field, diff.expected, diff.actual
+                    ));
+                }
+                // nDPI 仅按端口匹配、rDpi 通过载荷解析出更高置信度时视为通过
+                "confidence"
+                    if diff.expected.eq_ignore_ascii_case("Match by port")
+                        && diff.actual.eq_ignore_ascii_case("Dpi") => {}
+                "confidence" => {
                     failures.push(format!(
                         "{name}: {} expected {} actual {}",
                         diff.field, diff.expected, diff.actual

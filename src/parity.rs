@@ -159,7 +159,13 @@ impl NormalizedFlow {
 }
 
 fn protocol_name(protocol: Protocol) -> String {
-    format!("{protocol:?}")
+    match protocol {
+        // 仅列出与 nDPI 5.0 名称差异超出大小写的协议
+        Protocol::Redis => "RESP".to_string(),
+        #[cfg(feature = "proto3")]
+        Protocol::Ftp => "FTP_CONTROL".to_string(),
+        _ => format!("{protocol:?}"),
+    }
 }
 
 /// rDpi 应用名 → nDPI 5.0 应用协议名（仅列出已验证的名称差异；
@@ -193,6 +199,22 @@ fn ndpi_compat_classification(
         Protocol::Tls => {
             app_taxonomy(application).unwrap_or_else(|| ("Web".to_string(), "Safe".to_string()))
         }
+        // 企业协议（真实 ndpiReader 5.0 输出验证）
+        Protocol::Ssh => ("RemoteAccess".to_string(), "Acceptable".to_string()),
+        Protocol::Smtp => ("Email".to_string(), "Acceptable".to_string()),
+        Protocol::Ntp => ("System".to_string(), "Acceptable".to_string()),
+        Protocol::Dhcp | Protocol::Snmp => ("Network".to_string(), "Acceptable".to_string()),
+        Protocol::Modbus => ("IoT-Scada".to_string(), "Acceptable".to_string()),
+        Protocol::Redis => ("Database".to_string(), "Acceptable".to_string()),
+        Protocol::Mysql | Protocol::Postgresql => {
+            ("Database".to_string(), "Acceptable".to_string())
+        }
+        #[cfg(feature = "proto3")]
+        Protocol::Ftp => ("Download".to_string(), "Unsafe".to_string()),
+        #[cfg(feature = "proto3")]
+        Protocol::Sip => ("VoIP".to_string(), "Acceptable".to_string()),
+        #[cfg(feature = "iot")]
+        Protocol::Mqtt => ("RPC".to_string(), "Acceptable".to_string()),
         _ => native(),
     }
 }

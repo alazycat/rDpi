@@ -141,11 +141,12 @@ fn dns_keeps_master_taxonomy_even_with_application() {
 
 #[test]
 fn uncovered_protocol_falls_back_to_native_taxonomy() {
+    // QUIC 尚未纳入已验证映射表：导出使用 rDpi 原生分类名
     let mut flow = Flow::new(key());
-    flow.protocol = Some(Protocol::Ssh);
+    flow.protocol = Some(Protocol::Quic);
 
     let normalized = NormalizedFlow::from_flow(&flow);
-    assert_eq!(normalized.category.as_deref(), Some("RemoteAccess"));
+    assert_eq!(normalized.category.as_deref(), Some("WebTunnel"));
     assert_eq!(normalized.breed.as_deref(), Some("Safe"));
 }
 
@@ -207,4 +208,56 @@ fn detector_export_includes_risk_mask() {
             .any(|risk| risk == "dns_large_packet"),
         "risk mask must contain the DNS large packet flag"
     );
+}
+
+/// P0：企业协议的 nDPI 5.0 兼容分类名（用真实 ndpiReader 5.0 输出验证）
+#[test]
+fn ndpi_compat_enterprise_taxonomy() {
+    fn export(protocol: Protocol) -> NormalizedFlow {
+        let mut flow = Flow::new(key());
+        flow.protocol = Some(protocol);
+        flow.confidence = Some(Confidence::Dpi);
+        NormalizedFlow::from_flow(&flow)
+    }
+
+    let cases = [
+        (Protocol::Ssh, "Ssh", "RemoteAccess", "Acceptable"),
+        (Protocol::Smtp, "Smtp", "Email", "Acceptable"),
+        (Protocol::Ntp, "Ntp", "System", "Acceptable"),
+        (Protocol::Dhcp, "Dhcp", "Network", "Acceptable"),
+        (Protocol::Snmp, "Snmp", "Network", "Acceptable"),
+        (Protocol::Modbus, "Modbus", "IoT-Scada", "Acceptable"),
+        (Protocol::Mysql, "Mysql", "Database", "Acceptable"),
+        (Protocol::Postgresql, "Postgresql", "Database", "Acceptable"),
+        (Protocol::Redis, "RESP", "Database", "Acceptable"),
+    ];
+    for (protocol, master, category, breed) in cases {
+        let flow = export(protocol);
+        assert_eq!(
+            flow.master_protocol.as_deref(),
+            Some(master),
+            "{protocol:?}"
+        );
+        assert_eq!(flow.category.as_deref(), Some(category), "{protocol:?}");
+        assert_eq!(flow.breed.as_deref(), Some(breed), "{protocol:?}");
+    }
+
+    #[cfg(feature = "proto3")]
+    {
+        let flow = export(Protocol::Ftp);
+        assert_eq!(flow.master_protocol.as_deref(), Some("FTP_CONTROL"));
+        assert_eq!(flow.category.as_deref(), Some("Download"));
+        assert_eq!(flow.breed.as_deref(), Some("Unsafe"));
+
+        let flow = export(Protocol::Sip);
+        assert_eq!(flow.category.as_deref(), Some("VoIP"));
+        assert_eq!(flow.breed.as_deref(), Some("Acceptable"));
+    }
+
+    #[cfg(feature = "iot")]
+    {
+        let flow = export(Protocol::Mqtt);
+        assert_eq!(flow.category.as_deref(), Some("RPC"));
+        assert_eq!(flow.breed.as_deref(), Some("Acceptable"));
+    }
 }
