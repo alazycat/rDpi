@@ -421,6 +421,43 @@ def build_redis():
     )
 
 
+def build_memcached_session():
+    """Memcached 文本命令/响应（TCP 11211，nDPI 两次匹配后 DPI）。"""
+    return tcp_session(
+        CLIENT,
+        SERVER,
+        50015,
+        11211,
+        [("c", b"delete foo\r\n"), ("s", b"DELETED\r\n")],
+    )
+
+
+def build_elasticsearch_binary():
+    """Elasticsearch 二进制 `ES` + BE u32 长度（TCP 9200）。"""
+    request = b"ES" + struct.pack(">I", 5) + b"hello"
+    response = b"ES" + struct.pack(">I", 3) + b"ack"
+    return tcp_session(
+        CLIENT,
+        SERVER,
+        50016,
+        9200,
+        [("c", request), ("s", response)],
+    )
+
+
+def build_amqp_frame():
+    """AMQP 0-9-1 方法帧（type=1, channel=0, class=10, method=10/11）。"""
+    request = bytes(
+        [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x0A, 0x00, 0x0A, 0xCE]
+    )
+    response = bytes(
+        [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x0A, 0x00, 0x0B, 0xCE]
+    )
+    return tcp_session(
+        CLIENT, SERVER, 50017, 5672, [("c", request), ("s", response)]
+    )
+
+
 def dhcp_message(opcode, yiaddr, option, server_id=None):
     packet = bytearray(236)
     packet[0] = opcode
@@ -741,6 +778,10 @@ CORPUS = {
     "mysql_handshake": build_mysql,
     "postgresql_startup": build_postgresql,
     "redis_ping": build_redis,
+    # F46：Memcached / Elasticsearch 二进制 / AMQP 0-9-1
+    "memcached_session": build_memcached_session,
+    "elasticsearch_binary": build_elasticsearch_binary,
+    "amqp_frame": build_amqp_frame,
     "dhcp_discover": build_dhcp,
     "ntp_request": build_ntp,
     "snmp_get": build_snmp,
