@@ -21,26 +21,45 @@ use crate::core::types::MysqlMetadata;
 /// - auth_plugin_data_part_2 (variable length)
 /// - auth_plugin_name (null-terminated, if CLIENT_PLUGIN_AUTH)
 pub fn parse_mysql_handshake(data: &[u8]) -> Option<MysqlMetadata> {
+    // 真实报文带 4 字节包头（3 字节小端长度 + 1 字节序号），协议版本在包头
+    // 之后。为兼容库内既有调用（单元测试直接传握手体），同时接受裸体输入。
+    let body = if data.first() == Some(&0x0a) {
+        data
+    } else {
+        if data.len() < 5 {
+            return None;
+        }
+        let packet_len = u32::from_le_bytes([data[0], data[1], data[2], 0]) as usize;
+        if packet_len < 1 || data.len() < 4 + packet_len {
+            return None;
+        }
+        let body = &data[4..4 + packet_len];
+        if body.first() != Some(&0x0a) {
+            return None;
+        }
+        body
+    };
+
     // Minimum reasonable handshake packet
-    if data.len() < 20 {
+    if body.len() < 20 {
         return None;
     }
 
     // Protocol version must be 10 (0x0a)
-    if data[0] != 0x0a {
+    if body[0] != 0x0a {
         return None;
     }
 
     // Extract version string (null-terminated)
-    let version_null_pos = data[1..].iter().position(|&b| b == 0)?;
-    let version = std::str::from_utf8(&data[1..=version_null_pos]).ok()?;
+    let version_null_pos = body[1..].iter().position(|&b| b == 0)?;
+    let version = std::str::from_utf8(&body[1..=version_null_pos]).ok()?;
 
     // Calculate offsets
     // After version: protocol_version(1) + version(N) + null(1)
     let after_version = 1 + version_null_pos + 1;
 
     // Extract auth plugin name (optional)
-    let auth_plugin = extract_auth_plugin(data, after_version);
+    let auth_plugin = extract_auth_plugin(body, after_version);
 
     Some(MysqlMetadata {
         version: Some(version.to_string()),

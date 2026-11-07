@@ -27,11 +27,6 @@ impl ProtocolDetector for MysqlDetector {
         "mysql"
     }
 
-    /// 首字节门：MySQL 握手包协议版本字节 0x0A。
-    fn first_byte_gate(&self) -> Option<&'static [(u8, u8)]> {
-        Some(&[(0x0Au8, 0x0Au8)])
-    }
-
     fn detect(&self, payload: &[u8]) -> Option<DetectionResult> {
         if let Some(metadata) = parse_mysql_handshake(payload) {
             return Some(
@@ -95,16 +90,42 @@ mod tests {
     }
 
     #[test]
-    fn test_first_byte_gate_covers_valid_sample() {
-        use crate::protocols::ProtocolDetector;
+    fn test_detect_wire_format_handshake() {
+        // 真实 MySQL 服务端问候带 4 字节包头（3 字节长度 + 1 字节序号），
+        // 协议版本 0x0a 位于包头之后，而不是负载首字节。
+        let body = create_handshake_packet("8.0.36", "caching_sha2_password");
+        let mut packet = Vec::new();
+        let len = body.len() as u32;
+        packet.push((len & 0xFF) as u8);
+        packet.push(((len >> 8) & 0xFF) as u8);
+        packet.push(((len >> 16) & 0xFF) as u8);
+        packet.push(0x00); // sequence id
+        packet.extend_from_slice(&body);
+
         let detector = MysqlDetector::new();
-        let gate = detector.first_byte_gate().expect("detector 应声明首字节门");
-        let sample = create_handshake_packet("8.0.33", "mysql_native_password");
-        assert!(
-            gate.iter()
-                .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
-            "门区间不覆盖合法样本首字节 0x{:02X}",
-            sample[0]
-        );
+        let result = detector.detect(&packet).expect("wire-format handshake");
+
+        assert_eq!(result.protocol, Protocol::Mysql);
+        if let Metadata::Mysql(meta) = result.metadata {
+            assert_eq!(meta.version.as_deref(), Some("8.0.36"));
+        } else {
+            panic!("Expected Mysql metadata");
+        }
+    }
+
+    #[test]
+    fn test_wire_format_with_truncated_body_rejected() {
+        // 长度字段声明大于实际负载：不得把残缺包当作 MySQL
+        let body = create_handshake_packet("8.0.36", "mysql_native_password");
+        let mut packet = Vec::new();
+        let len = (body.len() as u32) + 10;
+        packet.push((len & 0xFF) as u8);
+        packet.push(((len >> 8) & 0xFF) as u8);
+        packet.push(((len >> 16) & 0xFF) as u8);
+        packet.push(0x00);
+        packet.extend_from_slice(&body);
+
+        let detector = MysqlDetector::new();
+        assert!(detector.detect(&packet).is_none());
     }
 }
