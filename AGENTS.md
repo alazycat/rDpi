@@ -39,15 +39,16 @@ lib.rs (Detector 编排) → parser (以太网/IP/TCP/UDP) → core (FlowTable/g
 - **JA4D/JA4D6 DHCP 指纹（F37，2026-11-06）**：`application::compute_ja4d/ja4d6`（格式 `{类型助记符5}{尺寸4}{i|n}{d|n}_{选项列表}_{参数列表}`；v4 权威 zeek/ja4d/main.zeek + Wireshark packet-ja4.c 终版 commit d21d63f9/11ae927f——选项列表剔除 {0/53/50/81}、尺寸 = option 57、未知类型 %05d、缺 53 记 "00000"；v6 权威仅 Wireshark 插件——尺寸 = option 1/2 首个 DUID 长度、选项列表不剔除、ORO = option 6 大端项）；**per-message 指纹放 metadata**（同 JA4H）：`dhcp/parser.rs parse_dhcp_options`（offset 240 单遍 TLV）→ `DhcpMetadata.ja4d`；`dhcpv6/parser.rs parse_dhcpv6_info`（is_dhcpv6 同门控识别语义不变，Relay 12/13 起始偏移 34）→ 新增 `Dhcpv6Metadata{msg_type, ja4d6}` + `Metadata::Dhcpv6`（cfg(infra)）；relay 只解析外层选项不递归 option 9（risks.md F37 边界）。
 - **DTLS 识别 + d 前缀 JA4/JA4S（F38，2026-11-06）**：新 detector（feature `dtls`，`DtlsDetector` 首字节门 [0x16,0x16]）——13B DTLS 记录头（epoch @payload[3..5] 须 0）+ 12B 握手头（fragment_offset @19..22 / fragment_length @22..25，单片段校验）；ClientHello（msg_type 1，1.3 无 cookie / 1.2 剥 cookie 两种布局试解）/ ServerHello（msg_type 2）剥离 DTLS 握手头后**合成 TLS 记录零改动复用 tls 解析器**（QUIC 先例）；HVR（msg_type 3）等不返回定型；JA4S 新增 d 前缀——`compute_ja4s` 首参重构为 `Ja4Transport{Tcp,Quic,Dtls}`，版本码补 d1/d2/d3 映射（JA4.md 权威：proto 字符与版本段独立，DTLS 1.3 输出 "dd3..." 为字面正确；zeek 基线 "td1..." 系实现局限，分歧登记 risks.md F38）；JA4 沿用占位格式（"DTLS x.y" 落 tls10 桶，登记边界）；注册于 QUIC 之后 TLS 之前——DTLS 版本字节 0xfe 与 TLS 记录头 data[1]==0x03 互斥，相对顺序无影响（R11 影响面已复述）；分片握手/epoch>0/重传序列不解析（risks.md F38 边界）。
 - **JA4 客户端指纹官方格式（F39，2026-11-06）**：`compute_ja4` 重写为官方 ja4.py `to_ja4` 格式 `{t|q|d}{版本2}{d|i}{密码数2}{扩展数2}{alpn2}_{密码哈希12}_{扩展哈希12}`（36 字符）——版本取 supported_versions 非 GREASE 最大值回退握手头 client_version（`ClientHelloInfo.negotiated_version`，JA4 恒可计算）、计数剔 GREASE 且扩展计数含 SNI/ALPN、密码升序排序哈希、扩展哈希剔除 SNI/ALPN 并追加原始顺序 sig_algs（0x000d）、ALPN 首尾字符非 ASCII 逐位 '9'（`alpn_code` 为 JA4/JA4S 共用，JA4S 行为同步变化）；TLS/QUIC/DTLS 三路径共用一处计算；官方黄金向量 `t13d1516h2_8daaf6152771_e5627efa2ab1` 直证；F38 边界③（DTLS 版本落 tls10 桶）消除（risks.md F39）。
+- **DNS 家族与 HTTP 代理子分类 + FTP 传输元数据（F44，2026-11-07）**：Phase 1 收尾——`Protocol` 新增 `Doh`/`Dot`/`Doq`（DNS 类）与 `HttpConnect`/`HttpProxy`（Web 类）+ 规则名映射；TLS 子分类（ALPN `dot` 优先 → SNI 命中 DoH 解析器域名表 → 853 端口 DpiPartial 回退，`tls/doh.rs`）；QUIC 子分类（ALPN `doq` 前缀 → Doq，`select_quic_protocol`）；HTTP 子分类（CONNECT 方法 / `http://` 绝对 URI）；FTP 有状态会话（推广 F43 框架，USER→username、RETR/STOR→filename，进入 monitoring）；parity 导出 nDPI 兼容名（DNSoverHTTPS 等）与分类映射；语料 +6 pcap（golden 待生成，runner 跳过报告）。
 - **首字节门预筛（F29，2026-11-05）**：detector 可声明 `first_byte_gate()`（payload[0] 允许区间），Registry 注册期预计算 skip 位图、detect 循环内位测试跳过（miss 路径 36/49 已声明门，同机 A/B -12.3%）；13 个首字节任意的 detector 保持 `None`（dns/mongodb/postgresql/stun/modbus/l2tp/pptp/ike/nfs/whois/websocket/pop3/imap，证据见 risks.md F29）。
 - **feature gate**：全部协议有 gate（R7 已修复 2026-11-04：tftp/rsync/whois/syslog/telnet/vnc 挂在 `misc` feature，risks.md R7）。
 
 ## 3. 常用命令
 
 ```bash
-cargo test                    # 默认 features (dns+http+tls)，376 测试全绿（2026-11-06 F43 邮件/WebSocket 有状态实测）
-cargo test --all-features     # 1279 测试全绿（10 ignored = test_regression 存量）；F43 后实测
-cargo test --features risk    # 424 测试全绿（含风险处理器相关探针 a1_risk/a6/r5）
+cargo test                    # 默认 features (dns+http+tls)，389 测试全绿（2026-11-07 F44 子分类 + FTP 有状态实测）
+cargo test --all-features     # 1310 测试全绿（10 ignored = test_regression 存量）；F44 后实测
+cargo test --features risk    # 437 测试全绿（含风险处理器相关探针 a1_risk/a6/r5）
 cargo build --features pcap   # 构建 CLI
 cargo bench                   # criterion 基准（benches/bench_detect.rs）；基线见 docs/architecture/performance.md
 cargo bench --features quic   # 全量 9 项（含 QUIC 头部判定/Initial 解密冷+稳态）
@@ -110,6 +111,7 @@ cargo fmt ; cargo clippy      # 提交前（lib+bins 门槛 0 警告；验证须
 | F41 | QUIC JA4L-C/S 时延指纹：兑现 F35 边界①，免解密长包头 type 位判定 + 仅 QUIC v1 门控 + 四时点状态机；三段 `{µs}_{TTL}_q` 官方格式；ParsedPacket.ttl 顶层字段 + Flow 4 个 quic_* 旁路字段，结果复用 F35 出口 | 中 | ✅ 已完成 2026-11-06（compute_ja4ls_quic/ja4lc_quic + observe_ja4l_quic UDP 分支；重传 Initial 不覆盖/乱序/mid-stream 跳过为故意收紧；默认 341 / all-features 1188 / risk 386 全绿，详见 risks.md F41） |
 | F42 | JA4L TLS 精化段 delta：兑现 F35 边界②，官方 zeek ja4l TLS delta 语义（仅 TCP）——D/E/F 三时点每流一次，`(E-D)/2`/`(F-E)/2` µs 追加 ja4ls/ja4lc 第三段（F 需有载荷，纯 ACK 不触发）；信号取自元数据 ja4/ja4s Some 精确推断；方向判定借 F35 握手时戳放宽 | 中 | ✅ 已完成 2026-11-06（observe_ja4l_tls 于 DPI 之后调用 + Flow 3 个 tls_* 时戳旁路字段；zeek ja4l_delta 比值字段不实现等边界登记；默认 347 / all-features 1194 / risk 392 全绿，详见 risks.md F42） |
 | F43 | SMTP/IMAP/POP3 有状态会话 + WebSocket 升级握手：推广 process()/DissectorState 框架，跨段行/头重组 + 多命令元数据（SMTP sender/recipient、POP3/IMAP username）；邮件协议服务端响应前缀接管避免抢 HTTP，SMTP/FTP 220 共有语法端口门控对称让位；WebSocket 需 upgrade 子串才接管 | 中 | ✅ 已完成 2026-11-06（4 个 DissectorState 变体 + SmtpMetadata 增字段 + 新增 Pop3/ImapMetadata；merge_detected_metadata 增三协议合并 + flow.monitoring 含 Smtp/Pop3/Imap；默认 376 / all-features 1279 / risk 424 全绿，详见 risks.md F43） |
+| F44 | DNS 家族与 HTTP 代理子分类 + FTP 传输元数据：Protocol 增 Doh/Dot/Doq/HttpConnect/HttpProxy + 规则名映射；TLS（ALPN dot/SNI DoH 域名表/853 端口回退）、QUIC（ALPN doq）、HTTP（CONNECT/绝对 URI）子分类；FTP 有状态会话（USER→username、RETR/STOR→filename，进入 monitoring）；parity nDPI 兼容导出；语料 +6 pcap | 中 | ✅ 已完成 2026-11-07（新增语料 golden 待 ndpiReader 生成、DoQ pcap 需加密构造不语料化等边界登记；默认 389 / all-features 1310 / risk 437 全绿，详见 risks.md F44） |
 
 ## 7. 文档索引
 

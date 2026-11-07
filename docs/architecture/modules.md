@@ -18,7 +18,7 @@
 
 ## 2. core 子模块
 
-- **types.rs**（1263 行）：`TransportProto`（types.rs:9-18）、`Protocol` 枚举约 55 个变体 + `Other(u16)`（types.rs:33-133）、`Metadata` 枚举 24 个变体（types.rs:161-211，F37 增 Dhcpv6）、`DetectionResult`（types.rs:476-492，含 confidence/category/breed/app_protocol/risks）、`ProtocolCategory` 26 分类（types.rs:541-594，含 nDPI 兼容 ID 映射 types.rs:867-896）、`ProtocolBreed` 8 级风险评级（types.rs:763-780）、`Confidence` 7 级置信度（types.rs:784-799）、`Application` 41 个应用枚举（types.rs:939-995）。
+- **types.rs**（1263 行）：`TransportProto`（types.rs:9-18）、`Protocol` 枚举约 60 个变体 + `Other(u16)`（types.rs:33-133，F44 增 Doh/Dot/Doq/HttpConnect/HttpProxy）、`Metadata` 枚举 24 个变体（types.rs:161-211，F37 增 Dhcpv6）、`DetectionResult`（types.rs:476-492，含 confidence/category/breed/app_protocol/risks）、`ProtocolCategory` 26 分类（types.rs:541-594，含 nDPI 兼容 ID 映射 types.rs:867-896）、`ProtocolBreed` 8 级风险评级（types.rs:763-780）、`Confidence` 7 级置信度（types.rs:784-799）、`Application` 41 个应用枚举（types.rs:939-995）。
 - **flow.rs**：`Flow`（flow.rs:51-69，含 packets_seen/dpi_only/risks/**ja4t**（F33，2026-11-05，JA4T 流级旁路字段，初始 SYN 一次写入，不占用 protocol/metadata 定型语义）/**ja4ts**（F34，2026-11-06，JA4TS 服务端流旁路字段恒为 4 段基串，SYN-ACK 一次写入，同上定型语义豁免）/**ja4ts_synack_time/ja4ts_delays/ja4ts_rst_delay/ja4ts_tracking**（F40，2026-11-06，JA4TS 第 5 段重传延迟跟踪状态，仅重传发生时分配，同上豁免）/**syn_time/syn_ttl/synack_time/synack_ttl/ja4ls/ja4lc**（F35，2026-11-06，JA4L 握手时戳与半程时延指纹，A/B 分布在两方向流、跨流反查计算，同上定型语义豁免）/**quic_client_init_time/quic_client_init_ttl/quic_server_init_time/quic_server_hs_time**（F41，2026-11-06，QUIC JA4L 四时点状态：客户端 Initial 时戳+TTL、服务端 Initial 时戳、服务端 Handshake 时戳；正常流零堆分配，同上定型语义豁免）/**tls_client_hello_time/tls_server_hello_time/tls_first_client_data_time**（F42，2026-11-06，JA4L TLS 精化段 D/E/F 三时点：ClientHello/ServerHello/首个有载荷客户端包时戳，正常流零堆分配，同上定型语义豁免）/**ssh_payload_lens/ssh_ack_count/ja4ssh**（F36，2026-11-06，JA4SSH 滚动窗口状态与会话指纹，仅 SSH 流增长零分配，同上定型语义豁免））、`FlowTable`（flow.rs:91-171，HashMap 存储，`max_entries` 明确注释"预留，未实现 LRU 淘汰" flow.rs:102；超时清理 flow.rs:149-165）。
 - **guess/**：`GuessEngine` 按 match_domain → match_ip → match_port 顺序回退；域名匹配基于 aho-corasick（guess/domain.rs:6）；端口匹配返回 `Confidence::MatchByPort`（guess/port.rs）。**可配置化**（2026-11-05）：`GuessEngine::builder()`——`with_builtin_domains/ips/ports` 三级开关（默认全启用）+ `with_custom_domains/subnets/ports` 注入自定义条目（域名：同名覆盖内置；子网：合并最长前缀匹配；端口：自定义先于内置）；lib.rs Detector 侧引擎**惰性构建 + 长期复用**（此前每次 giveup 重建 aho-corasick 自动机）、`set_guess_engine` 注入自定义引擎并解除粘性禁用、`disable_guess` 置粘性禁用（新流 dpi_only + 引擎停用，已存在流也不再猜测）。语义细节：disable 后创建的流永不 giveup（dpi_only）；disable 前已存在的流在 set_guess_engine 后恢复猜测。
 - **stats.rs**：流统计辅助（具体消费方 **[目前无法确认]**，FlowTable 内部使用 FlowStats，flow.rs:24-33）。
@@ -40,9 +40,9 @@
 | Feature | 协议模块 |
 |---|---|
 | 默认 dns | dns |
-| 默认 http | http |
-| 默认 tls | tls（含 certificate.rs 证书解析） |
-| quic | quic（crypto.rs Initial 解密 + parser.rs，无 detector.rs 目录结构） |
+| 默认 http | http（F44，2026-11-07：CONNECT→HttpConnect、绝对 URI→HttpProxy 子分类） |
+| 默认 tls | tls（含 certificate.rs 证书解析；F44，2026-11-07：ALPN dot/SNI DoH 域名表/853 端口回退 → Dot/Doh 子分类，doh.rs 解析器域名表） |
+| quic | quic（crypto.rs Initial 解密 + parser.rs，无 detector.rs 目录结构；F44，2026-11-07：ALPN doq 前缀 → Doq 子分类） |
 | dtls | dtls（F38，2026-11-06：DTLS 握手识别 + d 前缀 JA4/JA4S，合成 TLS 记录复用 tls 解析器，无 detector.rs 目录结构） |
 | ssh | ssh |
 | smtp | smtp（F43，2026-11-06：有状态跨段行重组 + MAIL FROM/RCPT TO 提取 sender/recipient 元数据） |
@@ -51,7 +51,7 @@
 | snmp | snmp（R1 已修复 2026-11-04） |
 | modbus | modbus |
 | database | mysql, postgresql, redis, mongodb |
-| proto3 | ftp, sip, rtp, http2（HPACK 元数据，2026-11-05）, websocket（F43，2026-11-06：有状态升级握手重组）, rtmp, socks |
+| proto3 | ftp, sip, rtp, http2（HPACK 元数据，2026-11-05）, websocket（F43，2026-11-06：有状态升级握手重组）, rtmp, socks（ftp：F44，2026-11-07 有状态会话 + USER/RETR/STOR 提取 username/filename 元数据） |
 | iot | mqtt |
 | vpn | wireguard, openvpn, l2tp, pptp |
 | voip | stun, turn, mgcp, h323 |
