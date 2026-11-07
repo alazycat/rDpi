@@ -602,7 +602,9 @@ fn test_multiple_protocol_markers_confusion() {
 fn test_various_http_methods() {
     let registry = Registry::default();
 
-    let methods = ["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "TRACE"];
+    let methods = [
+        "GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "TRACE",
+    ];
 
     for method in methods {
         let payload = format!("{} / HTTP/1.1\r\nHost: test.com\r\n\r\n", method);

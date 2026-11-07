@@ -180,15 +180,11 @@ impl ProtocolDetector for FtpDetector {
                         && meta.is_client
                     {
                         match meta.verb.as_deref() {
-                            Some("USER") => {
-                                if ftp.username.is_none() {
-                                    ftp.username = meta.argument.clone();
-                                }
+                            Some("USER") if ftp.username.is_none() => {
+                                ftp.username = meta.argument.clone();
                             }
-                            Some("RETR" | "STOR") => {
-                                if ftp.filename.is_none() {
-                                    ftp.filename = meta.argument.clone();
-                                }
+                            Some("RETR" | "STOR") if ftp.filename.is_none() => {
+                                ftp.filename = meta.argument.clone();
                             }
                             _ => {}
                         }
@@ -552,7 +548,12 @@ mod tests {
         let mut state = DissectorState::None;
         let ctx = ctx_with(12345, 21);
         let outcome = detector
-            .process(&mut state, b"6xx not-an-ftp-line\r\n", Direction::Reverse, &ctx)
+            .process(
+                &mut state,
+                b"6xx not-an-ftp-line\r\n",
+                Direction::Reverse,
+                &ctx,
+            )
             .unwrap();
         assert!(matches!(outcome, DissectorOutcome::GiveUp));
     }

@@ -70,11 +70,7 @@ fn select_tls_protocol(tls_meta: &TlsMetadata) -> Protocol {
     {
         return Protocol::Dot;
     }
-    if tls_meta
-        .sni
-        .as_deref()
-        .is_some_and(doh::is_doh_resolver)
-    {
+    if tls_meta.sni.as_deref().is_some_and(doh::is_doh_resolver) {
         return Protocol::Doh;
     }
     Protocol::Tls
@@ -170,7 +166,9 @@ impl crate::protocols::ProtocolDetector for TlsDetector {
                 if let Some(result) = process_handshake(self, handshake_buffer) {
                     record_buffer.clear();
                     handshake_buffer.clear();
-                    return Some(DissectorOutcome::Classified(apply_dot_port_hint(result, ctx)));
+                    return Some(DissectorOutcome::Classified(apply_dot_port_hint(
+                        result, ctx,
+                    )));
                 }
             } else {
                 record_buffer.drain(..5 + record_len);

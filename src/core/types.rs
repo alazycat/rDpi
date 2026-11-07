@@ -1144,9 +1144,7 @@ impl Protocol {
             | Protocol::Imaps => ProtocolCategory::Mail,
 
             // DNS
-            Protocol::Dns | Protocol::Doh | Protocol::Dot | Protocol::Doq => {
-                ProtocolCategory::Dns
-            }
+            Protocol::Dns | Protocol::Doh | Protocol::Dot | Protocol::Doq => ProtocolCategory::Dns,
 
             // Database
             Protocol::Mysql | Protocol::Postgresql | Protocol::Redis | Protocol::Mongodb => {

@@ -58,7 +58,11 @@ fn test_protocol_stack_uses_compat_names() {
     let mut flow = flow_with_protocol(Protocol::HttpConnect);
     flow.protocol_stack.push(Protocol::HttpConnect);
     let normalized = NormalizedFlow::from_flow(&flow);
-    assert!(normalized.protocol_stack.contains(&"HTTP_CONNECT".to_string()));
+    assert!(
+        normalized
+            .protocol_stack
+            .contains(&"HTTP_CONNECT".to_string())
+    );
 }
 
 #[test]
