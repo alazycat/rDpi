@@ -52,6 +52,8 @@ mod error;
 pub mod application;
 pub mod asn1;
 pub mod core;
+#[cfg(feature = "json")]
+pub mod parity;
 pub mod parser;
 #[cfg(feature = "pcap")]
 pub mod pcap;
@@ -461,7 +463,10 @@ impl Detector {
                     r.ja4lc = flow.ja4lc.clone();
                     r.ja4ssh = flow.ja4ssh.clone();
                     flow.protocol = Some(r.protocol);
+                    flow.confidence = Some(r.confidence);
                     flow.metadata = Some(r.metadata.clone());
+                    flow.protocol_stack.push(r.protocol);
+                    r.protocol_stack = flow.protocol_stack;
                     return Ok(Some(r));
                 }
                 if self.rules_only {
@@ -478,6 +483,7 @@ impl Detector {
 
                 if let Some(ref r) = detected {
                     flow.protocol = Some(r.protocol);
+                    flow.confidence = Some(r.confidence);
                 }
 
                 detected
@@ -516,6 +522,7 @@ impl Detector {
 
                 if let Some(ref r) = guess {
                     flow.protocol = Some(r.protocol);
+                    flow.confidence = Some(r.confidence);
                 }
 
                 guess
@@ -545,6 +552,7 @@ impl Detector {
                 if let Some(ref m) = flow.metadata {
                     r.metadata = m.clone();
                 }
+                r.protocol_stack = flow.protocol_stack;
                 r
             })
         };
@@ -554,8 +562,12 @@ impl Detector {
         flow.stats.bytes += packet.len() as u64;
         flow.stats.last_time = std::time::Instant::now();
 
-        // 如果有检测结果，保存元数据（并携带流级 JA4T/JA4TS/JA4L/JA4SSH，若此前已捕获）
+        // 如果有检测结果，保存元数据（并携带流级协议栈与 JA4 指纹）
         if let Some(ref mut r) = result {
+            if let Some(protocol) = flow.protocol {
+                flow.protocol_stack.push(protocol);
+            }
+            r.protocol_stack = flow.protocol_stack;
             r.ja4t = flow.ja4t.clone();
             r.ja4ts = Self::flow_ja4ts_full(flow);
             r.ja4ls = flow.ja4ls.clone();
@@ -742,6 +754,7 @@ impl Detector {
                 if let Some(mut r) = engine.match_rule(&ctx) {
                     flow.metadata = Some(r.metadata.clone());
                     flow.protocol = Some(r.protocol);
+                    flow.confidence = Some(r.confidence);
                     flow.protocol_stack.push(r.protocol);
                     r.protocol_stack = flow.protocol_stack;
                     flow.classification_state = ClassificationState::Classified;
@@ -796,6 +809,7 @@ impl Detector {
                         return Ok(Some(detected));
                     }
                     flow.protocol = Some(detected.protocol);
+                    flow.confidence = Some(detected.confidence);
                     flow.metadata = Some(detected.metadata.clone());
                     flow.protocol_stack.push(detected.protocol);
                     detected.protocol_stack = flow.protocol_stack;
@@ -810,6 +824,7 @@ impl Detector {
                         return Ok(Self::replay_flow(flow));
                     }
                     flow.protocol = Some(detected.protocol);
+                    flow.confidence = Some(detected.confidence);
                     flow.metadata = Some(detected.metadata.clone());
                     flow.protocol_stack.push(detected.protocol);
                     detected.protocol_stack = flow.protocol_stack;
@@ -849,6 +864,7 @@ impl Detector {
                 .detect_with_ports(&parsed.payload, parsed.src_port, parsed.dst_port);
         if let Some(ref mut detected) = result {
             flow.protocol = Some(detected.protocol);
+            flow.confidence = Some(detected.confidence);
             flow.metadata = Some(detected.metadata.clone());
             flow.protocol_stack.push(detected.protocol);
             detected.protocol_stack = flow.protocol_stack;
@@ -1608,6 +1624,22 @@ impl Detector {
     /// 获取流表（只读）
     pub fn flows(&self) -> impl Iterator<Item = (&FlowKey, &Flow)> {
         self.flow_table.iter()
+    }
+
+    /// 导出归一化流记录（P0 差分链路，`feature: json`）
+    ///
+    /// 按“信息量优先 + 端点字典序”排序，保证输出与内部 `HashMap`
+    /// 迭代顺序无关。当前 `detect_at` 仍为单向流模型，同一连接的两个方向
+    /// 各导出一条记录；比较器按双向规范五元组归并。
+    #[cfg(feature = "json")]
+    pub fn normalized_flows(&self) -> Vec<parity::NormalizedFlow> {
+        let mut flows: Vec<_> = self
+            .flow_table
+            .iter()
+            .map(|(_, flow)| parity::NormalizedFlow::from_flow(flow))
+            .collect();
+        flows.sort_by(|a, b| a.export_sort_key().cmp(&b.export_sort_key()));
+        flows
     }
 
     /// 获取活跃流数

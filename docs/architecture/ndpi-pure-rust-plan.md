@@ -267,7 +267,7 @@
 
 1. ~~从 A–E 组选择首批组合~~ 已完成：A + B。
 2. ~~确认首批 Top-N~~ 已完成：见 [protocol-coverage-plan.md](protocol-coverage-plan.md) 第 7 节。
-3. `tests/parity/` 骨架已建立；下一步接 nDPI JSON 适配器、rDpi per-flow 输出与 20 个 pcap。
+3. ~~rDpi per-flow 输出~~ 已完成（`-o flows-jsonl`）；下一步接 nDPI JSON 适配器与 20–50 个 pcap 语料。
 4. ~~双向流 + `Flow` API + 逐包 dissector~~ 已完成；HTTP / DNS-over-TCP / TLS / HTTP2 状态机 + TCP 序列号重组已落地。
 5. ~~VLAN/QinQ/IP-in-IP~~、~~规则/风险/JA4 接入新入口~~ 已完成；下一步：迁移现有 detector、L2 与双向流整合、P0 差分链路。
 
@@ -281,6 +281,12 @@
   - `tests/parity/mod.rs`：`NormalizedFlow` + `compare_flows`（双向规范键、字段级差异、missing/extra）。
   - `tests/test_parity_harness.rs`：6 个用例（一致、反向、协议差异、缺失/多出、risk 顺序、协议栈顺序）。
   - `tests/parity/README.md`：schema、nDPI/rDpi 输出方式、指标与 TODO。
+- **P0 rDpi per-flow 输出**
+  - `src/parity.rs`：`NormalizedFlow` schema 与 `from_flow`（`feature: json`），比较器复用库内定义；
+  - `Detector::normalized_flows()`：按“信息量优先 + 端点字典序”稳定排序；
+  - CLI `-o flows-jsonl`：每行一条归一化流记录（需 `--features "pcap json"`）；
+  - `Flow.confidence` 与 `detect_at` 路径的 `protocol_stack` 填充，供导出使用；
+  - `tests/test_flow_export.rs`：4 个用例（字段映射、已分类/未分类导出、risk_mask）。
 - **P1 首个垂直切片**
   - `FlowKey::canonical/reverse` + `Direction`；
   - `Flow::new_bidirectional/direction_of`（方向相对首包 initiator，而非任意规范键）；
@@ -313,6 +319,6 @@
 
 ### 待办
 
-- **P0**：nDPI JSON → 归一化适配器；rDpi per-flow JSONL 输出；20–50 个 pcap 语料；CI（Linux runner 跑 nDPI）。
+- **P0**：nDPI JSON → 归一化适配器；20–50 个 pcap 语料；CI（Linux runner 跑 nDPI）。
 - **P1**：迁移现有 50 个 detector；L2 与双向流整合。
 - **P1 边界**：QUIC JA4L 与流级风险分析（`analyze_flow`）仍仅在 `detect_at`/`drain_risks` 路径；HTTP/2 CONTINUATION/HPACK 动态表跨帧；TLS 大 Certificate（>64 KiB）分片；TCP FIN/RST 与窗口跟踪；多活跃有状态协议（当前一个 flow 只允许一个 `DissectorState` 变体）。

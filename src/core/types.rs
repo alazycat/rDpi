@@ -434,6 +434,25 @@ pub enum Metadata {
     Kerberos(KerberosMetadata),
 }
 
+impl Metadata {
+    /// 从元数据中提取应用层协议
+    ///
+    /// 与 [`DetectionResult::extract_app`] 同源；per-flow 导出等不持有
+    /// `DetectionResult` 的场景可直接复用。
+    pub fn application(&self) -> Option<Application> {
+        match self {
+            Metadata::Tls(tls) => tls.application,
+            Metadata::Quic(quic) => quic.application,
+            Metadata::Dtls(dtls) => dtls.application,
+            Metadata::Dns(dns) => dns.application,
+            Metadata::Http(http) => http.application,
+            #[cfg(feature = "proto3")]
+            Metadata::Ftp(_) | Metadata::Sip(_) | Metadata::Rtp(_) => None,
+            _ => None,
+        }
+    }
+}
+
 /// DNS 元数据
 #[cfg_attr(feature = "json", derive(serde::Serialize))]
 #[derive(Debug, Clone)]
@@ -921,16 +940,7 @@ impl DetectionResult {
 
     /// 从元数据中提取应用层协议
     fn extract_app(metadata: &Metadata) -> Option<Application> {
-        match metadata {
-            Metadata::Tls(tls) => tls.application,
-            Metadata::Quic(quic) => quic.application,
-            Metadata::Dtls(dtls) => dtls.application,
-            Metadata::Dns(dns) => dns.application,
-            Metadata::Http(http) => http.application,
-            #[cfg(feature = "proto3")]
-            Metadata::Ftp(_) | Metadata::Sip(_) | Metadata::Rtp(_) => None,
-            _ => None,
-        }
+        metadata.application()
     }
 }
 

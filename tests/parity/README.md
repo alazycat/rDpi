@@ -9,8 +9,10 @@
 
 | 文件 | 用途 |
 |---|---|
-| `tests/parity/mod.rs` | 归一化流记录 + 比较器（当前可运行） |
+| `src/parity.rs` | 库内归一化 schema（`NormalizedFlow::from_flow`，`feature: json`） |
+| `tests/parity/mod.rs` | 流比较器（复用库内 `NormalizedFlow`） |
 | `tests/test_parity_harness.rs` | 比较器单元测试（需 `--all-features`） |
+| `tests/test_flow_export.rs` | per-flow 导出测试（需 `--features json`） |
 | `tests/parity/README.md` | 本文档：语料生成与运行方式 |
 
 ---
@@ -80,12 +82,19 @@ nDPI JSON 的字段名与归一化 schema 不同，需要一个轻量适配器�
 
 ## 4. 生成 rDpi 输出
 
-当前 `rdpi -i corpus.pcap -o jsonl` 输出的是**逐包**记录，不含 flow key；需要新增 per-flow 输出（TODO）：
+per-flow 归一化输出已落地（方案 A）：
 
-- 方案 A：扩展 CLI `-o flows-jsonl`，输出 `Detector::flows()` 的每条流；
-- 方案 B：新增 `rdpi-flows` 二进制，用 `process_l3_packet` + 外部 flow 表输出双向流。
+```bash
+rdpi -i corpus.pcap -o flows-jsonl > rdpi.jsonl
+```
 
-在 per-flow 输出落地前，可用库的 `Detector::flows()` 在测试/工具里直接导出。
+需要构建时启用 `--features "pcap json"`。输出每行一条 `NormalizedFlow`，
+字段与第 2 节 schema 一致；库内亦可直接调用
+`Detector::normalized_flows()`（`feature: json`）。
+
+已知边界：`detect_at` 仍为单向流模型，同一条连接的两个方向各导出一条
+记录。导出按“信息量优先 + 端点字典序”稳定排序；比较器按双向规范五元组
+归并时，靠前的记录（元数据更完整）优先。双向流统一后将消除该重复。
 
 ---
 
@@ -133,6 +142,6 @@ cargo test --all-features --test test_parity_corpus -- --ignored
 ## 8. TODO
 
 1. nDPI JSON → 归一化 schema 适配器；
-2. rDpi per-flow JSONL 输出；
+2. ~~rDpi per-flow JSONL 输出~~ 已完成（`-o flows-jsonl` / `Detector::normalized_flows()`）；
 3. 选定 20–50 个 pcap 作为首批语料；
 4. 生成 golden output 并纳入 CI（nDPI 侧在 Linux runner 运行）。

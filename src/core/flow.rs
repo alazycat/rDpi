@@ -147,6 +147,8 @@ pub struct Flow {
     pub key: FlowKey,
     /// 识别出的协议
     pub protocol: Option<Protocol>,
+    /// 分类置信度（与 `protocol` 同步写入；per-flow 导出使用）
+    pub confidence: Option<Confidence>,
     /// 流统计
     pub stats: FlowStats,
     /// 流状态
@@ -257,6 +259,7 @@ impl Flow {
         Self {
             key,
             protocol: None,
+            confidence: None,
             stats: FlowStats::default(),
             state: FlowState::New,
             initiator: Direction::Forward,

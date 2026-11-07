@@ -6,27 +6,10 @@
 //! 该模块只定义比较契约，不负责调用 nDPI/rDpi；真实语料生成见
 //! `tests/parity/README.md`。
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// 归一化后的单条流记录
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NormalizedFlow {
-    pub src_ip: String,
-    pub dst_ip: String,
-    pub src_port: u16,
-    pub dst_port: u16,
-    pub transport: String,
-    pub master_protocol: Option<String>,
-    pub app_protocol: Option<String>,
-    pub category: Option<String>,
-    pub breed: Option<String>,
-    pub confidence: Option<String>,
-    #[serde(default)]
-    pub protocol_stack: Vec<String>,
-    #[serde(default)]
-    pub risk_mask: Vec<String>,
-}
+/// 归一化后的单条流记录（schema 定义在库内，供 CLI per-flow 输出复用）
+pub use rdpi::parity::NormalizedFlow;
 
 /// 单字段差异
 #[derive(Debug, Clone, PartialEq, Eq)]

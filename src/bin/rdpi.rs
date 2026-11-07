@@ -9,9 +9,11 @@
 //!   超大 pcap 请改用 `jsonl`）
 //! - `jsonl`：JSON Lines 流式输出（每行一个对象：packet/unknown/summary，
 //!   零内存缓冲，适合大文件与管道消费）
+//! - `flows-jsonl`：JSON Lines per-flow 归一化记录（P0 差分链路；
+//!   不含逐包/汇总行）
 //!
-//! `json` / `jsonl` 需要 `--features json` 重建（该 feature 为库类型派生
-//! `Serialize`）。
+//! `json` / `jsonl` / `flows-jsonl` 需要 `--features json` 重建（该 feature
+//! 为库类型派生 `Serialize`）。
 
 use clap::Parser;
 use rdpi::DetectionResult;
@@ -44,16 +46,19 @@ struct Cli {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
-    // json/jsonl 依赖 json feature（库类型 Serialize 派生）；未启用时
-    // json 降级为仅 summary 的手写兼容输出，jsonl 直接报错退出
-    if (cli.output == "jsonl") && !cfg!(feature = "json") {
-        eprintln!("error: output format 'jsonl' requires building with --features json");
+    // json/jsonl/flows-jsonl 依赖 json feature（库类型 Serialize 派生）；
+    // 未启用时 json 降级为仅 summary 的手写兼容输出，其余直接报错退出
+    if (cli.output == "jsonl" || cli.output == "flows-jsonl") && !cfg!(feature = "json") {
+        eprintln!(
+            "error: output format '{}' requires building with --features json",
+            cli.output
+        );
         std::process::exit(2);
     }
 
     let start = Instant::now();
     let processor = PcapProcessor::new();
-    let iter = processor.process_file(&cli.input)?;
+    let mut iter = processor.process_file(&cli.input)?;
 
     let mut protocol_counts: HashMap<String, u64> = HashMap::new();
     let mut total_packets = 0u64;
@@ -62,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "json")]
     let mut packet_records: Vec<PacketRecord> = Vec::new();
 
-    for item in iter {
+    for item in iter.by_ref() {
         let maybe_result = item?; // Result<Option<(u64, DetectionResult)>>
         total_packets += 1;
 
@@ -72,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             *protocol_counts.entry(proto_name).or_insert(0) += 1;
             let _ = ts; // 非 verbose / 非 json 路径不消费时间戳
 
-            if cli.verbose {
+            if cli.verbose && cli.output != "flows-jsonl" {
                 #[cfg(feature = "json")]
                 {
                     match cli.output.as_str() {
@@ -94,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 print_detection(total_packets, &det);
             }
-        } else if cli.verbose {
+        } else if cli.verbose && cli.output != "flows-jsonl" {
             #[cfg(feature = "json")]
             if cli.output == "jsonl" {
                 println!(
@@ -108,6 +113,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             println!("[{:6}] UNKNOWN", total_packets);
         }
+    }
+
+    // per-flow 归一化输出（P0 差分链路）：只输出流记录，不带逐包/汇总行
+    if cli.output == "flows-jsonl" {
+        #[cfg(feature = "json")]
+        {
+            for flow in iter.detector().normalized_flows() {
+                println!("{}", serde_json::to_string(&flow)?);
+            }
+        }
+        return Ok(());
     }
 
     let elapsed = start.elapsed();
