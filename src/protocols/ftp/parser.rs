@@ -117,6 +117,14 @@ pub fn is_ftp_command_prefix(payload: &[u8]) -> bool {
         .is_some_and(|first: u8| first.is_ascii_uppercase())
 }
 
+/// 返回缓冲区中首个完整行（含 `\n`）的结束位置（不含端点）
+pub fn complete_line_end(buffer: &[u8]) -> Option<usize> {
+    buffer
+        .iter()
+        .position(|&byte| byte == b'\n')
+        .map(|pos| pos + 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

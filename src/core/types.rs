@@ -156,6 +156,17 @@ pub struct WebSocketDissectorState {
     pub upgrade_request_seen: bool,
 }
 
+/// FTP 有状态 dissector 的 per-flow 状态
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FtpDissectorState {
+    /// 跨包累积的行字节
+    pub buffer: Vec<u8>,
+    /// 已提取的用户名（USER 命令，首个非空值）
+    pub username: Option<String>,
+    /// 已提取的文件名（RETR/STOR 命令，首个非空值）
+    pub filename: Option<String>,
+}
+
 /// per-flow 有状态 dissector 状态
 ///
 /// 当前只支持一个活跃的有状态协议（HTTP）；后续按协议扩展枚举。
@@ -182,6 +193,8 @@ pub enum DissectorState {
     Imap(ImapDissectorState),
     /// WebSocket 升级握手状态机
     WebSocket(WebSocketDissectorState),
+    /// FTP 行跨段重组
+    Ftp(FtpDissectorState),
 }
 
 /// 协议栈最大层数（与 nDPI `NDPI_PROTOCOL_STACK_SIZE` 对齐）
@@ -1812,6 +1825,10 @@ pub struct FtpMetadata {
     pub verb: Option<String>,
     pub argument: Option<String>,
     pub response_code: Option<u16>,
+    /// 已提取的用户名（USER 命令，首个非空值）
+    pub username: Option<String>,
+    /// 已提取的文件名（RETR/STOR 命令，首个非空值）
+    pub filename: Option<String>,
 }
 
 #[cfg(feature = "proto3")]

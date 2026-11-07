@@ -79,7 +79,8 @@ impl ProtocolDetector for HttpDetector {
             | DissectorState::Smtp(_)
             | DissectorState::Pop3(_)
             | DissectorState::Imap(_)
-            | DissectorState::WebSocket(_) => {
+            | DissectorState::WebSocket(_)
+            | DissectorState::Ftp(_) => {
                 return None;
             }
         }

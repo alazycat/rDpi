@@ -7,7 +7,8 @@ use crate::core::types::*;
 use crate::protocols::ProtocolDetector;
 
 use super::parser::{
-    is_ftp_command_prefix, is_ftp_response_prefix, parse_ftp_command, parse_ftp_response,
+    complete_line_end, is_ftp_command_prefix, is_ftp_response_prefix, parse_ftp_command,
+    parse_ftp_response,
 };
 
 /// FTP 与 POP3 共有的命令动词——仅凭 payload 无法区分（F8，risks.md）。
@@ -24,6 +25,14 @@ fn is_pop3_port(port: u16) -> bool {
 /// 这类响应出现在 SMTP 端口上时，detect_with_context 让位给 SmtpDetector。
 fn is_smtp_port(port: u16) -> bool {
     port == 25 || port == 465 || port == 587
+}
+
+/// FTP 行缓冲上限（RFC 959 命令/响应 ≤ 512 字节，留足余量）
+const FTP_LINE_MAX_BYTES: usize = 4096;
+
+/// 判断首字节是否可能为 FTP 数字响应（200–600）
+fn is_ftp_response_start(byte: u8) -> bool {
+    (b'2'..=b'6').contains(&byte)
 }
 
 /// FTP protocol detector
@@ -68,6 +77,8 @@ impl ProtocolDetector for FtpDetector {
                 verb: None,
                 argument: None,
                 response_code: Some(resp.code),
+                username: None,
+                filename: None,
             });
             return Some(DetectionResult::new(Protocol::Ftp).with_metadata(meta));
         }
@@ -82,6 +93,8 @@ impl ProtocolDetector for FtpDetector {
                 verb: Some(cmd.verb),
                 argument: cmd.argument,
                 response_code: None,
+                username: None,
+                filename: None,
             });
             return Some(DetectionResult::new(Protocol::Ftp).with_metadata(meta));
         }
@@ -113,6 +126,99 @@ impl ProtocolDetector for FtpDetector {
         }
 
         Some(result)
+    }
+
+    /// 有状态逐包处理：FTP 命令/响应行可能跨 TCP 段
+    ///
+    /// 仅服务端数字响应前缀（2–6）且非 SMTP 端口时接管；FTP 为 server-first
+    /// 协议，正常抓包从 banner 开始。接管后进入 monitoring，后续 USER /
+    /// RETR / STOR 命令持续富化 username/filename。
+    fn process(
+        &self,
+        state: &mut DissectorState,
+        payload: &[u8],
+        _direction: Direction,
+        ctx: &DetectContext,
+    ) -> Option<DissectorOutcome> {
+        let was_none = matches!(state, DissectorState::None);
+        match state {
+            DissectorState::None => {
+                if payload.is_empty()
+                    || !is_ftp_response_start(payload[0])
+                    || is_smtp_port(ctx.src_port)
+                    || is_smtp_port(ctx.dst_port)
+                {
+                    return None;
+                }
+                *state = DissectorState::Ftp(FtpDissectorState::default());
+            }
+            DissectorState::Ftp(_) => {}
+            _ => return None,
+        }
+        let DissectorState::Ftp(ftp) = state else {
+            return None;
+        };
+
+        if ftp.buffer.len() + payload.len() > FTP_LINE_MAX_BYTES {
+            return Some(DissectorOutcome::GiveUp);
+        }
+        ftp.buffer.extend_from_slice(payload);
+
+        let pending = std::mem::take(&mut ftp.buffer);
+        let mut start = 0;
+        let mut first_complete_line = was_none;
+        let mut last_metadata = None;
+
+        while let Some(end_rel) = complete_line_end(&pending[start..]) {
+            let end = start + end_rel;
+            let line = &pending[start..end];
+            start = end;
+
+            match self.detect(line) {
+                Some(result) => {
+                    if let Metadata::Ftp(ref meta) = result.metadata
+                        && meta.is_client
+                    {
+                        match meta.verb.as_deref() {
+                            Some("USER") => {
+                                if ftp.username.is_none() {
+                                    ftp.username = meta.argument.clone();
+                                }
+                            }
+                            Some("RETR" | "STOR") => {
+                                if ftp.filename.is_none() {
+                                    ftp.filename = meta.argument.clone();
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    let mut metadata = match result.metadata {
+                        Metadata::Ftp(meta) => meta,
+                        _ => unreachable!("FTP detector always returns Ftp metadata"),
+                    };
+                    metadata.username = ftp.username.clone();
+                    metadata.filename = ftp.filename.clone();
+                    last_metadata = Some(metadata);
+                }
+                None => {
+                    if first_complete_line {
+                        return Some(DissectorOutcome::GiveUp);
+                    }
+                }
+            }
+            first_complete_line = false;
+        }
+
+        ftp.buffer.extend_from_slice(&pending[start..]);
+
+        last_metadata
+            .map(|metadata| {
+                DissectorOutcome::Classified(
+                    DetectionResult::new(Protocol::Ftp).with_metadata(Metadata::Ftp(metadata)),
+                )
+            })
+            .or(Some(DissectorOutcome::Continue))
     }
 }
 
@@ -308,5 +414,158 @@ mod tests {
             "门区间不覆盖合法样本首字节 0x{:02X}",
             sample[0]
         );
+    }
+
+    // ---- F44: FTP 有状态会话 ----
+
+    #[test]
+    fn test_process_reassembles_split_banner() {
+        let detector = FtpDetector::new();
+        let mut state = DissectorState::None;
+        let ctx = ctx_with(50000, 21);
+
+        let first = detector
+            .process(&mut state, b"220 FTP ser", Direction::Reverse, &ctx)
+            .unwrap();
+        assert!(matches!(first, DissectorOutcome::Continue));
+
+        let second = detector
+            .process(&mut state, b"ver ready\r\n", Direction::Reverse, &ctx)
+            .unwrap();
+        match second {
+            DissectorOutcome::Classified(result) => {
+                assert_eq!(result.protocol, Protocol::Ftp);
+            }
+            other => panic!("expected Classified, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_process_extracts_username_across_segments() {
+        let detector = FtpDetector::new();
+        let mut state = DissectorState::None;
+        let ctx = ctx_with(50000, 21);
+
+        detector
+            .process(&mut state, b"220 FTP ready\r\n", Direction::Reverse, &ctx)
+            .unwrap();
+        detector
+            .process(&mut state, b"US", Direction::Forward, &ctx)
+            .unwrap();
+        let result = detector
+            .process(&mut state, b"ER alice\r\n", Direction::Forward, &ctx)
+            .unwrap();
+
+        match result {
+            DissectorOutcome::Classified(result) => match result.metadata {
+                Metadata::Ftp(meta) => {
+                    assert_eq!(meta.username.as_deref(), Some("alice"));
+                }
+                other => panic!("expected Ftp metadata, got {other:?}"),
+            },
+            other => panic!("expected Classified, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_process_extracts_filename_for_retr_and_stor() {
+        let detector = FtpDetector::new();
+        let mut state = DissectorState::None;
+        let ctx = ctx_with(50000, 21);
+        detector
+            .process(&mut state, b"220 FTP ready\r\n", Direction::Reverse, &ctx)
+            .unwrap();
+
+        let result = detector
+            .process(&mut state, b"RETR report.pdf\r\n", Direction::Forward, &ctx)
+            .unwrap();
+        match result {
+            DissectorOutcome::Classified(result) => match result.metadata {
+                Metadata::Ftp(meta) => assert_eq!(meta.filename.as_deref(), Some("report.pdf")),
+                other => panic!("expected Ftp metadata, got {other:?}"),
+            },
+            other => panic!("expected Classified, got {other:?}"),
+        }
+
+        let result = detector
+            .process(&mut state, b"STOR upload.bin\r\n", Direction::Forward, &ctx)
+            .unwrap();
+        match result {
+            DissectorOutcome::Classified(result) => match result.metadata {
+                Metadata::Ftp(meta) => assert_eq!(meta.filename.as_deref(), Some("report.pdf")),
+                other => panic!("expected Ftp metadata, got {other:?}"),
+            },
+            other => panic!("expected Classified, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_process_multiple_commands_in_one_segment() {
+        let detector = FtpDetector::new();
+        let mut state = DissectorState::None;
+        let ctx = ctx_with(50000, 21);
+        detector
+            .process(&mut state, b"220 FTP ready\r\n", Direction::Reverse, &ctx)
+            .unwrap();
+
+        let result = detector
+            .process(
+                &mut state,
+                b"USER bob\r\nRETR notes.txt\r\n",
+                Direction::Forward,
+                &ctx,
+            )
+            .unwrap();
+        match result {
+            DissectorOutcome::Classified(result) => match result.metadata {
+                Metadata::Ftp(meta) => {
+                    assert_eq!(meta.username.as_deref(), Some("bob"));
+                    assert_eq!(meta.filename.as_deref(), Some("notes.txt"));
+                }
+                other => panic!("expected Ftp metadata, got {other:?}"),
+            },
+            other => panic!("expected Classified, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_process_does_not_take_over_on_smtp_port() {
+        let detector = FtpDetector::new();
+        let mut state = DissectorState::None;
+        let ctx = ctx_with(12345, 25);
+        assert!(
+            detector
+                .process(
+                    &mut state,
+                    b"220 mail.example.com ESMTP\r\n",
+                    Direction::Reverse,
+                    &ctx
+                )
+                .is_none()
+        );
+        assert_eq!(state, DissectorState::None);
+    }
+
+    #[test]
+    fn test_process_gives_up_when_first_line_is_not_ftp() {
+        let detector = FtpDetector::new();
+        let mut state = DissectorState::None;
+        let ctx = ctx_with(12345, 21);
+        let outcome = detector
+            .process(&mut state, b"6xx not-an-ftp-line\r\n", Direction::Reverse, &ctx)
+            .unwrap();
+        assert!(matches!(outcome, DissectorOutcome::GiveUp));
+    }
+
+    #[test]
+    fn test_process_buffer_overflow_gives_up() {
+        let detector = FtpDetector::new();
+        let mut state = DissectorState::None;
+        let ctx = ctx_with(12345, 21);
+        let payload = vec![b'2'; FTP_LINE_MAX_BYTES + 1];
+        let outcome = detector
+            .process(&mut state, &payload, Direction::Reverse, &ctx)
+            .unwrap();
+        assert!(matches!(outcome, DissectorOutcome::GiveUp));
     }
 }

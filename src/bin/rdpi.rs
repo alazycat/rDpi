@@ -285,6 +285,13 @@ fn print_detection(pkt_num: u64, det: &DetectionResult) {
         rdpi::Metadata::Pop3(p) => p.username.as_deref().unwrap_or(""),
         #[cfg(feature = "mail")]
         rdpi::Metadata::Imap(i) => i.username.as_deref().unwrap_or(""),
+        // F44：FTP 元数据主展示为用户名，回退文件名
+        #[cfg(feature = "proto3")]
+        rdpi::Metadata::Ftp(ftp) => ftp
+            .username
+            .as_deref()
+            .or(ftp.filename.as_deref())
+            .unwrap_or(""),
         // F37：DHCP/DHCPv6 主元数据即 JA4D/JA4D6 指纹
         rdpi::Metadata::Dhcp(d) => &d.ja4d,
         #[cfg(feature = "infra")]

@@ -695,6 +695,29 @@ impl Detector {
                 flow.metadata = Some(Metadata::Imap(old.clone()));
                 detected.metadata = Metadata::Imap(old);
             }
+            #[cfg(feature = "proto3")]
+            Some(Metadata::Ftp(mut old)) => {
+                if let Metadata::Ftp(new) = detected.metadata.clone() {
+                    if new.username.is_some() {
+                        old.username = new.username;
+                    }
+                    if new.filename.is_some() {
+                        old.filename = new.filename;
+                    }
+                    if new.verb.is_some() {
+                        old.verb = new.verb;
+                    }
+                    if new.argument.is_some() {
+                        old.argument = new.argument;
+                    }
+                    if new.response_code.is_some() {
+                        old.response_code = new.response_code;
+                    }
+                    old.is_client = new.is_client;
+                }
+                flow.metadata = Some(Metadata::Ftp(old.clone()));
+                detected.metadata = Metadata::Ftp(old);
+            }
             Some(other) => {
                 flow.metadata = Some(other);
             }
@@ -948,6 +971,7 @@ impl Detector {
                             | DissectorState::Smtp(_)
                             | DissectorState::Pop3(_)
                             | DissectorState::Imap(_)
+                            | DissectorState::Ftp(_)
                     );
                     // 已定型：释放前缀缓冲
                     flow.tcp_prefix = [Vec::new(), Vec::new()];
