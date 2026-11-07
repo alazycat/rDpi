@@ -43,11 +43,20 @@ impl RiskProcessor for SmbRiskProcessor {
         {
             return Vec::new();
         }
-        vec![RiskResult::new(
-            RiskFlag::SmbInsecureVersion,
-            RiskSeverity::High,
-            "SMBv1 is insecure and vulnerable to known exploits",
-        )]
+        // 对齐 nDPI 5.0 golden：SMBv1 流同时触发 unsafe_protocol（协议不安全）
+        // 与 smb_insecure_version（版本已知漏洞面）
+        vec![
+            RiskResult::new(
+                RiskFlag::UnsafeProtocol,
+                RiskSeverity::High,
+                "SMBv1 is an unsafe protocol",
+            ),
+            RiskResult::new(
+                RiskFlag::SmbInsecureVersion,
+                RiskSeverity::High,
+                "SMBv1 is insecure and vulnerable to known exploits",
+            ),
+        ]
     }
 }
 

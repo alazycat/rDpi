@@ -78,6 +78,16 @@ impl RiskProcessor for BehavioralRiskProcessor {
             return Vec::new();
         }
 
+        // NBSS（TCP 445/139）+ SMB 签名的载荷是结构化 SMB 帧——
+        // SMB1 Negotiate 等被跳过的首包尚未定型协议，但语义已确定；
+        // F45 真实 golden 验证：nDPI 5.0 不对 SMB 帧告警混淆流量
+        if parsed.payload.len() >= 8
+            && parsed.payload[0] == 0x00
+            && (&parsed.payload[4..8] == b"\xFFSMB" || &parsed.payload[4..8] == b"\xFESMB")
+        {
+            return Vec::new();
+        }
+
         let mut results = Vec::new();
 
         // 1. BinaryDataTransfer: 不可打印字符比例高
@@ -187,6 +197,22 @@ mod tests {
         let (p, f) = (make_parsed(payload), make_flow());
         let risks = proc.analyze_packet(&p, &f);
         assert!(risks.iter().any(|r| r.flag == RiskFlag::BinaryDataTransfer));
+    }
+
+    #[test]
+    fn test_smb_frame_not_obfuscated() {
+        // F45：SMB1 Negotiate（NBSS + 0xFFSMB）虽呈混淆特征（打印占比 ~35%）
+        // 但语义已确定，不告警
+        let proc = BehavioralRiskProcessor::new();
+        let mut payload = vec![0u8; 52];
+        payload[0] = 0x00;
+        payload[4..8].copy_from_slice(b"\xFFSMB");
+        payload[8] = 0x72; // SMB1 Negotiate
+        payload[13] = 0x18;
+        payload[14..16].copy_from_slice(b"SM");
+        let (p, f) = (make_parsed(payload), make_flow());
+        let risks = proc.analyze_packet(&p, &f);
+        assert!(risks.is_empty());
     }
 
     #[test]
