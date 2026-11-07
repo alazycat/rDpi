@@ -659,6 +659,42 @@ impl Detector {
                 flow.metadata = Some(Metadata::Tls(old.clone()));
                 detected.metadata = Metadata::Tls(old);
             }
+            #[cfg(feature = "smtp")]
+            Some(Metadata::Smtp(mut old)) => {
+                if let Metadata::Smtp(new) = detected.metadata.clone() {
+                    if let Some(h) = new.hostname {
+                        old.hostname = Some(h);
+                    }
+                    if let Some(s) = new.sender {
+                        old.sender = Some(s);
+                    }
+                    if let Some(r) = new.recipient {
+                        old.recipient = Some(r);
+                    }
+                }
+                flow.metadata = Some(Metadata::Smtp(old.clone()));
+                detected.metadata = Metadata::Smtp(old);
+            }
+            #[cfg(feature = "mail")]
+            Some(Metadata::Pop3(mut old)) => {
+                if let Metadata::Pop3(new) = detected.metadata.clone()
+                    && let Some(u) = new.username
+                {
+                    old.username = Some(u);
+                }
+                flow.metadata = Some(Metadata::Pop3(old.clone()));
+                detected.metadata = Metadata::Pop3(old);
+            }
+            #[cfg(feature = "mail")]
+            Some(Metadata::Imap(mut old)) => {
+                if let Metadata::Imap(new) = detected.metadata.clone()
+                    && let Some(u) = new.username
+                {
+                    old.username = Some(u);
+                }
+                flow.metadata = Some(Metadata::Imap(old.clone()));
+                detected.metadata = Metadata::Imap(old);
+            }
             Some(other) => {
                 flow.metadata = Some(other);
             }
@@ -906,7 +942,13 @@ impl Detector {
                     flow.protocol_stack.push(detected.protocol);
                     detected.protocol_stack = flow.protocol_stack;
                     flow.classification_state = ClassificationState::Classified;
-                    flow.monitoring = matches!(flow.dissector_state, DissectorState::Tls(_));
+                    flow.monitoring = matches!(
+                        flow.dissector_state,
+                        DissectorState::Tls(_)
+                            | DissectorState::Smtp(_)
+                            | DissectorState::Pop3(_)
+                            | DissectorState::Imap(_)
+                    );
                     // 已定型：释放前缀缓冲
                     flow.tcp_prefix = [Vec::new(), Vec::new()];
                     return Ok(Some(detected));

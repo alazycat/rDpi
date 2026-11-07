@@ -45,13 +45,13 @@
 | quic | quic（crypto.rs Initial 解密 + parser.rs，无 detector.rs 目录结构） |
 | dtls | dtls（F38，2026-11-06：DTLS 握手识别 + d 前缀 JA4/JA4S，合成 TLS 记录复用 tls 解析器，无 detector.rs 目录结构） |
 | ssh | ssh |
-| smtp | smtp |
-| mail | pop3, imap |
+| smtp | smtp（F43，2026-11-06：有状态跨段行重组 + MAIL FROM/RCPT TO 提取 sender/recipient 元数据） |
+| mail | pop3, imap（F43，2026-11-06：有状态跨段行重组 + USER/LOGIN 提取 username 元数据） |
 | infra | ntp, dhcp, bgp, dhcpv6, vxlan, netflow, ike, ptpv2 |
 | snmp | snmp（R1 已修复 2026-11-04） |
 | modbus | modbus |
 | database | mysql, postgresql, redis, mongodb |
-| proto3 | ftp, sip, rtp, http2（HPACK 元数据，2026-11-05）, websocket, rtmp, socks |
+| proto3 | ftp, sip, rtp, http2（HPACK 元数据，2026-11-05）, websocket（F43，2026-11-06：有状态升级握手重组）, rtmp, socks |
 | iot | mqtt |
 | vpn | wireguard, openvpn, l2tp, pptp |
 | voip | stun, turn, mgcp, h323 |

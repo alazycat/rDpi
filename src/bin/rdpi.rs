@@ -275,6 +275,16 @@ fn print_detection(pkt_num: u64, det: &DetectionResult) {
         rdpi::Metadata::Dtls(d) => d.sni.as_deref().unwrap_or(d.alpn.as_deref().unwrap_or("")),
         rdpi::Metadata::Http(http) => http.host.as_deref().unwrap_or(""),
         rdpi::Metadata::Ssh(ssh) => ssh.software.as_deref().unwrap_or(""),
+        rdpi::Metadata::Smtp(smtp) => smtp
+            .sender
+            .as_deref()
+            .or(smtp.recipient.as_deref())
+            .or(smtp.hostname.as_deref())
+            .unwrap_or(""),
+        #[cfg(feature = "mail")]
+        rdpi::Metadata::Pop3(p) => p.username.as_deref().unwrap_or(""),
+        #[cfg(feature = "mail")]
+        rdpi::Metadata::Imap(i) => i.username.as_deref().unwrap_or(""),
         // F37：DHCP/DHCPv6 主元数据即 JA4D/JA4D6 指纹
         rdpi::Metadata::Dhcp(d) => &d.ja4d,
         #[cfg(feature = "infra")]

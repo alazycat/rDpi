@@ -128,6 +128,37 @@ fn find_line_end(data: &[u8]) -> Option<usize> {
     None
 }
 
+/// 从 MAIL FROM / RCPT TO 命令参数中提取邮箱地址
+///
+/// 支持 `<addr>` 尖括号形式与裸地址形式；提取失败返回 None。
+/// 输入为命令参数部分（如 `FROM:<a@b.com>` 或 `TO:<a@b.com>`）。
+pub fn extract_smtp_address(argument: &str) -> Option<String> {
+    let arg = argument.trim();
+    // 优先尖括号形式
+    let bracketed = arg
+        .find('<')
+        .and_then(|s| arg[s..].find('>').map(|e| arg[s + 1..s + e].to_string()));
+    if let Some(addr) = bracketed
+        && !addr.is_empty()
+    {
+        return Some(addr);
+    }
+    // 裸地址形式：取第一个 token（去除可能的 BODY= 等 esmtp 参数）
+    let token = arg.split_whitespace().next()?;
+    if token.contains('@') {
+        return Some(token.trim_end_matches(',').to_string());
+    }
+    None
+}
+
+/// 从解析后的 SMTP 命令中提取邮箱地址（MAIL FROM → 发件人，RCPT TO → 收件人）
+pub fn extract_address_from_command(cmd: &SmtpCommand) -> Option<String> {
+    match cmd.command.as_str() {
+        "MAIL" | "RCPT" => cmd.argument.as_deref().and_then(extract_smtp_address),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

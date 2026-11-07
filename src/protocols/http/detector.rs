@@ -75,7 +75,11 @@ impl ProtocolDetector for HttpDetector {
             DissectorState::Ssh(_)
             | DissectorState::DnsTcp(_)
             | DissectorState::Tls(_)
-            | DissectorState::Http2(_) => {
+            | DissectorState::Http2(_)
+            | DissectorState::Smtp(_)
+            | DissectorState::Pop3(_)
+            | DissectorState::Imap(_)
+            | DissectorState::WebSocket(_) => {
                 return None;
             }
         }

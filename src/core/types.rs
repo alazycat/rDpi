@@ -112,6 +112,50 @@ pub struct Http2DissectorState {
     pub preface_seen: bool,
 }
 
+/// SMTP 有状态 dissector 的 per-flow 状态
+///
+/// 跨 TCP 段累积 banner/响应/命令行，直到出现 `\r\n`/`\n` 再交给无状态解析。
+/// 定型后进入监测模式，逐行提取 MAIL FROM/RCPT TO 地址。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SmtpDissectorState {
+    /// 跨包累积的行字节
+    pub buffer: Vec<u8>,
+    /// 已提取的发件人地址（MAIL FROM）
+    pub sender: Option<String>,
+    /// 已提取的收件人地址（RCPT TO）
+    pub recipient: Option<String>,
+}
+
+/// POP3 有状态 dissector 的 per-flow 状态
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Pop3DissectorState {
+    /// 跨包累积的行字节
+    pub buffer: Vec<u8>,
+    /// 已提取的用户名（USER 命令）
+    pub username: Option<String>,
+}
+
+/// IMAP 有状态 dissector 的 per-flow 状态
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ImapDissectorState {
+    /// 跨包累积的行字节
+    pub buffer: Vec<u8>,
+    /// 已提取的用户名（LOGIN 命令）
+    pub username: Option<String>,
+}
+
+/// WebSocket 有状态 dissector 的 per-flow 状态
+///
+/// 跟踪升级握手：客户端 Upgrade 请求 → 服务端 101 Switching Protocols 响应。
+/// 请求/响应头可跨 TCP 段，缓冲至 `\r\n\r\n` 后判定。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WebSocketDissectorState {
+    /// 跨包累积的 HTTP 头字节
+    pub buffer: Vec<u8>,
+    /// 是否已观测到客户端 Upgrade 请求
+    pub upgrade_request_seen: bool,
+}
+
 /// per-flow 有状态 dissector 状态
 ///
 /// 当前只支持一个活跃的有状态协议（HTTP）；后续按协议扩展枚举。
@@ -130,6 +174,14 @@ pub enum DissectorState {
     Tls(TlsDissectorState),
     /// HTTP/2 preface + HEADERS 帧跨包重组
     Http2(Http2DissectorState),
+    /// SMTP 行跨段重组
+    Smtp(SmtpDissectorState),
+    /// POP3 行跨段重组
+    Pop3(Pop3DissectorState),
+    /// IMAP 行跨段重组
+    Imap(ImapDissectorState),
+    /// WebSocket 升级握手状态机
+    WebSocket(WebSocketDissectorState),
 }
 
 /// 协议栈最大层数（与 nDPI `NDPI_PROTOCOL_STACK_SIZE` 对齐）
@@ -400,6 +452,12 @@ pub enum Metadata {
     Ssh(SshMetadata),
     /// SMTP 元数据
     Smtp(SmtpMetadata),
+    /// POP3 元数据 (feature: mail)
+    #[cfg(feature = "mail")]
+    Pop3(Pop3Metadata),
+    /// IMAP 元数据 (feature: mail)
+    #[cfg(feature = "mail")]
+    Imap(ImapMetadata),
     /// QUIC 元数据
     Quic(QuicMetadata),
     /// DTLS 元数据
@@ -608,6 +666,26 @@ pub struct SmtpMetadata {
     pub hostname: Option<String>,
     /// 是否为客户端命令
     pub is_client: bool,
+    /// 发件人地址（来自 MAIL FROM 命令，多命令会话富化）
+    pub sender: Option<String>,
+    /// 收件人地址（来自 RCPT TO 命令，多命令会话富化）
+    pub recipient: Option<String>,
+}
+
+/// POP3 元数据
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone, Default)]
+pub struct Pop3Metadata {
+    /// 用户名（来自 USER 命令）
+    pub username: Option<String>,
+}
+
+/// IMAP 元数据
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone, Default)]
+pub struct ImapMetadata {
+    /// 用户名（来自 LOGIN 命令）
+    pub username: Option<String>,
 }
 
 /// QUIC Transport Parameters（RFC 9000 §18.2，feature: quic）
