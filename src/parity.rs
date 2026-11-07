@@ -13,7 +13,7 @@
 //! ```
 
 use crate::core::flow::Flow;
-use crate::core::types::{Protocol, TransportProto};
+use crate::core::types::{Application, Protocol, TransportProto};
 use std::collections::BTreeMap;
 
 /// 归一化后的单条流记录
@@ -51,17 +51,18 @@ impl NormalizedFlow {
         .to_string();
 
         let master_protocol = flow.protocol.map(protocol_name);
-        let app_protocol = flow
+        let application = flow
             .metadata
             .as_ref()
-            .and_then(|metadata| metadata.application())
-            .map(|application| application.name().to_string());
-        let category = flow
-            .protocol
-            .map(|protocol| format!("{:?}", protocol.category()));
-        let breed = flow
-            .protocol
-            .map(|protocol| format!("{:?}", protocol.breed()));
+            .and_then(|metadata| metadata.application());
+        let app_protocol = application.map(ndpi_compat_app_name);
+        let (category, breed) = match flow.protocol {
+            Some(protocol) => {
+                let (category, breed) = ndpi_compat_classification(protocol, application);
+                (Some(category), Some(breed))
+            }
+            None => (None, None),
+        };
         let confidence = flow.confidence.map(|confidence| format!("{confidence:?}"));
         let protocol_stack = flow.protocol_stack.iter().map(protocol_name).collect();
 
@@ -159,6 +160,53 @@ impl NormalizedFlow {
 
 fn protocol_name(protocol: Protocol) -> String {
     format!("{protocol:?}")
+}
+
+/// rDpi 应用名 → nDPI 5.0 应用协议名（仅列出已验证的名称差异；
+/// 其余保持原名，比较器按大小写不敏感处理）
+fn ndpi_compat_app_name(application: Application) -> String {
+    match application {
+        Application::Google => "GoogleServices".to_string(),
+        _ => application.name().to_string(),
+    }
+}
+
+/// rDpi 协议/应用 → nDPI 5.0 兼容的 `(category, breed)`
+///
+/// nDPI 的分类/评级取自最终识别协议（app 优先），DNS 等协议则固定在
+/// master 上。下表只覆盖已用真实 ndpiReader 5.0 输出验证过的组合；
+/// 未覆盖时回退到 rDpi 原生名称，差异会在差分报告中暴露。
+fn ndpi_compat_classification(
+    protocol: Protocol,
+    application: Option<Application>,
+) -> (String, String) {
+    let native = || {
+        (
+            format!("{:?}", protocol.category()),
+            format!("{:?}", protocol.breed()),
+        )
+    };
+    match protocol {
+        Protocol::Dns => ("Network".to_string(), "Acceptable".to_string()),
+        Protocol::Http => app_taxonomy(application)
+            .unwrap_or_else(|| ("Web".to_string(), "Acceptable".to_string())),
+        Protocol::Tls => {
+            app_taxonomy(application).unwrap_or_else(|| ("Web".to_string(), "Safe".to_string()))
+        }
+        _ => native(),
+    }
+}
+
+/// 已验证的应用层分类/评级（HTTP/TLS 共用）
+fn app_taxonomy(application: Option<Application>) -> Option<(String, String)> {
+    let (category, breed) = match application? {
+        Application::YouTube => ("Media", "Fun"),
+        Application::Facebook => ("SocialNetwork", "Fun"),
+        Application::GitHub => ("Collaborative", "Acceptable"),
+        Application::Google => ("Web", "Acceptable"),
+        _ => return None,
+    };
+    Some((category.to_string(), breed.to_string()))
 }
 
 /// 解析 nDPI JSONL 文本（每行一条流记录，空行跳过）

@@ -267,7 +267,7 @@
 
 1. ~~从 A–E 组选择首批组合~~ 已完成：A + B。
 2. ~~确认首批 Top-N~~ 已完成：见 [protocol-coverage-plan.md](protocol-coverage-plan.md) 第 7 节。
-3. ~~rDpi per-flow 输出~~、~~nDPI JSON 适配器~~、~~20 个自生成 pcap + golden~~ 已完成；下一步补目标环境真实 pcap、CI 与分类映射表。
+3. ~~rDpi per-flow 输出~~、~~nDPI JSON 适配器~~、~~20 个自生成 pcap + golden~~、~~nDPI 兼容分类映射~~ 已完成；下一步补目标环境真实 pcap 与 CI。
 4. ~~双向流 + `Flow` API + 逐包 dissector~~ 已完成；HTTP / DNS-over-TCP / TLS / HTTP2 状态机 + TCP 序列号重组已落地。
 5. ~~VLAN/QinQ/IP-in-IP~~、~~规则/风险/JA4 接入新入口~~ 已完成；下一步：迁移现有 detector、L2 与双向流整合、P0 差分链路。
 
@@ -295,7 +295,14 @@
 - **P0 语料与 golden**
   - `tests/parity/gen_corpus.py`：确定性生成 20 个 pcap（DNS/HTTP/TLS × 主机/方法/SNI 变体 + 4 个多流混合）；
   - `tests/parity/corpus/` 与 `tests/parity/golden/` 随仓库提交（nDPI 5.0 真实输出，CI 无需安装 nDPI）；
-  - `tests/test_parity_corpus.rs`：逐 pcap 跑 rDpi 库内检测并与 golden 比较；断言 flow 集合与 master protocol 一致（20/20），category/breed/app/risk 差异仅报告。
+  - `tests/test_parity_corpus.rs`：逐 pcap 跑 rDpi 库内检测并与 golden 比较。
+- **P0 nDPI 兼容分类映射**
+  - `src/parity.rs`：`ndpi_compat_classification` / `ndpi_compat_app_name`；
+  - 基础协议：DNS → Network/Acceptable、HTTP → Web/Acceptable、TLS → Web/Safe；
+  - 应用层（HTTP/TLS）：YouTube → Media/Fun、Facebook → SocialNetwork/Fun、GitHub → Collaborative/Acceptable、Google → Web/Acceptable（app 名 `GoogleServices`）；
+  - DNS 保持 master taxonomy（nDPI 不对 DNS 查询做 app 分类），rDpi 仍保留应用识别结果；
+  - 未覆盖组合回退原生名称并在 diff 中暴露；
+  - 语料测试升级为 gate master/app/category/breed/confidence：20/20 用例全部一致，risk_mask 仅报告。
 - **P1 首个垂直切片**
   - `FlowKey::canonical/reverse` + `Direction`；
   - `Flow::new_bidirectional/direction_of`（方向相对首包 initiator，而非任意规范键）；
@@ -328,6 +335,6 @@
 
 ### 待办
 
-- **P0**：目标环境真实 pcap 扩充（20 个自生成用例已就绪）；CI；category/breed/app 协议映射表。
+- **P0**：目标环境真实 pcap 扩充（20 个自生成用例已就绪）；CI 接入；映射表随语料扩展继续补充。
 - **P1**：迁移现有 50 个 detector；L2 与双向流整合。
 - **P1 边界**：QUIC JA4L 与流级风险分析（`analyze_flow`）仍仅在 `detect_at`/`drain_risks` 路径；HTTP/2 CONTINUATION/HPACK 动态表跨帧；TLS 大 Certificate（>64 KiB）分片；TCP FIN/RST 与窗口跟踪；多活跃有状态协议（当前一个 flow 只允许一个 `DissectorState` 变体）。

@@ -7,7 +7,7 @@
 use rdpi::Detector;
 use rdpi::core::flow::Flow;
 use rdpi::core::types::{
-    Application, Confidence, FlowKey, Metadata, Protocol, TlsMetadata, TransportProto,
+    Application, Confidence, DnsMetadata, FlowKey, Metadata, Protocol, TlsMetadata, TransportProto,
 };
 use rdpi::parity::NormalizedFlow;
 use std::net::{IpAddr, Ipv4Addr};
@@ -110,8 +110,9 @@ fn normalized_flow_maps_protocol_metadata_and_stack() {
     assert_eq!(normalized.transport, "tcp");
     assert_eq!(normalized.master_protocol.as_deref(), Some("Tls"));
     assert_eq!(normalized.app_protocol.as_deref(), Some("YouTube"));
-    assert_eq!(normalized.category.as_deref(), Some("WebTunnel"));
-    assert_eq!(normalized.breed.as_deref(), Some("Safe"));
+    // category/breed 以 nDPI 5.0 兼容名称导出（YouTube → Media/Fun）
+    assert_eq!(normalized.category.as_deref(), Some("Media"));
+    assert_eq!(normalized.breed.as_deref(), Some("Fun"));
     assert_eq!(normalized.confidence.as_deref(), Some("Dpi"));
     assert_eq!(normalized.protocol_stack, vec!["Tls".to_string()]);
     assert!(normalized.risk_mask.is_empty());
@@ -119,6 +120,33 @@ fn normalized_flow_maps_protocol_metadata_and_stack() {
     let json = serde_json::to_string(&normalized).unwrap();
     assert!(json.contains("\"master_protocol\":\"Tls\""));
     assert!(json.contains("\"app_protocol\":\"YouTube\""));
+}
+
+#[test]
+fn dns_keeps_master_taxonomy_even_with_application() {
+    // nDPI 对 DNS 查询不产出 app 层分类，category/breed 固定在 master 上；
+    // rDpi 仍保留应用识别结果，但导出分类应与 nDPI 对齐。
+    let mut flow = Flow::new(key());
+    flow.protocol = Some(Protocol::Dns);
+    flow.metadata = Some(Metadata::Dns(DnsMetadata {
+        query_domain: Some("youtube.com".to_string()),
+        application: Some(Application::YouTube),
+    }));
+
+    let normalized = NormalizedFlow::from_flow(&flow);
+    assert_eq!(normalized.app_protocol.as_deref(), Some("YouTube"));
+    assert_eq!(normalized.category.as_deref(), Some("Network"));
+    assert_eq!(normalized.breed.as_deref(), Some("Acceptable"));
+}
+
+#[test]
+fn uncovered_protocol_falls_back_to_native_taxonomy() {
+    let mut flow = Flow::new(key());
+    flow.protocol = Some(Protocol::Ssh);
+
+    let normalized = NormalizedFlow::from_flow(&flow);
+    assert_eq!(normalized.category.as_deref(), Some("RemoteAccess"));
+    assert_eq!(normalized.breed.as_deref(), Some("Safe"));
 }
 
 #[test]
@@ -133,7 +161,8 @@ fn detector_exports_classified_flow() {
     assert_eq!(flows.len(), 1);
     let flow = &flows[0];
     assert_eq!(flow.master_protocol.as_deref(), Some("Dns"));
-    assert_eq!(flow.category.as_deref(), Some("Dns"));
+    assert_eq!(flow.category.as_deref(), Some("Network"));
+    assert_eq!(flow.breed.as_deref(), Some("Acceptable"));
     assert_eq!(flow.confidence.as_deref(), Some("Dpi"));
     assert_eq!(flow.src_port, 12345);
     assert_eq!(flow.dst_port, 53);

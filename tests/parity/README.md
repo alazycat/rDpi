@@ -110,6 +110,10 @@ rdpi -i corpus.pcap -o flows-jsonl > rdpi.jsonl
 记录。导出按“信息量优先 + 端点字典序”稳定排序；比较器按双向规范五元组
 归并时，靠前的记录（元数据更完整）优先。双向流统一后将消除该重复。
 
+注意：`normalized_flows()` / `-o flows-jsonl` 的 category / breed /
+app protocol 按 **nDPI 5.0 兼容名称**输出（见第 6 节映射），不是 rDpi
+原生 taxonomy。
+
 ---
 
 ## 5. 比较规则
@@ -151,9 +155,15 @@ cargo test --all-features --test test_parity_corpus -- --nocapture
 
 - flow 集合一致（无 missing/extra）；
 - master protocol 一致（大小写不敏感）；
-- category / breed / risk 的语义差异只报告，暂不判失败（映射表待补）；
-- app protocol 差异只报告（nDPI 对 DNS 查询不产出 app；命名差异如
-  `GoogleServices` vs `Google` 待映射）。
+- category / breed / confidence 一致（rDpi 导出时已转换为 nDPI 5.0 兼容名称）；
+- app protocol：nDPI 明确识别出 app 时必须一致；nDPI 无 app（如 DNS 查询）
+  时允许 rDpi 更丰富；
+- risk_mask 只报告（nDPI 的风控语义与合成语料仍会造成差异）。
+
+> category/breed/app 的兼容映射位于 `src/parity.rs` 的
+> `ndpi_compat_classification` / `ndpi_compat_app_name`，只覆盖已用真实
+> ndpiReader 5.0 输出验证过的组合（DNS、HTTP、TLS、YouTube、Facebook、
+> GitHub、Google）；未覆盖时回退 rDpi 原生名称，并在差分报告中暴露。
 
 语料目标 20–50 个：当前 20 个自生成用例已覆盖基础协议与应用变体；
 下一批补目标环境真实 pcap（Web / 流媒体 / 企业网）。

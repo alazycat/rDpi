@@ -51,7 +51,7 @@ fn rder_flows(pcap: &Path) -> Vec<NormalizedFlow> {
 }
 
 #[test]
-fn corpus_master_protocols_match_ndpi_golden() {
+fn corpus_classification_matches_ndpi_golden() {
     let mut entries: Vec<PathBuf> = std::fs::read_dir(corpus_dir())
         .expect("corpus directory")
         .map(|entry| entry.expect("corpus entry").path())
@@ -100,15 +100,25 @@ fn corpus_master_protocols_match_ndpi_golden() {
         for extra in &report.extra {
             failures.push(format!("{name}: extra flow {extra}"));
         }
-        for diff in report
-            .diffs
-            .iter()
-            .filter(|diff| diff.field == "master_protocol")
-        {
-            failures.push(format!(
-                "{name}: master_protocol expected {} actual {}",
-                diff.expected, diff.actual
-            ));
+        for diff in &report.diffs {
+            match diff.field {
+                // 已用真实 nDPI 5.0 验证的分类字段：语料上要求完全一致
+                "master_protocol" | "category" | "breed" | "confidence" => {
+                    failures.push(format!(
+                        "{name}: {} expected {} actual {}",
+                        diff.field, diff.expected, diff.actual
+                    ));
+                }
+                // nDPI 明确识别出 app 时，rDpi 不得漏识别或给出不同名称；
+                // nDPI 无 app（如 DNS 查询）时允许 rDpi 更丰富。
+                "app_protocol" if diff.expected != "<none>" => {
+                    failures.push(format!(
+                        "{name}: app_protocol expected {} actual {}",
+                        diff.expected, diff.actual
+                    ));
+                }
+                _ => {}
+            }
         }
     }
 
