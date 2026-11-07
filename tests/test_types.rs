@@ -437,7 +437,10 @@ fn test_new_protocol_classification() {
 fn test_smb_protocol_classification() {
     use rdpi::core::types::{Protocol, ProtocolBreed, ProtocolCategory};
 
-    assert_eq!(Protocol::NetBios.category(), ProtocolCategory::Infrastructure);
+    assert_eq!(
+        Protocol::NetBios.category(),
+        ProtocolCategory::Infrastructure
+    );
     assert_eq!(Protocol::NetBios.breed(), ProtocolBreed::Acceptable);
     assert_eq!(Protocol::Smb1.category(), ProtocolCategory::FileTransfer);
     assert_eq!(Protocol::Smb1.breed(), ProtocolBreed::Dangerous);

@@ -67,16 +67,16 @@ pub mod wireguard;
 // Phase 11A — 简单协议
 #[cfg(feature = "infra")]
 pub mod ike;
+#[cfg(feature = "smb")]
+pub mod netbios;
 #[cfg(feature = "infra")]
 pub mod netflow;
 #[cfg(feature = "storage")]
 pub mod nfs;
-#[cfg(feature = "smb")]
-pub mod netbios;
-#[cfg(feature = "smb")]
-pub mod smb;
 #[cfg(feature = "infra")]
 pub mod ptpv2;
+#[cfg(feature = "smb")]
+pub mod smb;
 // R7：misc feature —— TFTP/Rsync/Whois/Syslog/Telnet/VNC 纳入 feature 矩阵
 #[cfg(feature = "misc")]
 pub mod rsync;
@@ -502,7 +502,10 @@ mod smb_registry_tests {
             .iter()
             .map(|entry| entry.detector.name())
             .collect();
-        assert!(names.contains(&"netbios"), "netbios detector must be registered");
+        assert!(
+            names.contains(&"netbios"),
+            "netbios detector must be registered"
+        );
         assert!(names.contains(&"smb"), "smb detector must be registered");
     }
 }

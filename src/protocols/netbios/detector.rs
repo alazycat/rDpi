@@ -47,11 +47,7 @@ impl ProtocolDetector for NetBiosDetector {
         parse_any(payload).map(result_from)
     }
 
-    fn detect_with_context(
-        &self,
-        payload: &[u8],
-        ctx: &DetectContext,
-    ) -> Option<DetectionResult> {
+    fn detect_with_context(&self, payload: &[u8], ctx: &DetectContext) -> Option<DetectionResult> {
         let parsed = if ctx.src_port == 137 || ctx.dst_port == 137 {
             parser::parse_nbns(payload)
         } else if ctx.src_port == 138 || ctx.dst_port == 138 {
@@ -133,6 +129,16 @@ mod tests {
         }
     }
 
+    fn encode_name(name: &str, suffix: u8) -> Vec<u8> {
+        let mut padded = name.as_bytes().iter().copied().take(15).collect::<Vec<_>>();
+        padded.resize(15, b' ');
+        padded.push(suffix);
+        padded
+            .iter()
+            .flat_map(|&byte| [b'A' + (byte >> 4), b'A' + (byte & 0x0F)])
+            .collect()
+    }
+
     fn nbns_query() -> Vec<u8> {
         let mut name_bytes = b"SERVER".to_vec();
         name_bytes.resize(15, b' ');
@@ -142,7 +148,9 @@ mod tests {
             name.push(b'A' + (byte >> 4));
             name.push(b'A' + (byte & 0x0F));
         }
-        let mut payload = vec![0x12, 0x34, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let mut payload = vec![
+            0x12, 0x34, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
         payload.push(0x20);
         payload.extend(name);
         payload.push(0x00);
@@ -152,10 +160,12 @@ mod tests {
 
     fn nbss_request() -> Vec<u8> {
         let mut payload = vec![0x81, 0x00, 0x00, 0x44];
-        payload.extend_from_slice(b"SERVER          ");
-        payload.extend_from_slice(b"CLIENT          ");
         payload.push(0x20);
-        payload.extend_from_slice(&[0x00; 35]);
+        payload.extend(encode_name("SERVER", 0x20));
+        payload.push(0x00);
+        payload.push(0x20);
+        payload.extend(encode_name("CLIENT", 0x20));
+        payload.push(0x00);
         payload
     }
 
@@ -179,9 +189,11 @@ mod tests {
     #[test]
     fn ignores_nbns_on_other_port() {
         let detector = NetBiosDetector::new();
-        assert!(detector
-            .detect_with_context(&nbns_query(), &ctx(50010, 53))
-            .is_none());
+        assert!(
+            detector
+                .detect_with_context(&nbns_query(), &ctx(50010, 53))
+                .is_none()
+        );
     }
 
     #[test]
@@ -227,14 +239,16 @@ mod tests {
     fn process_ignores_non_139_port() {
         let detector = NetBiosDetector::new();
         let mut state = DissectorState::None;
-        assert!(detector
-            .process(
-                &mut state,
-                &nbss_request(),
-                Direction::Forward,
-                &ctx(50000, 445)
-            )
-            .is_none());
+        assert!(
+            detector
+                .process(
+                    &mut state,
+                    &nbss_request(),
+                    Direction::Forward,
+                    &ctx(50000, 445)
+                )
+                .is_none()
+        );
         assert_eq!(state, DissectorState::None);
     }
 

@@ -318,18 +318,19 @@ fn netbios_exports_as_single_protocol() {
 
 #[cfg(feature = "smb")]
 #[test]
-fn smb_exports_master_and_netbios_app() {
+fn smb_exports_netbios_master_and_smb_app() {
+    // 真实 nDPI 5.0 golden 验证：`NetBIOS.SMBv1`（10.16）/ `NetBIOS.SMBv23`（10.41）
     let cases = [
         (Protocol::Smb1, "SMBv1", "Dangerous"),
         (Protocol::Smb23, "SMBv23", "Acceptable"),
     ];
-    for (protocol, name, breed) in cases {
+    for (protocol, app, breed) in cases {
         let normalized = NormalizedFlow::from_flow(&flow_with_smb_protocol(protocol));
-        assert_eq!(normalized.master_protocol.as_deref(), Some(name));
-        assert_eq!(normalized.app_protocol.as_deref(), Some("NetBIOS"));
+        assert_eq!(normalized.master_protocol.as_deref(), Some("NetBIOS"));
+        assert_eq!(normalized.app_protocol.as_deref(), Some(app));
         assert_eq!(
             normalized.protocol_stack,
-            vec![name.to_string(), "NetBIOS".to_string()]
+            vec!["NetBIOS".to_string(), app.to_string()]
         );
         assert_eq!(normalized.category.as_deref(), Some("System"));
         assert_eq!(normalized.breed.as_deref(), Some(breed));

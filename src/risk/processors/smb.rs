@@ -96,7 +96,12 @@ mod tests {
         smb.extend_from_slice(&0u32.to_le_bytes());
         smb.resize(32, 0);
         let length = smb.len();
-        let mut out = vec![0x00, (length >> 16) as u8, (length >> 8) as u8, length as u8];
+        let mut out = vec![
+            0x00,
+            (length >> 16) as u8,
+            (length >> 8) as u8,
+            length as u8,
+        ];
         out.extend_from_slice(&smb);
         out
     }
@@ -105,9 +110,11 @@ mod tests {
     fn smb1_flow_reports_insecure_version() {
         let processor = SmbRiskProcessor::new();
         let risks = processor.analyze_packet(&parsed(&smb1(0x73)), &flow(Protocol::Smb1));
-        assert!(risks
-            .iter()
-            .any(|risk| risk.flag == RiskFlag::SmbInsecureVersion));
+        assert!(
+            risks
+                .iter()
+                .any(|risk| risk.flag == RiskFlag::SmbInsecureVersion)
+        );
     }
 
     #[test]

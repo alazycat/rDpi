@@ -68,7 +68,12 @@ mod tests {
 
     fn nbss(payload: &[u8]) -> Vec<u8> {
         let length = payload.len();
-        let mut out = vec![0x00, (length >> 16) as u8, (length >> 8) as u8, length as u8];
+        let mut out = vec![
+            0x00,
+            (length >> 16) as u8,
+            (length >> 8) as u8,
+            length as u8,
+        ];
         out.extend_from_slice(payload);
         out
     }
