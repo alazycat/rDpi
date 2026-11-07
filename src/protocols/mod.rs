@@ -338,6 +338,8 @@ pub fn register_defaults(_registry: &mut Registry) {
     #[cfg(feature = "database")]
     redis::register(_registry);
     #[cfg(feature = "database")]
+    elasticsearch::register(_registry);
+    #[cfg(feature = "database")]
     memcached::register(_registry);
     #[cfg(feature = "smtp")]
     smtp::register(_registry);
@@ -531,6 +533,20 @@ mod database_registry_tests {
         assert!(
             names.contains(&"memcached"),
             "memcached detector must be registered"
+        );
+    }
+
+    #[test]
+    fn test_elasticsearch_detector_registered() {
+        let registry = Registry::default();
+        let names: Vec<&str> = registry
+            .detectors
+            .iter()
+            .map(|entry| entry.detector.name())
+            .collect();
+        assert!(
+            names.contains(&"elasticsearch"),
+            "elasticsearch detector must be registered"
         );
     }
 }

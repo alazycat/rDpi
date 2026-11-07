@@ -167,6 +167,20 @@ impl ProtocolDetector for HttpDetector {
 
         // Layer 2: Try parsing as HTTP response
         if let Some(_resp) = parse_response_line(payload) {
+            // F46：Elasticsearch 响应头子分类（nDPI 5.0 无此路径，纯 rDpi 超集）
+            #[cfg(feature = "database")]
+            if crate::protocols::elasticsearch::is_elasticsearch_http_response(payload) {
+                let metadata = Metadata::Elasticsearch(ElasticsearchMetadata {
+                    message_length: None,
+                    source: ElasticsearchSource::Http,
+                });
+                return Some(
+                    DetectionResult::new(Protocol::Elasticsearch)
+                        .with_metadata(metadata)
+                        .with_confidence(Confidence::Dpi),
+                );
+            }
+
             // Layer 3: For responses, we just detect protocol (status code is in response line)
             let metadata = Metadata::Http(HttpMetadata {
                 host: None,
@@ -237,6 +251,35 @@ mod tests {
         let detector = HttpDetector::new();
         let result = detector
             .detect(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
+            .unwrap();
+        assert_eq!(result.protocol, Protocol::Http);
+    }
+
+    #[cfg(feature = "database")]
+    #[test]
+    fn test_detect_elasticsearch_response() {
+        let detector = HttpDetector::new();
+        let result = detector
+            .detect(
+                b"HTTP/1.1 200 OK\r\nX-elastic-product: Elasticsearch\r\nContent-Type: application/json\r\n\r\n{}",
+            )
+            .unwrap();
+        assert_eq!(result.protocol, Protocol::Elasticsearch);
+        match result.metadata {
+            Metadata::Elasticsearch(meta) => {
+                assert_eq!(meta.source, ElasticsearchSource::Http);
+                assert_eq!(meta.message_length, None);
+            }
+            _ => panic!("expected Elasticsearch metadata"),
+        }
+    }
+
+    #[cfg(feature = "database")]
+    #[test]
+    fn test_detect_normal_response_stays_http() {
+        let detector = HttpDetector::new();
+        let result = detector
+            .detect(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nok")
             .unwrap();
         assert_eq!(result.protocol, Protocol::Http);
     }
