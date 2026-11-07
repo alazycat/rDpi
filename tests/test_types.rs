@@ -323,6 +323,25 @@ fn test_application_master_protocol() {
     assert_eq!(Application::Google.master_protocol(), Protocol::Tls);
 }
 
+#[cfg(feature = "database")]
+#[test]
+fn test_database_protocol_classification_new() {
+    assert_eq!(Protocol::Memcached.category(), ProtocolCategory::Database);
+    assert_eq!(
+        Protocol::Elasticsearch.category(),
+        ProtocolCategory::Database
+    );
+    assert_eq!(Protocol::Memcached.breed(), ProtocolBreed::Acceptable);
+    assert_eq!(Protocol::Elasticsearch.breed(), ProtocolBreed::Acceptable);
+}
+
+#[cfg(feature = "messaging")]
+#[test]
+fn test_messaging_protocol_classification_new() {
+    assert_eq!(Protocol::Amqp.category(), ProtocolCategory::Messaging);
+    assert_eq!(Protocol::Amqp.breed(), ProtocolBreed::Acceptable);
+}
+
 #[test]
 fn test_new_application_variants() {
     // 流媒体新变体

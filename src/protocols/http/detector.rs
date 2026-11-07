@@ -82,7 +82,8 @@ impl ProtocolDetector for HttpDetector {
             | DissectorState::WebSocket(_)
             | DissectorState::Ftp(_)
             | DissectorState::NetBios(_)
-            | DissectorState::Smb(_) => {
+            | DissectorState::Smb(_)
+            | DissectorState::Memcached(_) => {
                 return None;
             }
         }

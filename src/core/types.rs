@@ -179,6 +179,15 @@ pub struct SmbDissectorState {
     pub buffer: Vec<u8>,
 }
 
+/// Memcached TCP 命中计数状态
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MemcachedDissectorState {
+    /// 已匹配报文数（每包最多 +1，对齐 nDPI 的 matches）
+    pub matches: u8,
+    /// 已检查载荷包数（对齐 nDPI 的 packet_counter > 5 放弃）
+    pub packets: u8,
+}
+
 /// per-flow 有状态 dissector 状态
 ///
 /// 当前只支持一个活跃的有状态协议（HTTP）；后续按协议扩展枚举。
@@ -211,6 +220,8 @@ pub enum DissectorState {
     NetBios(NetBiosDissectorState),
     /// SMB TCP 445 头部重组
     Smb(SmbDissectorState),
+    /// Memcached TCP 命中计数
+    Memcached(MemcachedDissectorState),
 }
 
 /// 协议栈最大层数（与 nDPI `NDPI_PROTOCOL_STACK_SIZE` 对齐）
@@ -350,6 +361,15 @@ pub enum Protocol {
     Postgresql,
     Redis,
     Mongodb,
+    /// Memcached 文本缓存协议（feature: database，F46）
+    #[cfg(feature = "database")]
+    Memcached,
+    /// Elasticsearch 二进制传输协议（feature: database，F46）
+    #[cfg(feature = "database")]
+    Elasticsearch,
+    /// AMQP 0-9-1/1.0 消息队列协议（feature: messaging，F46）
+    #[cfg(feature = "messaging")]
+    Amqp,
     #[cfg(feature = "proto3")]
     Sip,
     #[cfg(feature = "proto3")]
@@ -532,6 +552,15 @@ pub enum Metadata {
     Rtp(RtpMetadata),
     /// MongoDB 元数据 (feature: database)
     Mongodb(MongodbMetadata),
+    /// Memcached 元数据 (feature: database, F46)
+    #[cfg(feature = "database")]
+    Memcached(MemcachedMetadata),
+    /// Elasticsearch 元数据 (feature: database, F46)
+    #[cfg(feature = "database")]
+    Elasticsearch(ElasticsearchMetadata),
+    /// AMQP 元数据 (feature: messaging, F46)
+    #[cfg(feature = "messaging")]
+    Amqp(AmqpMetadata),
     /// MQTT 元数据 (feature: iot)
     #[cfg(feature = "iot")]
     Mqtt(MqttMetadata),
@@ -1180,6 +1209,11 @@ impl Protocol {
             Protocol::Mysql | Protocol::Postgresql | Protocol::Redis | Protocol::Mongodb => {
                 ProtocolCategory::Database
             }
+            // F46 数据库/消息协议
+            #[cfg(feature = "database")]
+            Protocol::Memcached | Protocol::Elasticsearch => ProtocolCategory::Database,
+            #[cfg(feature = "messaging")]
+            Protocol::Amqp => ProtocolCategory::Messaging,
 
             // RemoteAccess
             Protocol::Ssh => ProtocolCategory::RemoteAccess,
@@ -1283,6 +1317,10 @@ impl Protocol {
             | Protocol::Doq
             | Protocol::HttpConnect
             | Protocol::HttpProxy => ProtocolBreed::Acceptable,
+            #[cfg(feature = "database")]
+            Protocol::Memcached | Protocol::Elasticsearch => ProtocolBreed::Acceptable,
+            #[cfg(feature = "messaging")]
+            Protocol::Amqp => ProtocolBreed::Acceptable,
             #[cfg(feature = "proto3")]
             Protocol::Ftp => ProtocolBreed::Fun,
             #[cfg(feature = "iot")]
@@ -1783,6 +1821,57 @@ pub struct PostgresqlMetadata {
 pub struct RedisMetadata {
     /// 命令类型 (如 GET, SET, SELECT)
     pub command: Option<String>,
+}
+
+/// Memcached 元数据 (feature: database, F46)
+#[cfg(feature = "database")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone, Default)]
+pub struct MemcachedMetadata {
+    /// 请求命令（小写，如 "get"）或响应状态（如 "END"/"STORED"）
+    pub command: Option<String>,
+    /// 是否为服务端响应
+    pub is_response: bool,
+}
+
+/// Elasticsearch 识别来源 (feature: database, F46)
+#[cfg(feature = "database")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ElasticsearchSource {
+    /// 二进制 `ES` 协议
+    #[default]
+    Binary,
+    /// HTTP 响应头 `X-elastic-product`
+    Http,
+}
+
+/// Elasticsearch 元数据 (feature: database, F46)
+#[cfg(feature = "database")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone, Default)]
+pub struct ElasticsearchMetadata {
+    /// 二进制协议头中的 BE u32 长度；HTTP 路径为 None
+    pub message_length: Option<u32>,
+    /// 识别来源
+    pub source: ElasticsearchSource,
+}
+
+/// AMQP 元数据 (feature: messaging, F46)
+#[cfg(feature = "messaging")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone, Default)]
+pub struct AmqpMetadata {
+    /// 协议版本："0-9-1" 或 "1.0"
+    pub version: String,
+    /// 帧类型 0..=3；协议头识别时为 None
+    pub frame_type: Option<u8>,
+    /// 通道号
+    pub channel: Option<u16>,
+    /// 0-9-1 class id
+    pub class_id: Option<u16>,
+    /// 0-9-1 method id
+    pub method: Option<u16>,
 }
 
 /// MQTT 元数据 (feature: iot)
