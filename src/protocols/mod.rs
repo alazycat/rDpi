@@ -335,6 +335,8 @@ pub fn register_defaults(_registry: &mut Registry) {
     postgresql::register(_registry);
     #[cfg(feature = "database")]
     redis::register(_registry);
+    #[cfg(feature = "database")]
+    memcached::register(_registry);
     #[cfg(feature = "smtp")]
     smtp::register(_registry);
     #[cfg(feature = "mail")]
@@ -509,5 +511,24 @@ mod smb_registry_tests {
             "netbios detector must be registered"
         );
         assert!(names.contains(&"smb"), "smb detector must be registered");
+    }
+}
+
+#[cfg(all(test, feature = "database"))]
+mod database_registry_tests {
+    use super::*;
+
+    #[test]
+    fn test_memcached_detector_registered() {
+        let registry = Registry::default();
+        let names: Vec<&str> = registry
+            .detectors
+            .iter()
+            .map(|entry| entry.detector.name())
+            .collect();
+        assert!(
+            names.contains(&"memcached"),
+            "memcached detector must be registered"
+        );
     }
 }
