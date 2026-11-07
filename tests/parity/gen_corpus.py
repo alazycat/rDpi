@@ -114,7 +114,7 @@ def dns_query_payload(name="example.com"):
     return payload + b"\x00\x00\x01\x00\x01"
 
 
-def tls_client_hello(sni="example.com"):
+def tls_client_hello(sni="example.com", alpn=None, version=(0x03, 0x01)):
     if sni is None:
         sni_ext = b""
     else:
@@ -130,7 +130,23 @@ def tls_client_hello(sni="example.com"):
             + name
         )
     versions_ext = bytes([0x00, 0x2B, 0x00, 0x03, 0x02, 0x03, 0x04])
-    extensions = struct.pack(">H", len(sni_ext) + len(versions_ext)) + sni_ext + versions_ext
+    if alpn is None:
+        alpn_ext = b""
+    else:
+        proto = alpn.encode()
+        proto_list = bytes([len(proto)]) + proto
+        alpn_ext = (
+            bytes([0x00, 0x10])
+            + struct.pack(">H", len(proto_list) + 2)
+            + struct.pack(">H", len(proto_list))
+            + proto_list
+        )
+    extensions = (
+        struct.pack(">H", len(sni_ext) + len(versions_ext) + len(alpn_ext))
+        + sni_ext
+        + versions_ext
+        + alpn_ext
+    )
 
     body = (
         bytes([0x03, 0x03])
@@ -142,7 +158,12 @@ def tls_client_hello(sni="example.com"):
         + extensions
     )
     handshake = bytes([0x01]) + len(body).to_bytes(3, "big") + body
-    return bytes([0x16, 0x03, 0x01]) + struct.pack(">H", len(handshake)) + handshake
+    return (
+        bytes([0x16])
+        + bytes(version)
+        + struct.pack(">H", len(handshake))
+        + handshake
+    )
 
 
 def build_dns_udp(name="example.com"):
@@ -208,6 +229,90 @@ def build_tls_client_hello(sni="example.com"):
             frame(client, server, 6, tcp(50001, 443, cseq + 1, sseq + 1, 0x18, hello)),
         ),
     ]
+
+
+# --- F44 子分类语料：HTTP CONNECT/Proxy、DoH/DoT、FTP 传输命令 ---
+
+
+def build_http_connect():
+    return tcp_session(
+        CLIENT, SERVER, 50012, 3128, [("c", b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n")]
+    )
+
+
+def build_http_proxy():
+    return tcp_session(
+        CLIENT,
+        SERVER,
+        50013,
+        8080,
+        [("c", b"GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n")],
+    )
+
+
+def build_doh_resolver():
+    """DoH：TLS ClientHello SNI 命中已知 DoH 解析器域名（443）"""
+    client, server = [192, 168, 1, 1], [10, 0, 0, 1]
+    hello = tls_client_hello("dns.google", alpn="h2")
+    cseq, sseq = 3000, 7000
+    return [
+        (BASE_TS + 0, frame(client, server, 6, tcp(50014, 443, cseq, 0, 0x02))),
+        (BASE_TS + 10_000, frame(server, client, 6, tcp(443, 50014, sseq, cseq + 1, 0x12))),
+        (BASE_TS + 20_000, frame(client, server, 6, tcp(50014, 443, cseq + 1, sseq + 1, 0x10))),
+        (
+            BASE_TS + 30_000,
+            frame(client, server, 6, tcp(50014, 443, cseq + 1, sseq + 1, 0x18, hello)),
+        ),
+    ]
+
+
+def build_dot_alpn():
+    """DoT：TLS ClientHello ALPN=dot（853）"""
+    client, server = [192, 168, 1, 1], [10, 0, 0, 1]
+    hello = tls_client_hello("dns.example.com", alpn="dot")
+    cseq, sseq = 4000, 8000
+    return [
+        (BASE_TS + 0, frame(client, server, 6, tcp(50015, 853, cseq, 0, 0x02))),
+        (BASE_TS + 10_000, frame(server, client, 6, tcp(853, 50015, sseq, cseq + 1, 0x12))),
+        (BASE_TS + 20_000, frame(client, server, 6, tcp(50015, 853, cseq + 1, sseq + 1, 0x10))),
+        (
+            BASE_TS + 30_000,
+            frame(client, server, 6, tcp(50015, 853, cseq + 1, sseq + 1, 0x18, hello)),
+        ),
+    ]
+
+
+def build_dot_port():
+    """DoT：无 ALPN/SNI 信号，TCP 853 端口回退（DpiPartial）"""
+    client, server = [192, 168, 1, 1], [10, 0, 0, 1]
+    hello = tls_client_hello(None)
+    cseq, sseq = 5000, 9000
+    return [
+        (BASE_TS + 0, frame(client, server, 6, tcp(50016, 853, cseq, 0, 0x02))),
+        (BASE_TS + 10_000, frame(server, client, 6, tcp(853, 50016, sseq, cseq + 1, 0x12))),
+        (BASE_TS + 20_000, frame(client, server, 6, tcp(50016, 853, cseq + 1, sseq + 1, 0x10))),
+        (
+            BASE_TS + 30_000,
+            frame(client, server, 6, tcp(50016, 853, cseq + 1, sseq + 1, 0x18, hello)),
+        ),
+    ]
+
+
+def build_ftp_transfer():
+    """FTP 传输命令：RETR/STOR 提取文件名（有状态会话 F44）"""
+    return tcp_session(
+        CLIENT,
+        SERVER,
+        50017,
+        21,
+        [
+            ("s", b"220 (vsFTPd 3.0.5)\r\n"),
+            ("c", b"USER ftpuser\r\n"),
+            ("s", b"331 Please specify the password.\r\n"),
+            ("c", b"RETR report.pdf\r\n"),
+            ("s", b"150 Opening data connection.\r\n"),
+        ],
+    )
 
 
 # --- 企业协议（P0 差分扩展）---
@@ -484,6 +589,13 @@ CORPUS = {
     "tls_facebook": lambda: build_tls_client_hello("facebook.com"),
     "tls_googleapis": lambda: build_tls_client_hello("www.googleapis.com"),
     "tls_no_sni": lambda: build_tls_client_hello(None),
+    # F44 子分类：HTTP CONNECT/Proxy、DoH/DoT、FTP 传输命令
+    "http_connect": build_http_connect,
+    "http_proxy": build_http_proxy,
+    "doh_resolver": build_doh_resolver,
+    "dot_alpn": build_dot_alpn,
+    "dot_port": build_dot_port,
+    "ftp_transfer": build_ftp_transfer,
     # 企业协议（B 组首批）：SSH / 邮件 / 文件传输 / 数据库 / 基础设施 / 工业 / IoT / VoIP
     "ssh_banner": build_ssh,
     "smtp_session": build_smtp,
