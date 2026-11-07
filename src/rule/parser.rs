@@ -51,6 +51,12 @@ impl RuleFile {
                     "mysql" => Protocol::Mysql,
                     "postgresql" => Protocol::Postgresql,
                     "redis" => Protocol::Redis,
+                    #[cfg(feature = "database")]
+                    "memcached" => Protocol::Memcached,
+                    #[cfg(feature = "database")]
+                    "elasticsearch" => Protocol::Elasticsearch,
+                    #[cfg(feature = "messaging")]
+                    "amqp" => Protocol::Amqp,
                     #[cfg(feature = "proto3")]
                     "ftp" => Protocol::Ftp,
                     #[cfg(feature = "proto3")]

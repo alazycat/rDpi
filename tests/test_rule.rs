@@ -245,3 +245,49 @@ fn test_rule_parser_smb_protocol_names() {
         assert_eq!(result.protocol, expected);
     }
 }
+
+#[cfg(feature = "database")]
+#[test]
+fn test_rule_parser_database_protocol_names() {
+    let json = r#"{
+        "rules": [
+            {"id": "memcached", "protocol": "memcached", "condition": {"dst_port": 11211}},
+            {"id": "elasticsearch", "protocol": "elasticsearch", "condition": {"dst_port": 9200}}
+        ]
+    }"#;
+    let engine = RuleEngine::from_json(json).unwrap();
+
+    let cases = [
+        (11211, Protocol::Memcached),
+        (9200, Protocol::Elasticsearch),
+    ];
+    for (dst_port, expected) in cases {
+        let ctx = RuleContext {
+            src_port: 12345,
+            dst_port,
+            sni: None,
+            payload: Vec::new(),
+        };
+        let result = engine.match_rule(&ctx).expect("rule should match");
+        assert_eq!(result.protocol, expected);
+    }
+}
+
+#[cfg(feature = "messaging")]
+#[test]
+fn test_rule_parser_amqp_protocol_name() {
+    let json = r#"{
+        "rules": [
+            {"id": "amqp", "protocol": "amqp", "condition": {"dst_port": 5672}}
+        ]
+    }"#;
+    let engine = RuleEngine::from_json(json).unwrap();
+    let ctx = RuleContext {
+        src_port: 12345,
+        dst_port: 5672,
+        sni: None,
+        payload: Vec::new(),
+    };
+    let result = engine.match_rule(&ctx).expect("rule should match");
+    assert_eq!(result.protocol, Protocol::Amqp);
+}
