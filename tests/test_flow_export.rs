@@ -296,3 +296,42 @@ fn ndpi_compat_enterprise_taxonomy() {
         assert_eq!(flow.breed.as_deref(), Some("Acceptable"));
     }
 }
+
+#[cfg(feature = "smb")]
+fn flow_with_smb_protocol(protocol: Protocol) -> Flow {
+    let mut flow = Flow::new(key());
+    flow.protocol = Some(protocol);
+    flow.protocol_stack.push(protocol);
+    flow
+}
+
+#[cfg(feature = "smb")]
+#[test]
+fn netbios_exports_as_single_protocol() {
+    let normalized = NormalizedFlow::from_flow(&flow_with_smb_protocol(Protocol::NetBios));
+    assert_eq!(normalized.master_protocol.as_deref(), Some("NetBIOS"));
+    assert_eq!(normalized.app_protocol, None);
+    assert_eq!(normalized.protocol_stack, vec!["NetBIOS".to_string()]);
+    assert_eq!(normalized.category.as_deref(), Some("System"));
+    assert_eq!(normalized.breed.as_deref(), Some("Acceptable"));
+}
+
+#[cfg(feature = "smb")]
+#[test]
+fn smb_exports_master_and_netbios_app() {
+    let cases = [
+        (Protocol::Smb1, "SMBv1", "Dangerous"),
+        (Protocol::Smb23, "SMBv23", "Acceptable"),
+    ];
+    for (protocol, name, breed) in cases {
+        let normalized = NormalizedFlow::from_flow(&flow_with_smb_protocol(protocol));
+        assert_eq!(normalized.master_protocol.as_deref(), Some(name));
+        assert_eq!(normalized.app_protocol.as_deref(), Some("NetBIOS"));
+        assert_eq!(
+            normalized.protocol_stack,
+            vec![name.to_string(), "NetBIOS".to_string()]
+        );
+        assert_eq!(normalized.category.as_deref(), Some("System"));
+        assert_eq!(normalized.breed.as_deref(), Some(breed));
+    }
+}

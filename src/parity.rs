@@ -55,10 +55,12 @@ impl NormalizedFlow {
             .metadata
             .as_ref()
             .and_then(|metadata| metadata.application());
-        // F44：DoH/DoQ 子分类流的 app 层记 DoH_DoT（对齐 nDPI `TLS.DoH_DoT`）
+        // F44：DoH/DoQ 子分类流的 app 层记 DoH_DoT（对齐 nDPI `TLS.DoH_DoT`）；
+        // F45：SMBv1/SMB23 流的 app 层记 NetBIOS（对齐 nDPI `SMBv1.NetBIOS`）
         let app_protocol = application
             .map(ndpi_compat_app_name)
-            .or_else(|| flow.protocol.and_then(doh_dot_app_name).map(str::to_string));
+            .or_else(|| flow.protocol.and_then(doh_dot_app_name).map(str::to_string))
+            .or_else(|| flow.protocol.and_then(smb_app_name).map(str::to_string));
         let (category, breed) = match flow.protocol {
             Some(protocol) => {
                 let (category, breed) = ndpi_compat_classification(protocol, application);
@@ -69,9 +71,13 @@ impl NormalizedFlow {
         let confidence = flow.confidence.map(|confidence| format!("{confidence:?}"));
         let mut protocol_stack: Vec<String> =
             flow.protocol_stack.iter().map(protocol_name).collect();
-        // nDPI 协议栈含 app 层（`TLS.DoH_DoT` → [TLS, DoH_DoT]）
+        // nDPI 协议栈含 app 层（`TLS.DoH_DoT` → [TLS, DoH_DoT]、
+        // `SMBv1.NetBIOS` → [SMBv1, NetBIOS]）
         if let Some(app) = app_protocol.as_deref()
-            && matches!(flow.protocol, Some(Protocol::Doh | Protocol::Doq))
+            && matches!(
+                flow.protocol,
+                Some(Protocol::Doh | Protocol::Doq | Protocol::Smb1 | Protocol::Smb23)
+            )
         {
             protocol_stack.push(app.to_string());
         }
@@ -189,6 +195,15 @@ fn protocol_name(protocol: Protocol) -> String {
         Protocol::HttpConnect => "HTTP_Connect".to_string(),
         Protocol::HttpProxy => "HTTP_Proxy".to_string(),
         Protocol::Doh | Protocol::Dot | Protocol::Doq => "TLS".to_string(),
+        // F45（真实 ndpiReader 5.0 golden 验证）：NetBIOS 为独立协议 ID（10）；
+        // SMBv1/SMBv2/3 分别为 SMBv1(16)/SMBv23(41)，JSON 输出为
+        // `SMBv1.NetBIOS` / `SMBv23.NetBIOS` 拆分到 master/app
+        #[cfg(feature = "smb")]
+        Protocol::NetBios => "NetBIOS".to_string(),
+        #[cfg(feature = "smb")]
+        Protocol::Smb1 => "SMBv1".to_string(),
+        #[cfg(feature = "smb")]
+        Protocol::Smb23 => "SMBv23".to_string(),
         _ => format!("{protocol:?}"),
     }
 }
@@ -200,6 +215,17 @@ fn protocol_name(protocol: Protocol) -> String {
 fn doh_dot_app_name(protocol: Protocol) -> Option<&'static str> {
     match protocol {
         Protocol::Doh | Protocol::Doq => Some("DoH_DoT"),
+        _ => None,
+    }
+}
+
+/// SMB 家族的 nDPI 5.0 应用层名称
+///
+/// nDPI 对 SMBv1/SMBv2/3 流输出 `SMBv1.NetBIOS` / `SMBv23.NetBIOS`
+/// （master SMBv1/SMBv23 + app NetBIOS）；纯 NetBIOS 流不产出 app。
+fn smb_app_name(protocol: Protocol) -> Option<&'static str> {
+    match protocol {
+        Protocol::Smb1 | Protocol::Smb23 => Some("NetBIOS"),
         _ => None,
     }
 }
@@ -217,6 +243,7 @@ fn ndpi_compat_risk_name(name: &str) -> String {
         "tls_weak_cipher" => "weak_tls_cipher",
         "tls_obsolete_version" => "obsolete_tls_version",
         "tls_alpn_sni_mismatch" => "alpn_sni_mismatch",
+        "smb_insecure_version" => "smb_insecure_ver",
         _ => name,
     }
     .to_string()
@@ -278,6 +305,11 @@ fn ndpi_compat_classification(
         Protocol::Sip => ("VoIP".to_string(), "Acceptable".to_string()),
         #[cfg(feature = "iot")]
         Protocol::Mqtt => ("RPC".to_string(), "Acceptable".to_string()),
+        // F45（真实 ndpiReader 5.0 golden 验证）：NetBIOS/SMB 在 nDPI 中归 System
+        #[cfg(feature = "smb")]
+        Protocol::NetBios | Protocol::Smb23 => ("System".to_string(), "Acceptable".to_string()),
+        #[cfg(feature = "smb")]
+        Protocol::Smb1 => ("System".to_string(), "Dangerous".to_string()),
         _ => native(),
     }
 }

@@ -5,6 +5,8 @@ pub mod ftp;
 pub mod http;
 #[cfg(feature = "quic")]
 pub mod quic;
+#[cfg(feature = "smb")]
+pub mod smb;
 pub mod tls;
 pub mod tls_cert;
 
@@ -22,6 +24,9 @@ pub fn register_defaults(registry: &mut RiskRegistry) {
     // FTP 风险（Unsafe Protocol / Clear-Text Credentials）随 proto3 注册
     #[cfg(feature = "proto3")]
     registry.register(Box::new(ftp::FtpRiskProcessor::new()));
+    // SMBv1 风险随 smb feature 注册
+    #[cfg(feature = "smb")]
+    registry.register(Box::new(smb::SmbRiskProcessor::new()));
 }
 
 #[cfg(test)]
@@ -31,9 +36,11 @@ mod tests {
     fn test_register_defaults() {
         let mut registry = RiskRegistry::new();
         register_defaults(&mut registry);
-        // quic / proto3 处理器随 feature 增量注册
-        let expected =
-            5 + usize::from(cfg!(feature = "quic")) + usize::from(cfg!(feature = "proto3"));
+        // quic / proto3 / smb 处理器随 feature 增量注册
+        let expected = 5
+            + usize::from(cfg!(feature = "quic"))
+            + usize::from(cfg!(feature = "proto3"))
+            + usize::from(cfg!(feature = "smb"));
         assert_eq!(registry.processor_count(), expected);
     }
 }

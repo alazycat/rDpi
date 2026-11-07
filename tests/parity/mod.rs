@@ -130,6 +130,8 @@ pub const NDPI_UNMODELED_RISKS: &[&str] = &[
 pub const NDPI_RISK_ALIASES: &[(&str, &str)] = &[
     // rDpi RiskFlag::TlsMissingSni ↔ nDPI TLS 解析器 missing_sni_tls_extn
     ("tls_missing_sni", "missing_sni_tls_extn"),
+    // rDpi RiskFlag::SmbInsecureVersion ↔ nDPI SMB 解析器 smb_insecure_ver
+    ("smb_insecure_version", "smb_insecure_ver"),
 ];
 
 /// 判断 `compare_flows` 报告中的两条 risk_mask 是否等价

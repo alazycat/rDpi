@@ -66,6 +66,8 @@ pub enum RiskFlag {
     // === 通用 (2) ===
     /// 使用不安全协议（明文协议等）
     UnsafeProtocol,
+    /// SMBv1 为已知不安全版本（WannaCry/EternalBlue 等）
+    SmbInsecureVersion,
     /// 未能识别的协议
     UnknownProtocol,
 }
@@ -138,6 +140,7 @@ impl RiskFlag {
             RiskFlag::ObfuscatedTraffic => RiskSeverity::High,
             RiskFlag::BinaryDataTransfer => RiskSeverity::Medium,
             RiskFlag::UnsafeProtocol => RiskSeverity::High,
+            RiskFlag::SmbInsecureVersion => RiskSeverity::High,
             RiskFlag::UnknownProtocol => RiskSeverity::Low,
         }
     }
@@ -168,6 +171,7 @@ impl RiskFlag {
             RiskFlag::ObfuscatedTraffic => "obfuscated_traffic",
             RiskFlag::BinaryDataTransfer => "binary_data_transfer",
             RiskFlag::UnsafeProtocol => "unsafe_protocol",
+            RiskFlag::SmbInsecureVersion => "smb_insecure_version",
             RiskFlag::UnknownProtocol => "unknown_protocol",
         }
     }
@@ -209,5 +213,14 @@ mod tests {
             "clear_text_credentials"
         );
         assert_eq!(RiskFlag::ProbingAttempt.name(), "probing_attempt");
+    }
+
+    #[test]
+    fn test_smb_insecure_version_metadata() {
+        assert_eq!(
+            RiskFlag::SmbInsecureVersion.default_severity(),
+            RiskSeverity::High
+        );
+        assert_eq!(RiskFlag::SmbInsecureVersion.name(), "smb_insecure_version");
     }
 }
