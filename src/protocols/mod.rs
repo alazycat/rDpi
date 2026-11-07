@@ -73,6 +73,8 @@ pub mod netflow;
 pub mod nfs;
 #[cfg(feature = "smb")]
 pub mod netbios;
+#[cfg(feature = "smb")]
+pub mod smb;
 #[cfg(feature = "infra")]
 pub mod ptpv2;
 // R7：misc feature —— TFTP/Rsync/Whois/Syslog/Telnet/VNC 纳入 feature 矩阵
