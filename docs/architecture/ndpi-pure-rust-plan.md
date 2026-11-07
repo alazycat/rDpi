@@ -131,7 +131,7 @@
 完整候选清单见 [protocol-coverage-plan.md](protocol-coverage-plan.md)。建议：
 
 - **A. Web / Cloud 核心**：TLS、HTTP/1.x、HTTP/2、HTTP/3/QUIC、DNS、DoH/DoT/DoQ、WebSocket、HTTP CONNECT/Proxy + Top 20 应用；
-- **B. 企业协议**：SMB、NetBIOS（✅ 已于 F45 完成，2026-11-07）、LDAP、Kerberos、RDP、NFS、MSSQL、Oracle、Cassandra、Memcached、Elasticsearch、Kafka、AMQP 等；
+- **B. 企业协议**：SMB、NetBIOS（✅ 已于 F45 完成，2026-11-07）、LDAP、Kerberos、RDP、NFS、MSSQL、Oracle、Cassandra、Memcached（✅ F46）、Elasticsearch（✅ F46）、Kafka、AMQP（✅ F46）等；
 - **C. 流媒体/IM/游戏**：RTP/RTCP/SRTP、RTSP、HLS、MPEG-DASH、MPEG-TS、WebRTC、Steam 等；
 - **D. 工业/IoT**：S7comm、OPC-UA、BACnet、DNP3、IEC 60870、HART-IP、Profinet、EtherNet/IP 等；
 - **E. VPN/隧道**：IPsec、GRE、GTP、Teredo、SoftEther、Tailscale、Tor 等。

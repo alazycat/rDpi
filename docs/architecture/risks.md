@@ -458,3 +458,18 @@
 - **语料**：+6 pcap（nbns_registration/nbds_datagram/nbss_session_request/smb1_session_setup/smb23_session_setup/smb_echo）+ WSL golden 全绿（含风险差分：nDPI 侧 known_proto_on_non_std_port/malicious_fingerprint 已在 UNMODELED 排除列表，unsafe_protocol 由 rDpi UnsafeProtocol 对齐产出）。
 - **测试**：全部门禁绿——fmt ✓、clippy `--all-features --all-targets` -D warnings 0 警告、**默认 389 / smb 415 / all-features 1347（10 ignored）/ risk+smb 471**（基线 F44 +0/+26/+35/+32）。
 - **已知边界**：① SMB1 Negotiate 跳过后若流内再无后续命令（纯 Negotiate 抓包），rDpi 不定型（nDPI 5.0 同为端口猜测——故意一致）；② SMB2/3 Negotiate 不跳过（nDPI smb.c 首包即判 SMBv23，rDpi 无状态路径同语义）；③ SMB1 Trans（0x25，浏览列表枚举）不触发风险旗标（同 nDPI NDPI_SMB_INSECURE_VERSION 豁免）；④ NBSS 重组缓冲 4096/64KiB 上限超限即 GiveUp 回退无状态；⑤ NBNS 仅解析一级编码 + 标准 query/response 布局，畸形计数组合拒绝（F6 先例）；⑥ SMB 命令与 NT status 仅取自识别包首条消息（后续命令不持续富化，未进入 flow.monitoring）。
+
+## F46【中】Memcached + Elasticsearch + AMQP 识别（2026-11-07，新功能开发）—— ✅ 已完成
+
+- **背景**：阶段 2 第二批子批次 A（`docs/architecture/phase2-database-messaging-design.md`）。数据库/消息协议缺口中的首批可独立验收协议。
+- **实现**：
+  - **枚举与规则**（[core/types.rs](file:///d:/rust_code/rDpi/src/core/types.rs)）：`database` 复用（Memcached/Elasticsearch）、新 `messaging` feature（Amqp）；`MemcachedMetadata{command,is_response}`、`ElasticsearchSource{Binary,Http}` + `ElasticsearchMetadata{message_length,source}`、`AmqpMetadata{version,frame_type,channel,class_id,method}`；`MemcachedDissectorState{matches,packets}` + `DissectorState::Memcached`；rule 名 `memcached`/`elasticsearch`/`amqp`。
+  - **Memcached 模块**（[src/protocols/memcached/](file:///d:/rust_code/rDpi/src/protocols/memcached/)）：parser 26 签名（15 命令 + 11 响应，大小写敏感、仅载荷起始）+ UDP 8 字节头（reserved=0、total≠0）；detector TCP `process()` 标准端口 11211 单次匹配、非标端口 2 次匹配、>5 包 GiveUp；UDP 仅 11211 单包；`first_byte_gate=None`。
+  - **Elasticsearch 模块**（[src/protocols/elasticsearch/](file:///d:/rust_code/rDpi/src/protocols/elasticsearch/)）：二进制 `ES` + BE u32 长度（payload ≥ length+6）；HTTP detector 响应分支扫描 `X-elastic-product: Elasticsearch`（名称/值大小写不敏感，仅头部区域）；请求先到的流保持 Http。
+  - **AMQP 模块**（[src/protocols/amqp/](file:///d:/rust_code/rDpi/src/protocols/amqp/)）：0-9-1 帧头（ptype≤3、length<32768、length+8≥payload、class 10..=110、method≤120）+ 0-9-1/1.0 协议头；`first_byte_gate=Some([(0x00,0x03),(0x41,0x41)])`。
+  - **注册**（[protocols/mod.rs](file:///d:/rust_code/rDpi/src/protocols/mod.rs)）：database 块末尾 elasticsearch→memcached；messaging 块紧随其后 amqp；均位于 HTTP 之前。
+  - **parity**（[parity.rs](file:///d:/rust_code/rDpi/src/parity.rs)）：protocol_name 仅 Amqp 需显式 "AMQP"；classification Memcached→Network、Elasticsearch→System、Amqp→RPC，均 Acceptable。
+- **Golden 差分（真实 nDPI 5.0 验证）**：`memcached_session` 两次匹配 → DPI Memcached；`elasticsearch_binary` 首包 DPI Elasticsearch；`amqp_frame` 首包 DPI AMQP。HTTP-ES 与 AMQP 1.0 因 nDPI 5.0 无对应识别，不进入 parity 语料（单测覆盖）。
+- **连带修复**：`parity.rs` 的 `smb_app_name`/`smb_master_name`/`ndpi_compat_risk_name` 补齐 feature gate——此前 `json` 开启而 `smb`/`risk` 关闭时无法编译/产生 dead_code；`tests/test_integration.rs` 的 Registry detector 计数同步 database +2 / messaging +1。
+- **测试**：全部门禁绿——fmt ✓、clippy `--all-features --all-targets` -D warnings 0 警告、**默认 389 / database+messaging 491 / all-features 1395（10 ignored）**。
+- **已知边界**：① Memcached 签名必须位于载荷起始，跨段命令不重组；② 不支持二进制协议/meta 命令；③ HTTP-ES 仅响应先到；④ AMQP 1.0 仅协议头；⑤ AMQP 多帧载荷只看首帧；⑥ 0-9-1 帧检测为与 nDPI 相同的启发式，不保证完整帧合法。

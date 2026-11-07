@@ -280,7 +280,7 @@
 
 ### 10.2 阶段 2：企业协议补齐（P2 Wave 1B）
 
-- SMBv1/v2/v3、NetBIOS（✅ F45 完成）、AFP、MSSQL/TDS、Oracle、Cassandra、Memcached、Elasticsearch、Kafka、AMQP、NATS、STOMP、OpenWire。
+- SMBv1/v2/v3、NetBIOS（✅ F45 完成）、Memcached（✅ F46 完成）、Elasticsearch（✅ F46 完成）、AMQP（✅ F46 完成）、AFP、MSSQL/TDS、Oracle、Cassandra、Kafka、NATS、STOMP、OpenWire。
 - 验收：每个协议有正/负样本；Top-20 协议 precision/recall ≥ 0.95。
 
 ### 10.3 阶段 3：应用数据管线（P2 Wave 1C）

@@ -41,16 +41,18 @@ lib.rs (Detector 编排) → parser (以太网/IP/TCP/UDP) → core (FlowTable/g
 - **JA4 客户端指纹官方格式（F39，2026-11-06）**：`compute_ja4` 重写为官方 ja4.py `to_ja4` 格式 `{t|q|d}{版本2}{d|i}{密码数2}{扩展数2}{alpn2}_{密码哈希12}_{扩展哈希12}`（36 字符）——版本取 supported_versions 非 GREASE 最大值回退握手头 client_version（`ClientHelloInfo.negotiated_version`，JA4 恒可计算）、计数剔 GREASE 且扩展计数含 SNI/ALPN、密码升序排序哈希、扩展哈希剔除 SNI/ALPN 并追加原始顺序 sig_algs（0x000d）、ALPN 首尾字符非 ASCII 逐位 '9'（`alpn_code` 为 JA4/JA4S 共用，JA4S 行为同步变化）；TLS/QUIC/DTLS 三路径共用一处计算；官方黄金向量 `t13d1516h2_8daaf6152771_e5627efa2ab1` 直证；F38 边界③（DTLS 版本落 tls10 桶）消除（risks.md F39）。
 - **DNS 家族与 HTTP 代理子分类 + FTP 传输元数据（F44，2026-11-07）**：Phase 1 收尾——`Protocol` 新增 `Doh`/`Dot`/`Doq`（DNS 类）与 `HttpConnect`/`HttpProxy`（Web 类）+ 规则名映射；TLS 子分类（ALPN `dot` 优先 → SNI 命中 DoH 解析器域名表 → 853 端口 DpiPartial 回退，`tls/doh.rs`）；QUIC 子分类（ALPN `doq` 前缀 → Doq，`select_quic_protocol`）；HTTP 子分类（CONNECT 方法 / `http://` 绝对 URI）；FTP 有状态会话（推广 F43 框架，USER→username、RETR/STOR→filename，进入 monitoring）；parity 导出 nDPI 兼容名（DNSoverHTTPS 等）与分类映射；语料 +6 pcap（golden 待生成，runner 跳过报告）。
 - **NetBIOS + SMBv1/v2/3 识别与 SMBv1 风险（F45，2026-11-07）**：阶段 2 第一批（`docs/architecture/phase2-smb-netbios-plan.md`）——新 `smb` feature：`Protocol::NetBios/Smb1/Smb23` + `NetBiosMetadata{service,name,suffix}`/`SmbMetadata{command,status}` + `DissectorState::NetBios/Smb`；NetBIOS 模块（NBNS UDP137 RFC 1002 名解码 + NBDS UDP138 长度自洽 + NBSS TCP139 会话请求 34 字节名字段 + `process()` 头部重组 4096B，首字节门 None）；SMB 模块（TCP445 门控，SMB1 Negotiate 0x72 无状态跳过 + `process()` NBSS 跨段重组并循环消费被跳过消息 64KiB，首字节门 `Some([(0x00,0x00)])`）；注册于 SSH 之后 FTP 之前；`RiskFlag::SmbInsecureVersion`（Smb1 流、Trans 0x25 豁免）+ UnsafeProtocol（对齐 nDPI），处理器 SmbRiskProcessor；parity：SMB 流 master 恒 NetBIOS + app SMBv1/SMBv23（真实 nDPI 5.0 golden `NetBIOS.SMBv1`=10.16/`NetBIOS.SMBv23`=10.41 修正计划假设 `SMBv1.NetBIOS`）、三协议 System 分类、risk 名 smb_insecure_version→smb_insecure_vers；语料 +6 pcap + WSL golden 差分全绿；连带修复 behavioral 处理器对 NBSS+SMB 签名载荷的混淆流量误报（Negotiate 打字占比 ~35% 落 mixed 区间）。
-- **首字节门预筛（F29，2026-11-05）**：detector 可声明 `first_byte_gate()`（payload[0] 允许区间），Registry 注册期预计算 skip 位图、detect 循环内位测试跳过（miss 路径 36/49 已声明门，同机 A/B -12.3%）；13 个首字节任意的 detector 保持 `None`（dns/mongodb/postgresql/stun/modbus/l2tp/pptp/ike/nfs/whois/websocket/pop3/imap，证据见 risks.md F29）。
+- **Memcached + Elasticsearch + AMQP 识别（F46，2026-11-07）**：阶段 2 第二批子批次 A（`docs/architecture/phase2-database-messaging-design.md`）——`database` feature 新增 `Protocol::Memcached/Elasticsearch` + `MemcachedMetadata{command,is_response}`/`ElasticsearchMetadata{message_length,source}`；新 `messaging` feature：`Protocol::Amqp` + `AmqpMetadata{version,frame_type,channel,class_id,method}`；`DissectorState::Memcached` 命中计数（端口 11211 单包定型 / 非标端口 2 次匹配 / >5 包 GiveUp）；Memcached 26 签名 + UDP 8 字节头；Elasticsearch 二进制 `ES`+BE u32 + HTTP `X-elastic-product` 响应头子分类（rDpi 超集，仅响应先到）；AMQP 0-9-1 帧头 + 1.0 协议头；注册于 Redis 后 SMTP 前；parity：Memcached Network/Acceptable、Elasticsearch System/Acceptable、AMQP RPC/Acceptable（`Amqp` 显式映射 "AMQP"）；语料 +3 pcap + WSL golden 差分全绿。
+- **首字节门预筛（F29，2026-11-05）**：detector 可声明 `first_byte_gate()`（payload[0] 允许区间），Registry 注册期预计算 skip 位图、detect 循环内位测试跳过（miss 路径 36/49 已声明门，同机 A/B -12.3%）；14 个首字节任意的 detector 保持 `None`（dns/mongodb/postgresql/stun/modbus/l2tp/pptp/ike/nfs/whois/websocket/pop3/imap/memcached，证据见 risks.md F29/F46）。
 - **feature gate**：全部协议有 gate（R7 已修复 2026-11-04：tftp/rsync/whois/syslog/telnet/vnc 挂在 `misc` feature，risks.md R7）。
 
 ## 3. 常用命令
 
 ```bash
-cargo test                    # 默认 features (dns+http+tls)，389 测试全绿（2026-11-07 F45 NetBIOS/SMB 零新增默认路径测试不变）
-cargo test --all-features     # 1347 测试全绿（10 ignored = test_regression 存量）；F45 golden 差分闭环后实测
+cargo test                    # 默认 features (dns+http+tls)，389 测试全绿（2026-11-07 F46 默认路径不变）
+cargo test --all-features     # 1395 测试全绿（10 ignored = test_regression 存量）；F46 golden 差分闭环后实测
 cargo test --features risk    # 439 测试全绿（含风险处理器相关探针 a1_risk/a6/r5）
 cargo test --features smb     # 415 测试全绿（F45 NetBIOS/SMB 模块 + 语料差分）
+cargo test --features "database messaging"  # 491 测试全绿（F46 Memcached/Elasticsearch/AMQP 模块 + 语料差分）
 cargo test --features "risk smb"  # 471 测试全绿（SMBv1 风险处理器 + parity 风险差分）
 cargo build --features pcap   # 构建 CLI
 cargo bench                   # criterion 基准（benches/bench_detect.rs）；基线见 docs/architecture/performance.md
@@ -116,6 +118,7 @@ cargo fmt ; cargo clippy      # 提交前（lib+bins 门槛 0 警告；验证须
 | F43 | SMTP/IMAP/POP3 有状态会话 + WebSocket 升级握手：推广 process()/DissectorState 框架，跨段行/头重组 + 多命令元数据（SMTP sender/recipient、POP3/IMAP username）；邮件协议服务端响应前缀接管避免抢 HTTP，SMTP/FTP 220 共有语法端口门控对称让位；WebSocket 需 upgrade 子串才接管 | 中 | ✅ 已完成 2026-11-06（4 个 DissectorState 变体 + SmtpMetadata 增字段 + 新增 Pop3/ImapMetadata；merge_detected_metadata 增三协议合并 + flow.monitoring 含 Smtp/Pop3/Imap；默认 376 / all-features 1279 / risk 424 全绿，详见 risks.md F43） |
 | F44 | DNS 家族与 HTTP 代理子分类 + FTP 传输元数据：Protocol 增 Doh/Dot/Doq/HttpConnect/HttpProxy + 规则名映射；TLS（ALPN dot/SNI DoH 域名表/853 端口回退）、QUIC（ALPN doq）、HTTP（CONNECT/绝对 URI）子分类；FTP 有状态会话（USER→username、RETR/STOR→filename，进入 monitoring）；parity nDPI 兼容导出（真实 golden 验证：DoH/DoQ→TLS.DoH_DoT、DoT 在 nDPI 5.0 不子分类→导出纯 TLS）；语料 +6 pcap + 真实 golden 差分全绿；连带修复 Tls/Http 风险处理器对子分类流的门控遗漏 | 中 | ✅ 已完成 2026-11-07（DoQ pcap 需加密构造不语料化等边界登记；默认 389 / all-features 1312 / risk 439 全绿，详见 risks.md F44） |
 | F45 | NetBIOS（NBNS/NBDS/NBSS）+ SMBv1/v2/3 识别 + SMBv1 风险：新 smb feature，两独立模块 detector（注册 SSH 后 FTP 前）；SMB1 Negotiate 跳过 + NBSS 头部重组；RiskFlag::SmbInsecureVersion + UnsafeProtocol；parity 真实 golden 修正计划假设（master 恒 NetBIOS，`NetBIOS.SMBv1/SMBv23`）；语料 +6 pcap + WSL golden 差分全绿；连带修复 behavioral 对 SMB 帧的混淆误报 | 中 | ✅ 已完成 2026-11-07（纯 Negotiate 流不定型等 6 项边界登记；默认 389 / smb 415 / all-features 1347 / risk+smb 471 全绿，详见 risks.md F45） |
+| F46 | Memcached + Elasticsearch + AMQP 识别：database 复用 + 新 messaging feature；Memcached 有状态匹配计数、Elasticsearch 二进制/HTTP 双路径、AMQP 0-9-1/1.0；parity 三协议分类映射；语料 +3 pcap 差分全绿 | 中 | ✅ 已完成 2026-11-07（HTTP-ES 仅响应先到、AMQP 1.0 仅协议头等边界见 risks.md F46） |
 
 ## 7. 文档索引
 
