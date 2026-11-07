@@ -132,6 +132,22 @@ fn try_extract_tls_meta(
     None
 }
 
+/// 根据 ALPN 与端口上下文选择 QUIC 子协议
+fn select_quic_protocol(
+    alpn: Option<&str>,
+    is_http3_port: bool,
+    is_standard_version: bool,
+) -> (Protocol, Confidence) {
+    if alpn.is_some_and(|alpn| alpn.starts_with("doq")) {
+        return (Protocol::Doq, Confidence::Dpi);
+    }
+    if is_http3_port && is_standard_version {
+        (Protocol::Http3, Confidence::DpiPartial)
+    } else {
+        (Protocol::Quic, Confidence::Dpi)
+    }
+}
+
 impl crate::protocols::ProtocolDetector for QuicDetector {
     fn name(&self) -> &'static str {
         "quic"
@@ -158,6 +174,10 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
                 .unwrap_or((None, None, None, None, None, None));
 
         // Build metadata - convert version to hex string format
+        let is_standard_version = matches!(info.version, QUIC_VERSION_1 | QUIC_VERSION_2);
+        let (protocol, confidence) =
+            select_quic_protocol(alpn.as_deref(), false, is_standard_version);
+
         let metadata = QuicMetadata {
             sni,
             version: Some(format!("{:08x}", info.version)),
@@ -171,9 +191,9 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
 
         // Report QUIC with high confidence since we successfully parsed an Initial packet
         Some(
-            DetectionResult::new(Protocol::Quic)
+            DetectionResult::new(protocol)
                 .with_metadata(Metadata::Quic(metadata))
-                .with_confidence(Confidence::Dpi),
+                .with_confidence(confidence),
         )
     }
 
@@ -193,6 +213,10 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
             try_extract_tls_meta(payload, &self.cache)
                 .unwrap_or((None, None, None, None, None, None));
 
+        // 子协议选择：ALPN doq 优先于 HTTP/3 端口逻辑
+        let (protocol, confidence) =
+            select_quic_protocol(alpn.as_deref(), ctx.is_http3_port, is_standard_version);
+
         let metadata = QuicMetadata {
             sni,
             version: Some(format!("{:08x}", info.version)),
@@ -202,13 +226,6 @@ impl crate::protocols::ProtocolDetector for QuicDetector {
             ja4,
             ja4s,
             transport_parameters,
-        };
-
-        // HTTP/3 判断：UDP 443 + 标准版本
-        let (protocol, confidence) = if ctx.is_http3_port && is_standard_version {
-            (Protocol::Http3, Confidence::DpiPartial) // HTTP/3 需要端口+版本双重确认
-        } else {
-            (Protocol::Quic, Confidence::Dpi)
         };
 
         Some(
@@ -241,6 +258,34 @@ mod tests {
                 .any(|&(lo, hi)| sample[0] >= lo && sample[0] <= hi),
             "门区间不覆盖合法样本首字节 0x{:02X}",
             sample[0]
+        );
+    }
+
+    #[test]
+    fn test_select_quic_protocol_doq() {
+        assert_eq!(
+            select_quic_protocol(Some("doq"), false, true),
+            (Protocol::Doq, Confidence::Dpi)
+        );
+        assert_eq!(
+            select_quic_protocol(Some("doq-i00"), false, false),
+            (Protocol::Doq, Confidence::Dpi)
+        );
+    }
+
+    #[test]
+    fn test_select_quic_protocol_http3_and_quic() {
+        assert_eq!(
+            select_quic_protocol(Some("h3"), true, true),
+            (Protocol::Http3, Confidence::DpiPartial)
+        );
+        assert_eq!(
+            select_quic_protocol(Some("h3"), false, true),
+            (Protocol::Quic, Confidence::Dpi)
+        );
+        assert_eq!(
+            select_quic_protocol(None, true, false),
+            (Protocol::Quic, Confidence::Dpi)
         );
     }
 }
