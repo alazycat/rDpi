@@ -90,8 +90,9 @@ let flows = parse_ndpi_jsonl(&text)?;       // Vec<NormalizedFlow>
 | `ndpi.flow_risk`（数字键对象） | `risk_mask`（取 `risk` 名，归一化为 snake_case） |
 
 > 真实 ndpiReader 输出示例见 `tests/test_ndpi_adapter.rs` 夹具；风险名归一化
-> 将 `Unidirectional Traffic` 映射为 `unidirectional_traffic`，与 rDpi
-> `RiskFlag::name()` 对齐。
+> 将 `Unidirectional Traffic` 映射为 `unidirectional_traffic`。rDpi 导出时
+> 也会把语义等价但命名不同的风险映射到 nDPI 名称（如
+> `tls_missing_sni` → `missing_sni_tls_extn`），并排序去重。
 
 ---
 
@@ -128,7 +129,8 @@ app protocol 按 **nDPI 5.0 兼容名称**输出（见第 6 节映射），不�
 - **流匹配**：双向规范五元组（`a <-> b`，与方向无关）；
 - **协议/应用/category/breed/confidence**：大小写不敏感；
 - **protocol_stack**：大小写不敏感、**顺序敏感**；
-- **risk_mask**：大小写不敏感、顺序不敏感、去重；
+- **risk_mask**：大小写不敏感、顺序不敏感、去重；语料门禁会先剔除
+  nDPI 专有启发式（见第 6 节），其余风险要求两侧集合完全一致；
 - 输出 `diffs`（字段级差异）、`missing`（期望有、实际无）、`extra`（实际多出）。
 
 ---
@@ -167,7 +169,14 @@ cargo test --all-features --test test_parity_corpus -- --nocapture
   nDPI 为 `Match by port` 或 `DPI (partial)` 而 rDpi 为 `Dpi` 时视为 rDpi 置信度更强，放行；
 - app protocol：nDPI 明确识别出 app 时必须一致；nDPI 无 app（如 DNS 查询）
   时允许 rDpi 更丰富；
-- risk_mask 只报告（nDPI 的风控语义与合成语料仍会造成差异）。
+- risk_mask：剔除 nDPI 专有启发式后要求完全一致。忽略项为
+  `malicious_fingerprint`（nDPI 内部指纹库）、
+  `mismatching_protocol_with_server_ip_address`（IP/ASN 元数据）、
+  `tls_probably_not_carrying_https`（nDPI TLS 启发式）、
+  `malformed_packet`（nDPI 自有解析器行为）与 `unidirectional_traffic`
+  （端到端流量统计）。已建模风险（`missing_sni_tls_extn`、
+  `unsafe_protocol`、`clear_text_credentials` 等）两侧必须一致；
+  rDpi 不得产出 nDPI 未报告的风险。
 
 > category/breed/app/protocol 名的兼容映射位于 `src/parity.rs` 的
 > `ndpi_compat_classification` / `ndpi_compat_app_name` / `protocol_name`，
@@ -201,4 +210,7 @@ cargo test --all-features --test test_parity_corpus -- --nocapture
 3. ~~自生成 pcap + golden output~~ 已完成（44 个，含 13 个企业协议、9 个跨段拆分与 2 个企业混合）；目标环境真实 pcap 待补；
 4. ~~纳入 CI~~ 已完成（`.github/workflows/ci.yml`，Ubuntu + Windows）；
 5. ~~category/breed/app/protocol 映射表~~ 已完成（`src/parity.rs`）；
-6. 扩充目标环境真实 pcap；risk_mask 映射与门禁。
+6. ~~risk_mask 映射与门禁~~ 已完成（rDpi → nDPI 风险名映射、FTP
+   `unsafe_protocol` / `clear_text_credentials`、行为启发式误报修复、
+   语料门禁）；
+7. 扩充目标环境真实 pcap。

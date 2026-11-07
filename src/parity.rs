@@ -66,12 +66,19 @@ impl NormalizedFlow {
         let confidence = flow.confidence.map(|confidence| format!("{confidence:?}"));
         let protocol_stack = flow.protocol_stack.iter().map(protocol_name).collect();
 
+        // 风险名导出为 nDPI 5.0 兼容名（`tls_missing_sni` → `missing_sni_tls_extn`）；
+        // 逐包分析可能重复累积同一风险，导出前排序去重
         #[cfg(feature = "risk")]
-        let risk_mask = flow
-            .risks
-            .iter()
-            .map(|risk| risk.flag.name().to_string())
-            .collect();
+        let risk_mask = {
+            let mut risks: Vec<String> = flow
+                .risks
+                .iter()
+                .map(|risk| ndpi_compat_risk_name(risk.flag.name()))
+                .collect();
+            risks.sort();
+            risks.dedup();
+            risks
+        };
         #[cfg(not(feature = "risk"))]
         let risk_mask = Vec::new();
 
@@ -166,6 +173,24 @@ fn protocol_name(protocol: Protocol) -> String {
         Protocol::Ftp => "FTP_CONTROL".to_string(),
         _ => format!("{protocol:?}"),
     }
+}
+
+/// rDpi 风险名 → nDPI 5.0 风险名（归一化后的 snake_case）
+///
+/// nDPI 的风险名来自 `ndpi_risk2str()`，比较器会统一转小写并把空格/标点
+/// 归一化为下划线。下表只列出与 rDpi `RiskFlag::name()` 存在命名差异且
+/// 语义等价的组合；未列出的名称保持原样（如 `unidirectional_traffic`
+/// 两侧已一致），差异会在差分报告中暴露。
+fn ndpi_compat_risk_name(name: &str) -> String {
+    match name {
+        "tls_missing_sni" => "missing_sni_tls_extn",
+        "tls_self_signed_cert" => "self_signed_certificate",
+        "tls_weak_cipher" => "weak_tls_cipher",
+        "tls_obsolete_version" => "obsolete_tls_version",
+        "tls_alpn_sni_mismatch" => "alpn_sni_mismatch",
+        _ => name,
+    }
+    .to_string()
 }
 
 /// rDpi 应用名 → nDPI 5.0 应用协议名（仅列出已验证的名称差异；

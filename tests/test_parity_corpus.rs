@@ -11,7 +11,7 @@
 
 mod parity;
 
-use parity::{NormalizedFlow, compare_flows};
+use parity::{NormalizedFlow, compare_flows, risk_masks_equivalent};
 use rdpi::pcap::PcapProcessor;
 use std::path::{Path, PathBuf};
 
@@ -81,8 +81,16 @@ fn corpus_classification_matches_ndpi_golden() {
                 .filter(|diff| diff.field == field)
                 .count()
         };
+        // 剔除 nDPI 专有启发式后仍不一致的风险差异数（门禁实际判定项）
+        let risk_gate_diffs = report
+            .diffs
+            .iter()
+            .filter(|diff| {
+                diff.field == "risk_mask" && !risk_masks_equivalent(&diff.expected, &diff.actual)
+            })
+            .count();
         println!(
-            "{name}: ndpi={} rder={} all_match={} master={} app={} category={} breed={} confidence={} risk={}",
+            "{name}: ndpi={} rder={} all_match={} master={} app={} category={} breed={} confidence={} risk={} risk_gate={}",
             expected.len(),
             actual.len(),
             report.is_match(),
@@ -92,6 +100,7 @@ fn corpus_classification_matches_ndpi_golden() {
             count_diff("breed"),
             count_diff("confidence"),
             count_diff("risk_mask"),
+            risk_gate_diffs,
         );
 
         for missing in &report.missing {
@@ -126,6 +135,17 @@ fn corpus_classification_matches_ndpi_golden() {
                 "app_protocol" if diff.expected != "<none>" => {
                     failures.push(format!(
                         "{name}: app_protocol expected {} actual {}",
+                        diff.expected, diff.actual
+                    ));
+                }
+                // 未启用 risk feature 时 rDpi 不产出风险，仅报告不判定
+                "risk_mask" if !cfg!(feature = "risk") => {}
+                // 剔除 nDPI 专有启发式后要求风险集合完全一致：
+                // rDpi 不得漏报已建模风险，也不得产出 nDPI 未见的风险
+                "risk_mask" if risk_masks_equivalent(&diff.expected, &diff.actual) => {}
+                "risk_mask" => {
+                    failures.push(format!(
+                        "{name}: risk_mask expected {} actual {}",
                         diff.expected, diff.actual
                     ));
                 }

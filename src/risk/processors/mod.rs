@@ -1,5 +1,7 @@
 pub mod behavioral;
 pub mod dns;
+#[cfg(feature = "proto3")]
+pub mod ftp;
 pub mod http;
 #[cfg(feature = "quic")]
 pub mod quic;
@@ -17,6 +19,9 @@ pub fn register_defaults(registry: &mut RiskRegistry) {
     // QUIC 处理器仅在 quic feature 下编译/注册（引用 quic 协议模块的版本常量与解析器）
     #[cfg(feature = "quic")]
     registry.register(Box::new(quic::QuicRiskProcessor::new()));
+    // FTP 风险（Unsafe Protocol / Clear-Text Credentials）随 proto3 注册
+    #[cfg(feature = "proto3")]
+    registry.register(Box::new(ftp::FtpRiskProcessor::new()));
 }
 
 #[cfg(test)]
@@ -26,11 +31,9 @@ mod tests {
     fn test_register_defaults() {
         let mut registry = RiskRegistry::new();
         register_defaults(&mut registry);
-        // quic 处理器随 quic feature 增量注册
-        #[cfg(feature = "quic")]
-        let expected = 6;
-        #[cfg(not(feature = "quic"))]
-        let expected = 5;
+        // quic / proto3 处理器随 feature 增量注册
+        let expected =
+            5 + usize::from(cfg!(feature = "quic")) + usize::from(cfg!(feature = "proto3"));
         assert_eq!(registry.processor_count(), expected);
     }
 }

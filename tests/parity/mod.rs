@@ -105,6 +105,41 @@ fn normalized_risk_mask(values: &[String]) -> Vec<String> {
     values
 }
 
+/// nDPI 5.0 中 rDpi 不建模的流级启发式风险
+///
+/// 这些风险依赖 nDPI 内部指纹库（`malicious_fingerprint`）、IP/ASN 元数据
+/// （`mismatching_protocol_with_server_ip_address`）、端到端流量统计
+/// （`unidirectional_traffic`）或其自有解析器行为（`malformed_packet`、
+/// `tls_probably_not_carrying_https`）。差分时从两侧集合中剔除，避免把
+/// “未建模”误报为差异；其余风险要求两侧集合完全一致。
+pub const NDPI_UNMODELED_RISKS: &[&str] = &[
+    "malicious_fingerprint",
+    "malformed_packet",
+    "mismatching_protocol_with_server_ip_address",
+    "tls_probably_not_carrying_https",
+    "unidirectional_traffic",
+];
+
+/// 判断 `compare_flows` 报告中的两条 risk_mask 是否等价
+///
+/// 输入为 `FlowDiff` 里的逗号分隔字符串（风险名均为 snake_case，不含逗号）。
+/// 忽略 [`NDPI_UNMODELED_RISKS`] 后按大小写不敏感、顺序不敏感、去重比较。
+pub fn risk_masks_equivalent(expected: &str, actual: &str) -> bool {
+    fn normalized(value: &str) -> Vec<String> {
+        let mut out: Vec<String> = value
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_ascii_lowercase)
+            .filter(|name| !NDPI_UNMODELED_RISKS.contains(&name.as_str()))
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+    normalized(expected) == normalized(actual)
+}
+
 /// 比较两组归一化流记录
 ///
 /// 流按双向规范五元组匹配（与方向无关）；字段比较规则：
@@ -197,4 +232,33 @@ pub fn compare_flows(expected: &[NormalizedFlow], actual: &[NormalizedFlow]) -> 
     }
 
     report
+}
+
+#[cfg(test)]
+mod risk_policy_tests {
+    use super::risk_masks_equivalent;
+
+    #[test]
+    fn unmodeled_ndpi_risks_are_ignored() {
+        assert!(risk_masks_equivalent(
+            "missing_sni_tls_extn,malicious_fingerprint,tls_probably_not_carrying_https",
+            "missing_sni_tls_extn"
+        ));
+        assert!(risk_masks_equivalent(
+            "unsafe_protocol,clear_text_credentials,malicious_fingerprint",
+            "clear_text_credentials,unsafe_protocol"
+        ));
+        // 两侧都出现未建模风险时同样忽略
+        assert!(risk_masks_equivalent("unidirectional_traffic", ""));
+    }
+
+    #[test]
+    fn modeled_risks_must_match_exactly() {
+        assert!(!risk_masks_equivalent("unsafe_protocol", ""));
+        assert!(!risk_masks_equivalent("", "obfuscated_traffic"));
+        assert!(!risk_masks_equivalent(
+            "missing_sni_tls_extn",
+            "missing_sni_tls_extn,unsafe_protocol"
+        ));
+    }
 }

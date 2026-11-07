@@ -71,25 +71,25 @@ impl RiskProcessor for BehavioralRiskProcessor {
     }
 
     fn analyze_packet(&self, parsed: &ParsedPacket, flow: &Flow) -> Vec<RiskResult> {
+        // 行为启发式仅适用于尚未定型的流量：已识别协议的载荷字节由协议
+        // 语义解释，不应再按“二进制/混淆”重复告警（语料中 DHCP 报文与
+        // MySQL/PostgreSQL 握手曾误报，真实 nDPI 5.0 未报告这些风险）。
+        if flow.protocol.is_some() {
+            return Vec::new();
+        }
+
         let mut results = Vec::new();
 
         // 1. BinaryDataTransfer: 不可打印字符比例高
         if is_binary_payload(&parsed.payload) && parsed.payload.len() > 100 {
-            // 排除已知的二进制协议 (TLS/QUIC 等加密隧道已有 breed 评级)
-            let is_encrypted = is_encrypted_protocol(flow.protocol);
-            if !is_encrypted {
-                results.push(RiskResult::new(
-                    RiskFlag::BinaryDataTransfer,
-                    RiskSeverity::Medium,
-                    format!(
-                        "Binary data transfer in {} protocol ({} bytes)",
-                        flow.protocol
-                            .map(|p| format!("{:?}", p))
-                            .unwrap_or_default(),
-                        parsed.payload.len()
-                    ),
-                ));
-            }
+            results.push(RiskResult::new(
+                RiskFlag::BinaryDataTransfer,
+                RiskSeverity::Medium,
+                format!(
+                    "Binary data transfer in unidentified traffic ({} bytes)",
+                    parsed.payload.len()
+                ),
+            ));
         }
 
         // 2. ObfuscatedTraffic: 混淆流量特征
@@ -143,22 +143,6 @@ impl RiskProcessor for BehavioralRiskProcessor {
         // 暂不实现 — 需要 Flow 中存储包间隔信息
 
         results
-    }
-}
-
-fn is_encrypted_protocol(p: Option<crate::core::types::Protocol>) -> bool {
-    match p {
-        Some(
-            crate::core::types::Protocol::Tls
-            | crate::core::types::Protocol::Quic
-            | crate::core::types::Protocol::Http3
-            | crate::core::types::Protocol::Dtls,
-        ) => true,
-        #[cfg(feature = "vpn")]
-        Some(crate::core::types::Protocol::WireGuard | crate::core::types::Protocol::OpenVpn) => {
-            true
-        }
-        _ => false,
     }
 }
 
@@ -267,5 +251,33 @@ mod tests {
         let (p, f) = (make_parsed(payload), make_flow());
         let risks = proc.analyze_packet(&p, &f);
         assert!(!risks.iter().any(|r| r.flag == RiskFlag::BinaryDataTransfer));
+    }
+
+    /// 已定型协议的载荷由其协议语义解释，不应再触发二进制传输启发式
+    /// （语料中 DHCP 报文曾误报 `binary_data_transfer`，nDPI 未报告）
+    #[test]
+    fn test_classified_binary_protocol_no_binary_risk() {
+        let proc = BehavioralRiskProcessor::new();
+        let mut flow = make_flow();
+        flow.protocol = Some(crate::core::types::Protocol::Dhcp);
+        let payload = vec![0u8; 240];
+        let (p, f) = (make_parsed(payload), flow);
+        let risks = proc.analyze_packet(&p, &f);
+        assert!(!risks.iter().any(|r| r.flag == RiskFlag::BinaryDataTransfer));
+    }
+
+    /// 混淆流量启发式仅适用于未定型流量；MySQL/PostgreSQL 握手的二进制
+    /// 结构曾被误判（nDPI 未报告 `obfuscated_traffic`）
+    #[test]
+    fn test_classified_protocol_no_obfuscation_risk() {
+        let proc = BehavioralRiskProcessor::new();
+        let mut flow = make_flow();
+        flow.protocol = Some(crate::core::types::Protocol::Mysql);
+        let mut payload = vec![0u8; 100];
+        payload[0..8].fill(b'A');
+        payload[50..100].fill(0xFF);
+        let (p, f) = (make_parsed(payload), flow);
+        let risks = proc.analyze_packet(&p, &f);
+        assert!(!risks.iter().any(|r| r.flag == RiskFlag::ObfuscatedTraffic));
     }
 }

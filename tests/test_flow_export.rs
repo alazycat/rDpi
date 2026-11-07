@@ -210,6 +210,41 @@ fn detector_export_includes_risk_mask() {
     );
 }
 
+/// risk_mask 导出为 nDPI 5.0 风险名并去重（真实 ndpiReader 输出：
+/// rDpi `tls_missing_sni` 对应 nDPI "Missing SNI TLS Extn"；
+/// 同一风险可能因逐包分析重复累积）
+#[cfg(feature = "risk")]
+#[test]
+fn risk_mask_exports_ndpi_names_and_deduplicates() {
+    use rdpi::risk::{RiskFlag, RiskResult, RiskSeverity};
+
+    let mut flow = Flow::new(key());
+    flow.risks.push(RiskResult::new(
+        RiskFlag::TlsMissingSni,
+        RiskSeverity::Medium,
+        "first",
+    ));
+    flow.risks.push(RiskResult::new(
+        RiskFlag::TlsMissingSni,
+        RiskSeverity::Medium,
+        "duplicate",
+    ));
+    flow.risks.push(RiskResult::new(
+        RiskFlag::UnsafeProtocol,
+        RiskSeverity::High,
+        "unsafe",
+    ));
+
+    let normalized = NormalizedFlow::from_flow(&flow);
+    assert_eq!(
+        normalized.risk_mask,
+        vec![
+            "missing_sni_tls_extn".to_string(),
+            "unsafe_protocol".to_string()
+        ]
+    );
+}
+
 /// P0：企业协议的 nDPI 5.0 兼容分类名（用真实 ndpiReader 5.0 输出验证）
 #[test]
 fn ndpi_compat_enterprise_taxonomy() {

@@ -305,7 +305,13 @@
   - 协议名差异：Redis → `RESP`、FTP → `FTP_CONTROL`（其余按大小写不敏感比较）；
   - DNS 保持 master taxonomy（nDPI 不对 DNS 查询做 app 分类），rDpi 仍保留应用识别结果；
   - 未覆盖组合回退原生名称并在 diff 中暴露；
-  - 语料测试 gate master/app/category/breed/confidence：44/44 用例全部一致，risk_mask 仅报告；nDPI `Match by port` 或 `DPI (partial)` 与 rDpi `Dpi` 视为“rDpi 置信度更强”放行。
+  - 语料测试 gate master/app/category/breed/confidence/risk_mask：44/44 用例全部一致；nDPI `Match by port` 或 `DPI (partial)` 与 rDpi `Dpi` 视为“rDpi 置信度更强”放行。
+- **P0 risk_mask 映射与门禁**
+  - `src/parity.rs`：rDpi 风险名 → nDPI 5.0 风险名映射（已验证差异：`tls_missing_sni` → `missing_sni_tls_extn`、`tls_weak_cipher` → `weak_tls_cipher`、`tls_obsolete_version` → `obsolete_tls_version`、`tls_alpn_sni_mismatch` → `alpn_sni_mismatch`、`tls_self_signed_cert` → `self_signed_certificate`），导出前排序去重；
+  - FTP 风险处理器（`proto3`）：`unsafe_protocol`（明文命令/数据）+ `clear_text_credentials`（USER/PASS/ACCT），与真实 ndpiReader 5.0 输出对齐；
+  - 行为风险启发式仅分析未定型流量，修复 DHCP `binary_data_transfer`、MySQL/PostgreSQL `obfuscated_traffic` 误报；
+  - 语料门禁剔除 nDPI 专有启发式（`malicious_fingerprint`、`mismatching_protocol_with_server_ip_address`、`tls_probably_not_carrying_https`、`malformed_packet`、`unidirectional_traffic`）后要求风险集合完全一致：rDpi 不得漏报已建模风险，也不得产出 nDPI 未报告的风险；
+  - 新增测试：FTP 风险处理器 5 个、行为启发式门控 2 个、风险名映射导出 1 个、门禁策略 2 个。
 - **P0 CI 接入**
   - `.github/workflows/ci.yml`：Ubuntu + Windows 矩阵；
   - `cargo fmt --check`、`cargo clippy --all-features --all-targets -D warnings`、默认 features 测试、全 features 测试（含 44 个语料的差分测试）；
@@ -353,6 +359,6 @@
 
 ### 待办
 
-- **P0**：目标环境真实 pcap 扩充（44 个自生成用例已就绪，其中 13 个企业协议）；映射表随语料扩展继续补充；risk_mask 映射与门禁。
+- **P0**：目标环境真实 pcap 扩充（44 个自生成用例已就绪，其中 13 个企业协议）；映射表随语料扩展继续补充；其余 rDpi 风险（证书过期、弱密码套件、DNS 隧道等）待真实语料验证后纳入门禁。
 - **P1**：迁移剩余无状态 detector 到逐包框架（按需有状态化）；补充 SMTP/IMAP/POP3/FTP 多包会话、WebSocket 升级等有状态场景。
 - **P1 边界**：QUIC JA4L 与流级风险分析（`analyze_flow`）在 `process_packet` 路径尚未接入（`detect_at`/`drain_risks` 仍保留）；HTTP/2 CONTINUATION/HPACK 动态表跨帧；TLS 大 Certificate（>64 KiB）分片；TCP FIN/RST 与窗口跟踪；多活跃有状态协议（当前一个 flow 只允许一个 `DissectorState` 变体）。
