@@ -422,6 +422,23 @@ impl FlowTable {
         self.flows.get_mut(key)
     }
 
+    /// 取出流（供双向入口在调用 `Detector` 其他方法时临时持有）
+    pub(crate) fn take(&mut self, key: &FlowKey) -> Option<Flow> {
+        self.flows.remove(key)
+    }
+
+    /// 放回流（与 [`Self::take`] 配对；新键仍走容量控制）
+    pub(crate) fn put(&mut self, flow: Flow) {
+        let key = flow.key.clone();
+        if !self.flows.contains_key(&key)
+            && self.max_entries > 0
+            && self.flows.len() >= self.max_entries
+        {
+            self.evict_until_insertable();
+        }
+        self.flows.insert(key, flow);
+    }
+
     /// 迭代所有流
     pub fn iter(&self) -> impl Iterator<Item = (&FlowKey, &Flow)> {
         self.flows.iter()

@@ -15,6 +15,7 @@ Rust Deep Packet Inspection library - 轻量级、高性能的深度包检测库
 - **元数据提取**: DNS 域名、HTTP 方法/路径/Host、TLS SNI/版本/证书、QUIC 版本/连接 ID/SNI/ALPN/JA4/Transport Parameters、SSH 版本等
 - **应用识别**: TLS SNI → 应用归属（反向 Trie 域名匹配）
 - **流管理**: 五元组追踪、超时清理、容量上限（满载先清超时流，再按最久未活跃逐出）
+- **pcap 回放**: `PcapProcessor`/CLI 使用双向流引擎（`Detector::process_packet`），一条连接一个 flow；HTTP / DNS-over-TCP / TLS / HTTP2 支持跨包重组
 - **猜测引擎**（DPI 失败后回退）: 域名 → IP 子网 → 端口 三级匹配，可配置——`GuessEngine::builder()` 开关内置表、注入自定义域名/IP 子网/端口映射（`Detector::set_guess_engine`）
 - **风险分析**（`risk` feature）: TLS/DNS/HTTP/行为/证书/QUIC 风险处理器（0-RTT 观测、非标准 draft 版本、Retry 完整性校验 RFC 9001 §5.8）
 - **规则引擎**（`rule` feature）: 自定义匹配规则，支持 JSON 加载

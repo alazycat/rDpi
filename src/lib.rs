@@ -489,43 +489,7 @@ impl Detector {
                 detected
             } else {
                 // Giveup 阶段：DPI 达到阈值仍未识别，启用猜测引擎
-                let mut ctx = GuessContext::new(parsed.dst_port);
-                // R4 修复：两方向 IP 都交给猜测引擎——服务端可能在 dst
-                // （client→server 包）或 src（server→client 包）；匹配时 dst 优先。
-                ctx.dst_ip = Some(parsed.dst_ip);
-                ctx.src_ip = Some(parsed.src_ip);
-                // 从流元数据中收集域名信息
-                ctx.domain_info = DomainInfo {
-                    sni: flow.metadata.as_ref().and_then(|m| match m {
-                        Metadata::Tls(tls) => tls.sni.clone(),
-                        Metadata::Quic(quic) => quic.sni.clone(),
-                        Metadata::Dtls(dtls) => dtls.sni.clone(),
-                        _ => None,
-                    }),
-                    http_host: flow.metadata.as_ref().and_then(|m| match m {
-                        Metadata::Http(http) => http.host.clone(),
-                        _ => None,
-                    }),
-                    dns_query: flow.metadata.as_ref().and_then(|m| match m {
-                        Metadata::Dns(dns) => dns.query_domain.clone(),
-                        _ => None,
-                    }),
-                };
-                // 引擎惰性构建 + 随 Detector 复用（域名表为 aho-corasick 自动机，勿逐包重建）
-                let guess = if self.guess_disabled {
-                    None
-                } else {
-                    self.guess_engine
-                        .get_or_insert_with(GuessEngine::new)
-                        .guess(&ctx)
-                };
-
-                if let Some(ref r) = guess {
-                    flow.protocol = Some(r.protocol);
-                    flow.confidence = Some(r.confidence);
-                }
-
-                guess
+                Self::guess_flow(flow, &parsed, &mut self.guess_engine, self.guess_disabled)
             }
         } else {
             // F3 修复：已定型 TLS 流在后续包收到 Certificate 记录时，
@@ -610,6 +574,61 @@ impl Detector {
         Ok(result)
     }
 
+    /// Giveup 阶段的猜测（端口 → IP 子网 → 域名三级匹配）
+    ///
+    /// 达到流型对应的 giveup 阈值后才运行，并在命中时写回 `flow.protocol` /
+    /// `flow.confidence`。`detect_at` 与双向入口共用。
+    fn guess_flow(
+        flow: &mut Flow,
+        parsed: &crate::parser::ParsedPacket,
+        guess_engine: &mut Option<GuessEngine>,
+        guess_disabled: bool,
+    ) -> Option<DetectionResult> {
+        if flow.dpi_only || guess_disabled {
+            return None;
+        }
+        let threshold = match flow.key.transport {
+            TransportProto::Tcp => DEFAULT_TCP_GIVEUP,
+            TransportProto::Udp => DEFAULT_UDP_GIVEUP,
+            _ => DEFAULT_UDP_GIVEUP,
+        };
+        if flow.packets_seen < threshold {
+            return None;
+        }
+
+        let mut ctx = GuessContext::new(parsed.dst_port);
+        // 两方向 IP 都交给猜测引擎——服务端可能在 dst（client→server 包）
+        // 或 src（server→client 包）；匹配时 dst 优先。
+        ctx.dst_ip = Some(parsed.dst_ip);
+        ctx.src_ip = Some(parsed.src_ip);
+        ctx.domain_info = DomainInfo {
+            sni: flow.metadata.as_ref().and_then(|m| match m {
+                Metadata::Tls(tls) => tls.sni.clone(),
+                Metadata::Quic(quic) => quic.sni.clone(),
+                Metadata::Dtls(dtls) => dtls.sni.clone(),
+                _ => None,
+            }),
+            http_host: flow.metadata.as_ref().and_then(|m| match m {
+                Metadata::Http(http) => http.host.clone(),
+                _ => None,
+            }),
+            dns_query: flow.metadata.as_ref().and_then(|m| match m {
+                Metadata::Dns(dns) => dns.query_domain.clone(),
+                _ => None,
+            }),
+        };
+
+        // 引擎惰性构建 + 随 Detector 复用（域名表为 aho-corasick 自动机，勿逐包重建）
+        let guess = guess_engine
+            .get_or_insert_with(GuessEngine::new)
+            .guess(&ctx);
+        if let Some(ref r) = guess {
+            flow.protocol = Some(r.protocol);
+            flow.confidence = Some(r.confidence);
+        }
+        guess
+    }
+
     /// 回显已识别流的协议、元数据与协议栈
     fn replay_flow(flow: &Flow) -> Option<DetectionResult> {
         flow.protocol.map(|protocol| {
@@ -642,6 +661,44 @@ impl Detector {
         }
     }
 
+    /// 处理以太网帧（内置流表；双向流）
+    ///
+    /// 这是 pcap/CLI 等便捷入口使用的完整引擎：解析 L2/L3（含 VLAN/QinQ、
+    /// IP-in-IP）、按双向规范五元组聚合流，再交给 [`Self::process_l3_packet`]
+    /// 的分类主体。与 [`Self::detect_at`] 的单向流模型相比，一条连接只产生
+    /// 一条 `Flow`，且启用 HTTP / DNS-over-TCP / TLS / HTTP2 等有状态
+    /// dissector 与 TCP 序列号重组。
+    ///
+    /// # Arguments
+    ///
+    /// * `packet` - 原始以太网帧字节
+    /// * `timestamp_ms` - 包到达时刻（毫秒；离线 pcap 传捕获时戳）
+    pub fn process_packet(
+        &mut self,
+        packet: &[u8],
+        timestamp_ms: u64,
+    ) -> crate::error::Result<Option<DetectionResult>> {
+        let parsed = parser::parse_packet(packet)?;
+        let packet_key = FlowKey {
+            src_ip: parsed.src_ip,
+            dst_ip: parsed.dst_ip,
+            src_port: parsed.src_port,
+            dst_port: parsed.dst_port,
+            transport: parsed.transport,
+        };
+        let mut flow = match self.flow_table.take(&packet_key.canonical().0) {
+            Some(flow) => flow,
+            None => {
+                let mut flow = Flow::new_bidirectional(packet_key);
+                flow.dpi_only = !self.default_guess;
+                flow
+            }
+        };
+        let result = self.process_parsed_l3_packet(&mut flow, &parsed, packet.len(), timestamp_ms);
+        self.flow_table.put(flow);
+        result
+    }
+
     /// 处理 L3 包（调用方持有 Flow）
     ///
     /// 输入为 IPv4/IPv6 包（不含以太网头）。与 [`Self::detect_at`] 不同：
@@ -662,6 +719,17 @@ impl Detector {
         timestamp_ms: u64,
     ) -> crate::error::Result<Option<DetectionResult>> {
         let parsed = parser::parse_l3_packet(packet)?;
+        self.process_parsed_l3_packet(flow, &parsed, packet.len(), timestamp_ms)
+    }
+
+    /// L3 分类与观测主体（已解析包）
+    fn process_parsed_l3_packet(
+        &mut self,
+        flow: &mut Flow,
+        parsed: &crate::parser::ParsedPacket,
+        byte_len: usize,
+        timestamp_ms: u64,
+    ) -> crate::error::Result<Option<DetectionResult>> {
         let packet_key = FlowKey {
             src_ip: parsed.src_ip,
             dst_ip: parsed.dst_ip,
@@ -677,7 +745,7 @@ impl Detector {
 
         flow.packets_seen += 1;
         flow.stats.packets += 1;
-        flow.stats.bytes += packet.len() as u64;
+        flow.stats.bytes += byte_len as u64;
         flow.stats.last_time = std::time::Instant::now();
         if flow.first_seen_ms.is_none() {
             flow.first_seen_ms = Some(timestamp_ms);
@@ -686,20 +754,20 @@ impl Detector {
         match direction {
             Direction::Forward => {
                 flow.packets_forward += 1;
-                flow.bytes_forward += packet.len() as u64;
+                flow.bytes_forward += byte_len as u64;
             }
             Direction::Reverse => {
                 flow.packets_reverse += 1;
-                flow.bytes_reverse += packet.len() as u64;
+                flow.bytes_reverse += byte_len as u64;
             }
         }
 
         let arrival = Self::timestamp_ms_to_system_time(timestamp_ms);
 
         // JA4 观测先于分类：指纹字段随本包结果一并返回（与 detect_at 语义一致）。
-        Self::observe_ja4_flow(flow, direction, &parsed, arrival);
+        Self::observe_ja4_flow(flow, direction, parsed, arrival);
 
-        let mut result = self.classify_l3_packet(flow, &parsed, direction)?;
+        let mut result = self.classify_l3_packet(flow, parsed, direction)?;
 
         // F42：TLS JA4L 精化段（D/E/F 三时点，信号取自结果元数据）
         if parsed.transport == TransportProto::Tcp {
@@ -720,7 +788,7 @@ impl Detector {
         // 风险分析（逐包）：附着到结果与流，并推送观察者回调
         #[cfg(feature = "risk")]
         {
-            let risks = self.risk_registry.analyze_packet(&parsed, flow);
+            let risks = self.risk_registry.analyze_packet(parsed, flow);
             if !risks.is_empty() {
                 if let Some(cb) = self.risk_callback.as_ref() {
                     for risk in &risks {
@@ -872,6 +940,20 @@ impl Detector {
                 Confidence::Dpi | Confidence::CustomRule => ClassificationState::Classified,
                 _ => ClassificationState::Partial,
             };
+        } else if flow.protocol.is_none()
+            && let Some(guessed) =
+                Self::guess_flow(flow, parsed, &mut self.guess_engine, self.guess_disabled)
+        {
+            // Giveup：内置 DPI 未识别，按端口/IP/域名猜测（与 detect_at 一致）
+            let mut guessed = guessed;
+            flow.metadata = Some(guessed.metadata.clone());
+            flow.protocol_stack.push(guessed.protocol);
+            guessed.protocol_stack = flow.protocol_stack;
+            flow.classification_state = match guessed.confidence {
+                Confidence::Dpi | Confidence::CustomRule => ClassificationState::Classified,
+                _ => ClassificationState::Partial,
+            };
+            result = Some(guessed);
         } else if flow.protocol.is_some() {
             // 本包没有新结果：保留并回显已有 partial 分类。
             return Ok(Self::replay_flow(flow));
