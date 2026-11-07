@@ -171,6 +171,14 @@ fn protocol_name(protocol: Protocol) -> String {
         Protocol::Redis => "RESP".to_string(),
         #[cfg(feature = "proto3")]
         Protocol::Ftp => "FTP_CONTROL".to_string(),
+        // F44 子分类：与 nDPI 5.0 `ndpi_check_http_url`/`ndpi_search_dns` 的
+        // 子协议判定结果对齐（nDPI 分别报告 HTTP CONNECT/HTTP Proxy 与
+        // DNSoverHTTPS/DNSoverTLS/DNSoverQUIC）
+        Protocol::HttpConnect => "HTTP_CONNECT".to_string(),
+        Protocol::HttpProxy => "HTTP_PROXY".to_string(),
+        Protocol::Doh => "DNSoverHTTPS".to_string(),
+        Protocol::Dot => "DNSoverTLS".to_string(),
+        Protocol::Doq => "DNSoverQUIC".to_string(),
         _ => format!("{protocol:?}"),
     }
 }
@@ -219,8 +227,16 @@ fn ndpi_compat_classification(
     };
     match protocol {
         Protocol::Dns => ("Network".to_string(), "Acceptable".to_string()),
+        // F44 子分类：DNS 家族在 nDPI 5.0 中归 Network/Acceptable
+        Protocol::Doh | Protocol::Dot | Protocol::Doq => {
+            ("Network".to_string(), "Acceptable".to_string())
+        }
         Protocol::Http => app_taxonomy(application)
             .unwrap_or_else(|| ("Web".to_string(), "Acceptable".to_string())),
+        // F44 子分类：HTTP CONNECT/Proxy 在 nDPI 中归 Web/Acceptable
+        Protocol::HttpConnect | Protocol::HttpProxy => {
+            ("Web".to_string(), "Acceptable".to_string())
+        }
         Protocol::Tls => {
             app_taxonomy(application).unwrap_or_else(|| ("Web".to_string(), "Safe".to_string()))
         }
