@@ -24,6 +24,8 @@ pub mod imap;
 pub mod kerberos;
 #[cfg(feature = "auth")]
 pub mod ldap;
+#[cfg(feature = "database")]
+pub mod memcached;
 #[cfg(feature = "modbus")]
 pub mod modbus;
 #[cfg(feature = "database")]
