@@ -1,0 +1,150 @@
+//! P0 语料差分：rDpi per-flow 输出 vs nDPI 5.0 golden
+//!
+//! 语料与 golden 均由仓库内文件提供：
+//! - `tests/parity/corpus/*.pcap`：自生成语料（`gen_corpus.py`）；
+//! - `tests/parity/golden/*.ndpi.json`：同语料上的真实 ndpiReader 输出。
+//!
+//! 本测试断言 flow 集合与 master protocol 一致；category/breed/risk 的
+//! 语义差异只在输出中报告，暂不判定失败（映射表是后续工作）。
+
+#![cfg(all(feature = "pcap", feature = "json"))]
+
+mod parity;
+
+use parity::{NormalizedFlow, compare_flows};
+use rdpi::pcap::PcapProcessor;
+use std::path::{Path, PathBuf};
+
+fn manifest_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn corpus_dir() -> PathBuf {
+    manifest_dir().join("tests").join("parity").join("corpus")
+}
+
+fn golden_dir() -> PathBuf {
+    manifest_dir().join("tests").join("parity").join("golden")
+}
+
+fn golden_for(pcap: &Path) -> PathBuf {
+    let stem = pcap.file_stem().unwrap().to_string_lossy();
+    golden_dir().join(format!("{stem}.ndpi.json"))
+}
+
+fn is_pcap(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("pcap" | "pcapng")
+    )
+}
+
+/// 用库内 pcap 入口跑完整检测，导出归一化流记录
+fn rder_flows(pcap: &Path) -> Vec<NormalizedFlow> {
+    let mut iter = PcapProcessor::new()
+        .process_file(pcap)
+        .unwrap_or_else(|e| panic!("open {}: {e}", pcap.display()));
+    for item in iter.by_ref() {
+        item.unwrap_or_else(|e| panic!("process {}: {e}", pcap.display()));
+    }
+    iter.detector().normalized_flows()
+}
+
+#[test]
+fn corpus_master_protocols_match_ndpi_golden() {
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(corpus_dir())
+        .expect("corpus directory")
+        .map(|entry| entry.expect("corpus entry").path())
+        .filter(|path| is_pcap(path))
+        .collect();
+    entries.sort();
+
+    let mut failures = Vec::new();
+    for pcap in &entries {
+        let name = pcap.file_name().unwrap().to_string_lossy().to_string();
+        let golden_path = golden_for(pcap);
+        let golden_raw = std::fs::read_to_string(&golden_path).unwrap_or_else(|_| {
+            panic!(
+                "missing golden {} for {name}; regenerate with ndpiReader",
+                golden_path.display()
+            )
+        });
+        let expected: Vec<NormalizedFlow> = rdpi::parity::parse_ndpi_jsonl(&golden_raw)
+            .unwrap_or_else(|e| panic!("parse golden {}: {e}", golden_path.display()));
+        let actual = rder_flows(pcap);
+        let report = compare_flows(&expected, &actual);
+
+        let count_diff = |field: &str| {
+            report
+                .diffs
+                .iter()
+                .filter(|diff| diff.field == field)
+                .count()
+        };
+        println!(
+            "{name}: ndpi={} rder={} all_match={} master={} app={} category={} breed={} confidence={} risk={}",
+            expected.len(),
+            actual.len(),
+            report.is_match(),
+            count_diff("master_protocol"),
+            count_diff("app_protocol"),
+            count_diff("category"),
+            count_diff("breed"),
+            count_diff("confidence"),
+            count_diff("risk_mask"),
+        );
+
+        for missing in &report.missing {
+            failures.push(format!("{name}: missing flow {missing}"));
+        }
+        for extra in &report.extra {
+            failures.push(format!("{name}: extra flow {extra}"));
+        }
+        for diff in report
+            .diffs
+            .iter()
+            .filter(|diff| diff.field == "master_protocol")
+        {
+            failures.push(format!(
+                "{name}: master_protocol expected {} actual {}",
+                diff.expected, diff.actual
+            ));
+        }
+    }
+
+    assert!(
+        entries.len() >= 20,
+        "corpus should contain at least 20 pcaps, found {}",
+        entries.len()
+    );
+    assert!(
+        failures.is_empty(),
+        "parity failures:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn every_golden_file_has_corpus_pcap() {
+    let mut goldens = 0usize;
+    for entry in std::fs::read_dir(golden_dir()).expect("golden directory") {
+        let path = entry.expect("golden entry").path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+            continue;
+        }
+        let name = path.file_name().unwrap().to_string_lossy();
+        let stem = name
+            .strip_suffix(".ndpi.json")
+            .unwrap_or_else(|| panic!("unexpected golden file {name}"));
+        let pcap = corpus_dir().join(format!("{stem}.pcap"));
+        if !pcap.exists() {
+            let pcapng = corpus_dir().join(format!("{stem}.pcapng"));
+            assert!(pcapng.exists(), "golden {name} has no matching corpus pcap");
+        }
+        goldens += 1;
+    }
+    assert!(
+        goldens >= 20,
+        "expected at least 20 golden files, found {goldens}"
+    );
+}

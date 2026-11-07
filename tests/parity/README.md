@@ -14,6 +14,8 @@
 | `tests/test_parity_harness.rs` | 比较器单元测试（需 `--all-features`） |
 | `tests/test_flow_export.rs` | per-flow 导出测试（需 `--features json`） |
 | `tests/test_ndpi_adapter.rs` | nDPI JSON 适配器测试（真实 ndpiReader 夹具） |
+| `tests/test_parity_corpus.rs` | 20 个 pcap 的语料差分 runner |
+| `tests/parity/corpus/` + `golden/` | 语料 pcap 与 nDPI golden JSONL |
 | `tests/parity/README.md` | 本文档：语料生成与运行方式 |
 
 ---
@@ -122,19 +124,39 @@ rdpi -i corpus.pcap -o flows-jsonl > rdpi.jsonl
 
 ---
 
-## 6. 运行
+## 6. 语料与 golden
+
+| 目录 | 内容 |
+|---|---|
+| `tests/parity/corpus/` | 20 个自生成 pcap（DNS / HTTP / TLS × 主机变体 + 4 个多流混合） |
+| `tests/parity/golden/` | 同语料上的真实 ndpiReader 5.0 JSONL（每条流一行） |
+| `tests/parity/gen_corpus.py` | 确定性语料生成脚本 |
+
+语料与 golden 均随仓库提交，CI 不需要安装 nDPI 即可回归。重新生成：
 
 ```bash
-cargo test --all-features --test test_parity_harness
+python -I tests/parity/gen_corpus.py
+# 在 Linux/WSL 中，对每个 pcap 运行：
+ndpiReader -i tests/parity/corpus/<name>.pcap \
+  -k tests/parity/golden/<name>.ndpi.json -K json
 ```
 
-后续接入真实语料后，建议增加：
+运行语料差分：
 
 ```bash
-cargo test --all-features --test test_parity_corpus -- --ignored
+cargo test --all-features --test test_parity_corpus -- --nocapture
 ```
 
-（需要环境变量 `NDPI_READER` / `RDPI_BIN` 指向可执行文件。）
+当前验收口径：
+
+- flow 集合一致（无 missing/extra）；
+- master protocol 一致（大小写不敏感）；
+- category / breed / risk 的语义差异只报告，暂不判失败（映射表待补）；
+- app protocol 差异只报告（nDPI 对 DNS 查询不产出 app；命名差异如
+  `GoogleServices` vs `Google` 待映射）。
+
+语料目标 20–50 个：当前 20 个自生成用例已覆盖基础协议与应用变体；
+下一批补目标环境真实 pcap（Web / 流媒体 / 企业网）。
 
 ---
 
@@ -155,5 +177,6 @@ cargo test --all-features --test test_parity_corpus -- --ignored
 
 1. ~~nDPI JSON → 归一化 schema 适配器~~ 已完成（`parse_ndpi_jsonl`）；
 2. ~~rDpi per-flow JSONL 输出~~ 已完成（`-o flows-jsonl` / `Detector::normalized_flows()`）；
-3. 选定 20–50 个 pcap 作为首批语料；
-4. 生成 golden output 并纳入 CI（nDPI 侧在 Linux runner 运行）。
+3. ~~20 个自生成 pcap + golden output~~ 已完成；目标环境真实 pcap 待补；
+4. 纳入 CI（Linux runner；语料与 golden 已提交，无需运行时依赖 nDPI）；
+5. category/breed/app protocol 映射表（使差异报告可判定）。
