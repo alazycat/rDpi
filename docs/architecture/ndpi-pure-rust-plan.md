@@ -267,7 +267,7 @@
 
 1. ~~从 A–E 组选择首批组合~~ 已完成：A + B。
 2. ~~确认首批 Top-N~~ 已完成：见 [protocol-coverage-plan.md](protocol-coverage-plan.md) 第 7 节。
-3. ~~rDpi per-flow 输出~~ 已完成（`-o flows-jsonl`）；下一步接 nDPI JSON 适配器与 20–50 个 pcap 语料。
+3. ~~rDpi per-flow 输出~~、~~nDPI JSON 适配器~~ 已完成；下一步接 20–50 个 pcap 语料与 golden output。
 4. ~~双向流 + `Flow` API + 逐包 dissector~~ 已完成；HTTP / DNS-over-TCP / TLS / HTTP2 状态机 + TCP 序列号重组已落地。
 5. ~~VLAN/QinQ/IP-in-IP~~、~~规则/风险/JA4 接入新入口~~ 已完成；下一步：迁移现有 detector、L2 与双向流整合、P0 差分链路。
 
@@ -287,6 +287,11 @@
   - CLI `-o flows-jsonl`：每行一条归一化流记录（需 `--features "pcap json"`）；
   - `Flow.confidence` 与 `detect_at` 路径的 `protocol_stack` 填充，供导出使用；
   - `tests/test_flow_export.rs`：4 个用例（字段映射、已分类/未分类导出、risk_mask）。
+- **P0 nDPI JSON 适配器**
+  - `NormalizedFlow::from_ndpi_json` / `parse_ndpi_jsonl`（`feature: json`）；
+  - 字段映射对齐 nDPI 5.0 `ndpi_flow2json`/`ndpi_protocol2name`：`dest_ip`、L4 `proto`、`ndpi.proto` 的 `MASTER.APP` 拆分、数字置信度对象、`flow_risk` 风险名归一化；
+  - `tests/test_ndpi_adapter.rs`：5 个用例（真实 ndpiReader 夹具、master/app 拆分、缺省字段、JSONL、错误输入）；
+  - `tests/test_parity_harness.rs` 新增适配器输出与 rDpi 记录的端到端比较用例。
 - **P1 首个垂直切片**
   - `FlowKey::canonical/reverse` + `Direction`；
   - `Flow::new_bidirectional/direction_of`（方向相对首包 initiator，而非任意规范键）；
@@ -319,6 +324,6 @@
 
 ### 待办
 
-- **P0**：nDPI JSON → 归一化适配器；20–50 个 pcap 语料；CI（Linux runner 跑 nDPI）。
+- **P0**：20–50 个 pcap 语料；golden output；CI（Linux runner 跑 nDPI）。
 - **P1**：迁移现有 50 个 detector；L2 与双向流整合。
 - **P1 边界**：QUIC JA4L 与流级风险分析（`analyze_flow`）仍仅在 `detect_at`/`drain_risks` 路径；HTTP/2 CONTINUATION/HPACK 动态表跨帧；TLS 大 Certificate（>64 KiB）分片；TCP FIN/RST 与窗口跟踪；多活跃有状态协议（当前一个 flow 只允许一个 `DissectorState` 变体）。

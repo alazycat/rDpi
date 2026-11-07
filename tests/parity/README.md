@@ -9,10 +9,11 @@
 
 | 文件 | 用途 |
 |---|---|
-| `src/parity.rs` | 库内归一化 schema（`NormalizedFlow::from_flow`，`feature: json`） |
+| `src/parity.rs` | 库内归一化 schema 与 nDPI JSON 适配器（`feature: json`） |
 | `tests/parity/mod.rs` | 流比较器（复用库内 `NormalizedFlow`） |
 | `tests/test_parity_harness.rs` | 比较器单元测试（需 `--all-features`） |
 | `tests/test_flow_export.rs` | per-flow 导出测试（需 `--features json`） |
+| `tests/test_ndpi_adapter.rs` | nDPI JSON 适配器测试（真实 ndpiReader 夹具） |
 | `tests/parity/README.md` | 本文档：语料生成与运行方式 |
 
 ---
@@ -63,20 +64,31 @@ cd /path/to/nDPI
 ./example/ndpiReader -i corpus.pcap -k ndpi.json -K json
 ```
 
-nDPI JSON 的字段名与归一化 schema 不同，需要一个轻量适配器（TODO）：
+nDPI JSON 的字段名与归一化 schema 不同，适配器已内置在库中
+（`feature: json`）：
+
+```rust
+use rdpi::parity::{NormalizedFlow, parse_ndpi_jsonl};
+
+let text = std::fs::read_to_string("ndpi.json")?;
+let flows = parse_ndpi_jsonl(&text)?;       // Vec<NormalizedFlow>
+// 或逐行：NormalizedFlow::from_ndpi_json(line)
+```
+
+映射规则（对齐 nDPI 5.0 `ndpi_flow2json` / `ndpi_protocol2name`）：
 
 | nDPI JSON | 归一化字段 |
 |---|---|
-| `src` / `dst` / `sport` / `dport` / `proto` | `src_ip` / `dst_ip` / `src_port` / `dst_port` / `transport` |
-| `ndpi.master_protocol` | `master_protocol` |
-| `ndpi.app_protocol` | `app_protocol` |
-| `ndpi.category` | `category` |
-| `ndpi.breed` | `breed` |
-| `ndpi.confidence` | `confidence` |
-| `ndpi.risk` | `risk_mask` |
-| — | `protocol_stack`（nDPI 5.0 可导出，按实际字段映射） |
+| `src_ip` / `dest_ip` / `src_port` / `dst_port` | 同名字段（`dest_ip` → `dst_ip`） |
+| `proto`（L4 名称） | `transport`（小写） |
+| `ndpi.proto`（`MASTER.APP` 或单协议名） | `master_protocol` / `app_protocol` / `protocol_stack` |
+| `ndpi.category` / `ndpi.breed` | 同名字段 |
+| `ndpi.confidence`（数字键对象） | `confidence`（取首个值） |
+| `ndpi.flow_risk`（数字键对象） | `risk_mask`（取 `risk` 名，归一化为 snake_case） |
 
-> 适配器可以是一个小脚本（`jq`/Python）或 Rust 工具；当前骨架只定义 schema 和比较器。
+> 真实 ndpiReader 输出示例见 `tests/test_ndpi_adapter.rs` 夹具；风险名归一化
+> 将 `Unidirectional Traffic` 映射为 `unidirectional_traffic`，与 rDpi
+> `RiskFlag::name()` 对齐。
 
 ---
 
@@ -141,7 +153,7 @@ cargo test --all-features --test test_parity_corpus -- --ignored
 
 ## 8. TODO
 
-1. nDPI JSON → 归一化 schema 适配器；
+1. ~~nDPI JSON → 归一化 schema 适配器~~ 已完成（`parse_ndpi_jsonl`）；
 2. ~~rDpi per-flow JSONL 输出~~ 已完成（`-o flows-jsonl` / `Detector::normalized_flows()`）；
 3. 选定 20–50 个 pcap 作为首批语料；
 4. 生成 golden output 并纳入 CI（nDPI 侧在 Linux runner 运行）。

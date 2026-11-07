@@ -14,6 +14,7 @@
 
 use crate::core::flow::Flow;
 use crate::core::types::{Protocol, TransportProto};
+use std::collections::BTreeMap;
 
 /// 归一化后的单条流记录
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -89,6 +90,49 @@ impl NormalizedFlow {
         }
     }
 
+    /// 解析 nDPI `ndpiReader -K json` 的单行流记录
+    ///
+    /// 字段映射（与 nDPI 5.0 `ndpi_flow2json`/`ndpi_protocol2name` 对齐）：
+    /// - `src_ip` / `dest_ip` / `src_port` / `dst_port` / `proto`（L4 名称）；
+    /// - `ndpi.proto`：`MASTER.APP` 或单协议名——拆分到 master/app 与协议栈；
+    /// - `ndpi.confidence`：数字键 → 名称的对象，取首个值；
+    /// - `ndpi.flow_risk`：数字键 → `{risk, severity, ...}`，取 `risk` 名称并
+    ///   归一化为 snake_case（与 rDpi `RiskFlag::name()` 对齐）。
+    pub fn from_ndpi_json(line: &str) -> Result<Self, serde_json::Error> {
+        let record: NdpiFlowRecord = serde_json::from_str(line)?;
+        let (master_protocol, app_protocol, protocol_stack) =
+            split_ndpi_protocol(record.ndpi.proto.as_deref());
+        let confidence = record
+            .ndpi
+            .confidence
+            .and_then(|confidence| confidence.into_values().next());
+        let mut risk_mask: Vec<String> = record
+            .ndpi
+            .flow_risk
+            .into_iter()
+            .flat_map(BTreeMap::into_values)
+            .filter_map(|risk| risk.risk)
+            .map(|name| normalize_ndpi_risk(&name))
+            .collect();
+        risk_mask.sort();
+        risk_mask.dedup();
+
+        Ok(Self {
+            src_ip: record.src_ip,
+            dst_ip: record.dest_ip,
+            src_port: record.src_port,
+            dst_port: record.dst_port,
+            transport: normalize_ndpi_transport(record.proto.as_deref()),
+            master_protocol,
+            app_protocol,
+            category: record.ndpi.category,
+            breed: record.ndpi.breed,
+            confidence,
+            protocol_stack,
+            risk_mask,
+        })
+    }
+
     /// 导出排序键：信息量高的记录优先，其后按端点字典序稳定排序
     ///
     /// 单向流模型下同一连接会导出两条记录（两个方向）；下游按双向规范键
@@ -115,4 +159,98 @@ impl NormalizedFlow {
 
 fn protocol_name(protocol: Protocol) -> String {
     format!("{protocol:?}")
+}
+
+/// 解析 nDPI JSONL 文本（每行一条流记录，空行跳过）
+pub fn parse_ndpi_jsonl(text: &str) -> Result<Vec<NormalizedFlow>, serde_json::Error> {
+    let mut flows = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        flows.push(NormalizedFlow::from_ndpi_json(line)?);
+    }
+    Ok(flows)
+}
+
+/// nDPI `proto`（L4）名称 → 归一化 transport
+fn normalize_ndpi_transport(proto: Option<&str>) -> String {
+    match proto {
+        Some(name) if !name.is_empty() => name.to_ascii_lowercase(),
+        _ => "other".to_string(),
+    }
+}
+
+/// nDPI L7 协议名拆分：`MASTER.APP` → (master, app, stack)
+fn split_ndpi_protocol(proto: Option<&str>) -> (Option<String>, Option<String>, Vec<String>) {
+    let Some(name) = proto.filter(|name| !name.is_empty()) else {
+        return (None, None, Vec::new());
+    };
+    match name.split_once('.') {
+        Some((master, app)) if !master.is_empty() && !app.is_empty() => (
+            Some(master.to_string()),
+            Some(app.to_string()),
+            vec![master.to_string(), app.to_string()],
+        ),
+        _ => (Some(name.to_string()), None, vec![name.to_string()]),
+    }
+}
+
+/// nDPI 风险名 → snake_case（如 `Unidirectional Traffic` →
+/// `unidirectional_traffic`），与 rDpi `RiskFlag::name()` 命名对齐
+fn normalize_ndpi_risk(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut last_separator = false;
+    for ch in name.trim().to_ascii_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            last_separator = false;
+        } else if !last_separator && !out.is_empty() {
+            out.push('_');
+            last_separator = true;
+        }
+    }
+    while out.ends_with('_') {
+        out.pop();
+    }
+    out
+}
+
+/// ndpiReader 单条流 JSON（仅反序列化归一化所需字段）
+#[derive(Debug, serde::Deserialize)]
+struct NdpiFlowRecord {
+    src_ip: String,
+    dest_ip: String,
+    #[serde(default)]
+    src_port: u16,
+    #[serde(default)]
+    dst_port: u16,
+    /// L4 协议名称（TCP / UDP / ICMP / ...）
+    #[serde(default)]
+    proto: Option<String>,
+    ndpi: NdpiProtocolInfo,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct NdpiProtocolInfo {
+    /// L7 协议名：`MASTER.APP` 或单协议
+    #[serde(default)]
+    proto: Option<String>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    breed: Option<String>,
+    /// 数字置信度 ID → 名称
+    #[serde(default)]
+    confidence: Option<BTreeMap<String, String>>,
+    /// 数字风险 ID → 风险详情
+    #[serde(default)]
+    flow_risk: Option<BTreeMap<String, NdpiRiskInfo>>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct NdpiRiskInfo {
+    #[serde(default)]
+    risk: Option<String>,
 }
