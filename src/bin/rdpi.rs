@@ -296,6 +296,10 @@ fn print_detection(pkt_num: u64, det: &DetectionResult) {
         rdpi::Metadata::Dhcp(d) => &d.ja4d,
         #[cfg(feature = "infra")]
         rdpi::Metadata::Dhcpv6(d) => &d.ja4d6,
+        #[cfg(feature = "smb")]
+        rdpi::Metadata::NetBios(nb) => nb.name.as_deref().unwrap_or(""),
+        #[cfg(feature = "smb")]
+        rdpi::Metadata::Smb(_) => "",
         _ => "",
     };
 

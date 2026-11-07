@@ -284,7 +284,7 @@ impl Default for Registry {
 }
 
 /// 注册所有启用的内置协议
-/// 注册顺序：QUIC → DTLS → TLS → SSH → SNMP → Modbus → SMTP → POP3 → IMAP → NTP → DHCP → HTTP → DNS（按特异性递减）
+/// 注册顺序：QUIC → DTLS → TLS → SSH → (NetBIOS → SMB) → FTP → SNMP → Modbus → SMTP → POP3 → IMAP → NTP → DHCP → HTTP → DNS（按特异性递减）
 pub fn register_defaults(_registry: &mut Registry) {
     #[cfg(feature = "quic")]
     quic::register(_registry);
@@ -301,6 +301,11 @@ pub fn register_defaults(_registry: &mut Registry) {
     wireguard::register(_registry);
     #[cfg(feature = "ssh")]
     ssh::register(_registry);
+    #[cfg(feature = "smb")]
+    {
+        netbios::register(_registry);
+        smb::register(_registry);
+    }
     #[cfg(feature = "proto3")]
     ftp::register(_registry);
     #[cfg(feature = "snmp")]
@@ -481,5 +486,23 @@ mod gate_tests {
         reg.register(Box::new(AlwaysMatch { gate: None }));
         assert!(reg.detect(&[0x00, 0x01, 0x02]).is_some());
         assert!(reg.detect_with_ports(&[0xFF], 1, 2).is_some());
+    }
+}
+
+#[cfg(all(test, feature = "smb"))]
+mod smb_registry_tests {
+    use super::*;
+
+    #[test]
+    fn test_smb_detectors_registered() {
+        // 子模块可访问 `Registry.detectors` 私有字段（同文件、后代模块）
+        let registry = Registry::default();
+        let names: Vec<&str> = registry
+            .detectors
+            .iter()
+            .map(|entry| entry.detector.name())
+            .collect();
+        assert!(names.contains(&"netbios"), "netbios detector must be registered");
+        assert!(names.contains(&"smb"), "smb detector must be registered");
     }
 }

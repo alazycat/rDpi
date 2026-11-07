@@ -235,6 +235,10 @@ fn test_registry_default_detector_count() {
         {
             count += 1; // NFS
         }
+        #[cfg(feature = "smb")]
+        {
+            count += 2; // NetBIOS + SMB（F45）
+        }
         count
     };
     assert_eq!(registry.detector_count(), expected_count);
