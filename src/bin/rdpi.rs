@@ -30,11 +30,37 @@ use std::time::Instant;
     about = "Network traffic protocol identification tool"
 )]
 struct Cli {
-    /// 输入的 pcap/pcapng 文件路径
-    #[arg(short = 'i', long = "input", value_name = "FILE")]
-    input: PathBuf,
+    /// 输入的 pcap/pcapng 文件路径或网卡名（路径存在时按文件处理）
+    #[arg(
+        short = 'i',
+        long = "input",
+        value_name = "FILE|IFACE",
+        required_unless_present_any = ["iface", "list_ifaces"],
+        conflicts_with = "iface"
+    )]
+    input: Option<String>,
 
-    /// 输出格式（text / json / jsonl / csv）
+    /// 显式指定实时抓包网卡（与 -i 互斥）
+    #[arg(long = "iface", value_name = "NAME", conflicts_with = "input")]
+    iface: Option<String>,
+
+    /// 列出可抓包设备后退出
+    #[arg(long = "list-ifaces", conflicts_with_all = ["input", "iface"])]
+    list_ifaces: bool,
+
+    /// BPF 过滤表达式（仅实时抓包）
+    #[arg(short = 'f', long = "filter", value_name = "BPF")]
+    filter: Option<String>,
+
+    /// 捕获指定帧数后停止（仅实时抓包）
+    #[arg(long = "count", value_name = "N")]
+    count: Option<u64>,
+
+    /// 运行指定秒数后停止（仅实时抓包）
+    #[arg(long = "duration", value_name = "SECS")]
+    duration: Option<u64>,
+
+    /// 输出格式（text / json / jsonl / csv / flows-jsonl）
     #[arg(short = 'o', long = "output", default_value = "text")]
     output: String,
 
@@ -70,6 +96,7 @@ impl<'a> OutputSink<'a> {
         }
     }
 
+    #[cfg(any(test, feature = "live"))]
     fn total(&self) -> u64 {
         self.total_packets
     }
@@ -253,6 +280,184 @@ fn run_file(
     Ok(())
 }
 
+/// CLI 输入来源。
+#[derive(Debug, PartialEq, Eq)]
+enum Source {
+    File(PathBuf),
+    Live(String),
+    ListIfaces,
+}
+
+fn resolve_source(
+    input: Option<&str>,
+    iface: Option<&str>,
+    list_ifaces: bool,
+) -> Result<Source, String> {
+    if list_ifaces {
+        return Ok(Source::ListIfaces);
+    }
+    if let Some(iface) = iface {
+        return Ok(Source::Live(iface.to_string()));
+    }
+
+    let input = input.ok_or_else(|| "missing -i/--input or --iface".to_string())?;
+    let path = PathBuf::from(input);
+    if path.is_file() {
+        Ok(Source::File(path))
+    } else {
+        Ok(Source::Live(input.to_string()))
+    }
+}
+
+fn validate_file_options(
+    filter: Option<&str>,
+    count: Option<u64>,
+    duration: Option<u64>,
+) -> Result<(), String> {
+    if filter.is_some() {
+        return Err("--filter requires a live capture interface".to_string());
+    }
+    if count.is_some() {
+        return Err("--count requires a live capture interface".to_string());
+    }
+    if duration.is_some() {
+        return Err("--duration requires a live capture interface".to_string());
+    }
+    Ok(())
+}
+
+/// 以太网帧是否携带 IPv4/IPv6（含 VLAN/QinQ 标签）。
+///
+/// 实时链路会混有 ARP、LLDP 等非 IP 帧；它们不能交给
+/// `Detector::process_packet`，否则会被当作 IP 头解析失败。
+#[cfg(any(feature = "live", test))]
+fn is_ip_ethernet_frame(frame: &[u8]) -> bool {
+    const VLAN_TPIDS: [u16; 3] = [0x8100, 0x88a8, 0x9100];
+    const MAX_VLAN_TAGS: usize = 4;
+
+    let mut offset = 12usize;
+    let mut tags = 0usize;
+
+    while frame.len() >= offset + 2 {
+        let ether_type = u16::from_be_bytes([frame[offset], frame[offset + 1]]);
+        match ether_type {
+            0x0800 | 0x86dd => return true,
+            tpid if VLAN_TPIDS.contains(&tpid) => {
+                if tags == MAX_VLAN_TAGS {
+                    return false;
+                }
+                tags += 1;
+                offset += 4;
+            }
+            _ => return false,
+        }
+    }
+
+    false
+}
+
+#[cfg(feature = "live")]
+fn run_live(
+    device: String,
+    filter: Option<String>,
+    count: Option<u64>,
+    duration: Option<u64>,
+    output: &str,
+    verbose: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use rdpi::live::{CaptureConfig, LiveCapture};
+
+    let mut config = CaptureConfig::new(device);
+    if let Some(filter) = filter {
+        config = config.filter(filter);
+    }
+
+    let mut capture = LiveCapture::open(config)?;
+    let mut detector = Detector::new();
+    let mut sink = OutputSink::new(output, verbose);
+    let start = Instant::now();
+    let duration = duration.map(std::time::Duration::from_secs);
+
+    loop {
+        if let Some(limit) = count
+            && sink.total() >= limit
+        {
+            break;
+        }
+        if let Some(limit) = duration
+            && start.elapsed() >= limit
+        {
+            break;
+        }
+
+        let Some(frame) = capture.next_frame()? else {
+            continue;
+        };
+        if !is_ip_ethernet_frame(&frame.data) {
+            // ARP/LLDP 等非 IP 帧计为未识别包，继续抓取。
+            sink.on_packet(frame.timestamp_us, None)?;
+            continue;
+        }
+        let detection = detector.process_packet(&frame.data, frame.timestamp_us / 1000)?;
+        sink.on_packet(frame.timestamp_us, detection)?;
+    }
+
+    sink.finish(start.elapsed(), Some(&detector))?;
+    Ok(())
+}
+
+#[cfg(not(feature = "live"))]
+fn run_live(
+    _device: String,
+    _filter: Option<String>,
+    _count: Option<u64>,
+    _duration: Option<u64>,
+    _output: &str,
+    _verbose: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    eprintln!("error: live capture requires building with --features \"pcap live\"");
+    std::process::exit(2);
+}
+
+#[cfg(feature = "live")]
+fn list_ifaces() -> Result<(), Box<dyn std::error::Error>> {
+    let devices = rdpi::live::devices()?;
+    if devices.is_empty() {
+        println!("no capture devices found");
+        return Ok(());
+    }
+
+    for device in devices {
+        let mut flags = Vec::new();
+        if device.is_loopback {
+            flags.push("loopback");
+        }
+        if device.is_up {
+            flags.push("up");
+        }
+        let flags = if flags.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", flags.join(","))
+        };
+
+        match device.description.as_deref() {
+            Some(description) if !description.is_empty() => {
+                println!("{}{}  {}", device.name, flags, description);
+            }
+            _ => println!("{}{}", device.name, flags),
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(not(feature = "live"))]
+fn list_ifaces() -> Result<(), Box<dyn std::error::Error>> {
+    eprintln!("error: live capture requires building with --features \"pcap live\"");
+    std::process::exit(2);
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
@@ -266,7 +471,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(2);
     }
 
-    run_file(&cli.input, &cli.output, cli.verbose)
+    let source = match resolve_source(
+        cli.input.as_deref(),
+        cli.iface.as_deref(),
+        cli.list_ifaces,
+    ) {
+        Ok(source) => source,
+        Err(message) => {
+            eprintln!("error: {message}");
+            std::process::exit(2);
+        }
+    };
+
+    match source {
+        Source::ListIfaces => list_ifaces(),
+        Source::Live(device) => run_live(
+            device,
+            cli.filter,
+            cli.count,
+            cli.duration,
+            &cli.output,
+            cli.verbose,
+        ),
+        Source::File(path) => {
+            if let Err(message) =
+                validate_file_options(cli.filter.as_deref(), cli.count, cli.duration)
+            {
+                eprintln!("error: {message}");
+                std::process::exit(2);
+            }
+            run_file(&path, &cli.output, cli.verbose)
+        }
+    }
 }
 
 /// 逐包检测记录（JSON 输出用）
@@ -558,6 +794,74 @@ mod tests {
         assert_eq!(sink.total(), 2);
         assert_eq!(sink.detected(), 1);
         assert_eq!(sink.protocol_counts().get("Tcp"), Some(&1));
+    }
+
+    #[test]
+    fn resolve_existing_file() {
+        assert_eq!(
+            resolve_source(Some("Cargo.toml"), None, false).unwrap(),
+            Source::File(PathBuf::from("Cargo.toml"))
+        );
+    }
+
+    #[test]
+    fn resolve_missing_path_as_live_device() {
+        assert_eq!(
+            resolve_source(Some("rdpi-no-such-iface"), None, false).unwrap(),
+            Source::Live("rdpi-no-such-iface".to_string())
+        );
+    }
+
+    #[test]
+    fn explicit_iface_wins_over_input() {
+        assert_eq!(
+            resolve_source(Some("Cargo.toml"), Some("eth0"), false).unwrap(),
+            Source::Live("eth0".to_string())
+        );
+    }
+
+    #[test]
+    fn list_ifaces_mode() {
+        assert_eq!(
+            resolve_source(None, None, true).unwrap(),
+            Source::ListIfaces
+        );
+    }
+
+    #[test]
+    fn file_mode_rejects_live_options() {
+        assert!(validate_file_options(Some("tcp"), None, None).is_err());
+        assert!(validate_file_options(None, Some(1), None).is_err());
+        assert!(validate_file_options(None, None, Some(1)).is_err());
+        assert!(validate_file_options(None, None, None).is_ok());
+    }
+
+    #[test]
+    fn ip_frame_detection_handles_ethernet_and_vlan() {
+        let mut ipv4 = vec![0u8; 14];
+        ipv4[12..14].copy_from_slice(&0x0800u16.to_be_bytes());
+        assert!(is_ip_ethernet_frame(&ipv4));
+
+        let mut ipv6 = vec![0u8; 14];
+        ipv6[12..14].copy_from_slice(&0x86ddu16.to_be_bytes());
+        assert!(is_ip_ethernet_frame(&ipv6));
+
+        let mut arp = vec![0u8; 42];
+        arp[12..14].copy_from_slice(&0x0806u16.to_be_bytes());
+        assert!(!is_ip_ethernet_frame(&arp));
+
+        let mut vlan = vec![0u8; 18];
+        vlan[12..14].copy_from_slice(&0x8100u16.to_be_bytes());
+        vlan[16..18].copy_from_slice(&0x86ddu16.to_be_bytes());
+        assert!(is_ip_ethernet_frame(&vlan));
+
+        let mut qinq = vec![0u8; 22];
+        qinq[12..14].copy_from_slice(&0x88a8u16.to_be_bytes());
+        qinq[16..18].copy_from_slice(&0x8100u16.to_be_bytes());
+        qinq[20..22].copy_from_slice(&0x0800u16.to_be_bytes());
+        assert!(is_ip_ethernet_frame(&qinq));
+
+        assert!(!is_ip_ethernet_frame(&[0u8; 10]));
     }
 
     #[cfg(feature = "json")]

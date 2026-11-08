@@ -336,7 +336,8 @@ error: live capture requires building with --features "pcap live"
 
 1. `devices()`（仅在 `--list-ifaces` 时）或直接 `LiveCapture::open(CaptureConfig)`。
 2. 循环调用 `next_frame()`：
-   - `Ok(Some(frame))`：`timestamp_ms = frame.timestamp_us / 1000`，调用 `Detector::process_packet(&frame.data, timestamp_ms)`；
+   - `Ok(Some(frame))`：先按 EtherType（含 VLAN/QinQ）判断是否为 IPv4/IPv6；非 IP 帧（ARP/LLDP 等）计为 UNKNOWN 后继续，不交给 `process_packet`；
+   - IP 帧：`timestamp_ms = frame.timestamp_us / 1000`，调用 `Detector::process_packet(&frame.data, timestamp_ms)`；
    - `Ok(None)`：检查 `--duration` 是否到期，继续；
    - `Err(e)`：打印错误并返回非零退出码。
 3. 每帧递增 `total_packets`；检测结果非空时更新 `detected_packets` 与协议计数。
