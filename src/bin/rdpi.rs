@@ -116,11 +116,24 @@ impl<'a> OutputSink<'a> {
         timestamp_us: u64,
         detection: Option<DetectionResult>,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let packet_no = self.total_packets + 1;
+        self.on_packet_numbered(packet_no, timestamp_us, detection)
+    }
+
+    /// 以抓包序号记录一个包。
+    ///
+    /// 多线程收集端按完成顺序到达，`packet_no` 由抓包线程按抓取顺序分配，
+    /// 因此可能乱序；`json` 收尾时按该序号重排恢复抓包顺序。
+    fn on_packet_numbered(
+        &mut self,
+        packet_no: u64,
+        timestamp_us: u64,
+        detection: Option<DetectionResult>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(not(feature = "json"))]
         let _ = timestamp_us;
 
         self.total_packets += 1;
-        let packet_no = self.total_packets;
 
         match detection {
             Some(detection) => {
@@ -185,19 +198,17 @@ impl<'a> OutputSink<'a> {
     }
 
     fn finish(
-        &self,
+        &mut self,
         elapsed: std::time::Duration,
-        detector: Option<&Detector>,
+        detectors: &[Detector],
     ) -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(not(feature = "json"))]
-        let _ = detector;
+        let _ = detectors;
 
         if self.output == "flows-jsonl" {
             #[cfg(feature = "json")]
-            if let Some(detector) = detector {
-                for flow in detector.normalized_flows() {
-                    println!("{}", serde_json::to_string(&flow)?);
-                }
+            for flow in merged_normalized_flows(detectors) {
+                println!("{}", serde_json::to_string(&flow)?);
             }
             return Ok(());
         }
@@ -206,6 +217,8 @@ impl<'a> OutputSink<'a> {
             "json" => {
                 #[cfg(feature = "json")]
                 {
+                    // 多线程下逐包记录按完成顺序入列；收尾按抓包序号恢复顺序。
+                    self.packet_records.sort_by_key(|record| record.packet_no);
                     let summary = Summary::build(
                         self.total_packets,
                         self.detected_packets,
@@ -257,6 +270,17 @@ impl<'a> OutputSink<'a> {
     }
 }
 
+/// 合并多个 worker 的归一化流并全局排序（`feature: json`）。
+#[cfg(feature = "json")]
+fn merged_normalized_flows(detectors: &[Detector]) -> Vec<rdpi::parity::NormalizedFlow> {
+    let mut flows = Vec::new();
+    for detector in detectors {
+        flows.extend(detector.normalized_flows());
+    }
+    rdpi::parity::sort_normalized_flows(&mut flows);
+    flows
+}
+
 fn run_file(path: &Path, output: &str, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let processor = PcapProcessor::new();
@@ -272,7 +296,7 @@ fn run_file(path: &Path, output: &str, verbose: bool) -> Result<(), Box<dyn std:
         }
     }
 
-    sink.finish(start.elapsed(), Some(iter.detector()))?;
+    sink.finish(start.elapsed(), std::slice::from_ref(iter.detector()))?;
     Ok(())
 }
 
@@ -387,7 +411,7 @@ fn run_live(
     if interrupt.is_requested() {
         eprintln!("interrupted");
     }
-    sink.finish(start.elapsed(), Some(&detector))?;
+    sink.finish(start.elapsed(), std::slice::from_ref(&detector))?;
     Ok(())
 }
 
@@ -771,6 +795,20 @@ mod tests {
         sink.on_packet(0, Some(DetectionResult::new(Protocol::Tcp)))
             .unwrap();
         sink.on_packet(0, None).unwrap();
+
+        assert_eq!(sink.total(), 2);
+        assert_eq!(sink.detected(), 1);
+        assert_eq!(sink.protocol_counts().get("Tcp"), Some(&1));
+    }
+
+    #[test]
+    fn numbered_packets_keep_capture_order_numbers() {
+        use rdpi::core::types::Protocol;
+
+        let mut sink = OutputSink::new("csv", false);
+        sink.on_packet_numbered(9, 0, Some(DetectionResult::new(Protocol::Tcp)))
+            .unwrap();
+        sink.on_packet_numbered(3, 0, None).unwrap();
 
         assert_eq!(sink.total(), 2);
         assert_eq!(sink.detected(), 1);
