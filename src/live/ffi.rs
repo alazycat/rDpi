@@ -291,6 +291,213 @@ pub(crate) fn errbuf_to_string(buf: &[c_char]) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
+/// 一次读取的结果。
+pub(crate) enum PollResult {
+    /// 读到一帧
+    Packet {
+        data: Vec<u8>,
+        timestamp_us: u64,
+        original_len: u32,
+    },
+    /// 读超时
+    Timeout,
+    /// savefile 读取结束（live capture 通常不会出现）
+    End,
+}
+
+/// pcap 抓包句柄 RAII 包装。
+pub(crate) struct CaptureHandle {
+    api: &'static PcapApi,
+    handle: *mut PcapT,
+    datalink: i32,
+    snaplen: i32,
+    backend_version: Option<String>,
+}
+
+impl CaptureHandle {
+    pub(crate) fn open(
+        device: &str,
+        snaplen: i32,
+        promisc: bool,
+        timeout_ms: i32,
+        filter: Option<&str>,
+    ) -> Result<Self, LiveError> {
+        let api = api()?;
+        let device_c =
+            CString::new(device).map_err(|_| LiveError::DeviceNotFound(device.to_string()))?;
+        let mut errbuf = [0 as c_char; PCAP_ERRBUF_SIZE];
+
+        // SAFETY: device_c 为有效 C 字符串；errbuf 大小符合 pcap.h。
+        let handle = unsafe {
+            (api.open_live)(
+                device_c.as_ptr(),
+                snaplen,
+                if promisc { 1 } else { 0 },
+                timeout_ms,
+                errbuf.as_mut_ptr(),
+            )
+        };
+        if handle.is_null() {
+            return Err(LiveError::OpenFailed {
+                device: device.to_string(),
+                message: errbuf_to_string(&errbuf),
+            });
+        }
+
+        let mut capture = Self {
+            api,
+            handle,
+            datalink: 0,
+            snaplen,
+            backend_version: None,
+        };
+
+        // SAFETY: handle 由 pcap_open_live 返回且非空。
+        capture.datalink = unsafe { (capture.api.datalink)(capture.handle) };
+        if capture.datalink != DLT_EN10MB {
+            return Err(LiveError::UnsupportedDatalink(capture.datalink));
+        }
+
+        capture.backend_version = capture
+            .api
+            .lib_version
+            .map(|version| unsafe { c_ptr_to_string(version()) }.unwrap_or_default());
+
+        if let Some(expression) = filter {
+            capture.apply_filter(expression)?;
+        }
+
+        Ok(capture)
+    }
+
+    pub(crate) fn datalink(&self) -> i32 {
+        self.datalink
+    }
+
+    pub(crate) fn backend_version(&self) -> Option<String> {
+        self.backend_version.clone()
+    }
+
+    fn apply_filter(&self, expression: &str) -> Result<(), LiveError> {
+        let expression_c = CString::new(expression).map_err(|_| LiveError::Filter {
+            expression: expression.to_string(),
+            message: "expression contains NUL".to_string(),
+        })?;
+        let mut program = BpfProgram {
+            bf_len: 0,
+            bf_insns: std::ptr::null_mut(),
+        };
+
+        // SAFETY: handle 有效；program 由 pcap_compile 初始化。
+        let rc = unsafe {
+            (self.api.compile)(
+                self.handle,
+                &mut program,
+                expression_c.as_ptr(),
+                1,
+                PCAP_NETMASK_UNKNOWN,
+            )
+        };
+        if rc != 0 {
+            return Err(LiveError::Filter {
+                expression: expression.to_string(),
+                message: self.last_error(),
+            });
+        }
+
+        let guard = BpfProgramGuard {
+            api: self.api,
+            program: &mut program as *mut BpfProgram,
+        };
+
+        // SAFETY: program 已由 pcap_compile 成功初始化。
+        let rc = unsafe { (self.api.setfilter)(self.handle, &mut program) };
+        if rc != 0 {
+            return Err(LiveError::Filter {
+                expression: expression.to_string(),
+                message: self.last_error(),
+            });
+        }
+
+        drop(guard);
+        Ok(())
+    }
+
+    pub(crate) fn poll(&mut self) -> Result<PollResult, LiveError> {
+        let mut header: *mut PcapPkthdr = std::ptr::null_mut();
+        let mut data: *const c_uchar = std::ptr::null();
+
+        // SAFETY: handle 有效；header/data 由 pcap 填写，只在下一次 poll 前有效。
+        let rc = unsafe { (self.api.next_ex)(self.handle, &mut header, &mut data) };
+
+        match rc {
+            1 => {
+                if header.is_null() || data.is_null() {
+                    return Err(LiveError::Capture(
+                        "pcap returned a null packet".to_string(),
+                    ));
+                }
+                // SAFETY: pcap_next_ex 返回 1 时 header 指向有效抓包头。
+                let header = unsafe { &*header };
+                let caplen = header.caplen as usize;
+                if caplen > self.snaplen.max(0) as usize {
+                    return Err(LiveError::Capture(format!(
+                        "captured length {caplen} exceeds snaplen {}",
+                        self.snaplen
+                    )));
+                }
+                // SAFETY: data 指向 caplen 字节的有效载荷。
+                let bytes = unsafe { std::slice::from_raw_parts(data, caplen) };
+                Ok(PollResult::Packet {
+                    data: bytes.to_vec(),
+                    timestamp_us: timeval_to_us(header.ts),
+                    original_len: header.len,
+                })
+            }
+            0 => Ok(PollResult::Timeout),
+            -2 => Ok(PollResult::End),
+            _ => Err(LiveError::Capture(self.last_error())),
+        }
+    }
+
+    fn last_error(&self) -> String {
+        // SAFETY: handle 有效；返回指针由 pcap 管理，立即复制。
+        let ptr = unsafe { (self.api.geterr)(self.handle) };
+        unsafe { c_ptr_to_string(ptr) }.unwrap_or_else(|| "unknown pcap error".to_string())
+    }
+}
+
+impl Drop for CaptureHandle {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            // SAFETY: handle 来自 pcap_open_live，且只关闭一次。
+            unsafe { (self.api.close)(self.handle) };
+        }
+    }
+}
+
+/// `pcap_compile` 产物的 RAII 释放器。
+struct BpfProgramGuard {
+    api: &'static PcapApi,
+    program: *mut BpfProgram,
+}
+
+impl Drop for BpfProgramGuard {
+    fn drop(&mut self) {
+        // SAFETY: program 已由 pcap_compile 初始化。
+        unsafe { (self.api.freecode)(self.program) };
+    }
+}
+
+/// `timeval` 转微秒；负值按 0 处理。
+fn timeval_to_us(ts: Timeval) -> u64 {
+    let seconds = ts.tv_sec.max(0) as u64;
+    let micros = ts.tv_usec.max(0) as u64;
+    seconds
+        .saturating_mul(1_000_000)
+        .saturating_add(micros.min(999_999))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

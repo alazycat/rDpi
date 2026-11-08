@@ -13,6 +13,101 @@ pub fn devices() -> Result<Vec<Device>, LiveError> {
     ffi::list_devices()
 }
 
+use ffi::{CaptureHandle, PollResult};
+
+/// 实时抓包迭代器。
+///
+/// 每个线程必须独立 `open`；该类型不是 `Send`/`Sync`。
+pub struct LiveCapture {
+    handle: CaptureHandle,
+}
+
+/// 内部读取结果：区分超时与结束，供 `Iterator` 跳过超时。
+enum PollOutcome {
+    Frame(CapturedFrame),
+    Timeout,
+    End,
+}
+
+impl LiveCapture {
+    /// 打开设备并应用 BPF 过滤器。
+    pub fn open(config: CaptureConfig) -> Result<Self, LiveError> {
+        if config.device.is_empty() {
+            return Err(LiveError::DeviceNotFound(String::new()));
+        }
+        if config.snaplen <= 0 {
+            return Err(LiveError::OpenFailed {
+                device: config.device,
+                message: "snaplen must be positive".to_string(),
+            });
+        }
+        if config.timeout_ms < 0 {
+            return Err(LiveError::OpenFailed {
+                device: config.device,
+                message: "timeout_ms must be non-negative".to_string(),
+            });
+        }
+
+        let handle = CaptureHandle::open(
+            &config.device,
+            config.snaplen,
+            config.promisc,
+            config.timeout_ms,
+            config.filter.as_deref(),
+        )?;
+        Ok(Self { handle })
+    }
+
+    /// 读取下一帧；`Ok(None)` 表示读超时（未捕获到包）或读取结束。
+    pub fn next_frame(&mut self) -> Result<Option<CapturedFrame>, LiveError> {
+        match self.poll_outcome()? {
+            PollOutcome::Frame(frame) => Ok(Some(frame)),
+            PollOutcome::Timeout | PollOutcome::End => Ok(None),
+        }
+    }
+
+    /// pcap 链路层类型（正常为 1 = DLT_EN10MB）。
+    pub fn datalink(&self) -> i32 {
+        self.handle.datalink()
+    }
+
+    /// 底层 pcap 版本字符串。
+    pub fn backend_version(&self) -> Option<String> {
+        self.handle.backend_version()
+    }
+
+    fn poll_outcome(&mut self) -> Result<PollOutcome, LiveError> {
+        match self.handle.poll()? {
+            PollResult::Packet {
+                data,
+                timestamp_us,
+                original_len,
+            } => Ok(PollOutcome::Frame(CapturedFrame {
+                data,
+                timestamp_us,
+                original_len,
+            })),
+            PollResult::Timeout => Ok(PollOutcome::Timeout),
+            PollResult::End => Ok(PollOutcome::End),
+        }
+    }
+}
+
+impl Iterator for LiveCapture {
+    type Item = Result<CapturedFrame, LiveError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            match self.poll_outcome() {
+                Ok(PollOutcome::Frame(frame)) => return Some(Ok(frame)),
+                Ok(PollOutcome::Timeout) => continue,
+                Ok(PollOutcome::End) => return None,
+                Err(error) => return Some(Err(error)),
+            }
+        }
+    }
+}
+
 /// 抓包配置。
 #[derive(Debug, Clone)]
 pub struct CaptureConfig {

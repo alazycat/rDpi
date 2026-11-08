@@ -916,7 +916,7 @@ impl CaptureHandle {
 
         let guard = BpfProgramGuard {
             api: self.api,
-            program: &mut program,
+            program: &mut program as *mut BpfProgram,
         };
 
         // SAFETY: program 已由 pcap_compile 成功初始化。
@@ -986,15 +986,15 @@ impl Drop for CaptureHandle {
 }
 
 /// `pcap_compile` 产物的 RAII 释放器。
-struct BpfProgramGuard<'a> {
+struct BpfProgramGuard {
     api: &'static PcapApi,
-    program: &'a mut BpfProgram,
+    program: *mut BpfProgram,
 }
 
-impl Drop for BpfProgramGuard<'_> {
+impl Drop for BpfProgramGuard {
     fn drop(&mut self) {
         // SAFETY: program 已由 pcap_compile 初始化。
-        unsafe { (self.api.freecode)(self.program as *mut BpfProgram) };
+        unsafe { (self.api.freecode)(self.program) };
     }
 }
 
