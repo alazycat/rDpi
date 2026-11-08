@@ -110,3 +110,14 @@ fn afp_dsi_split_across_segments_is_detected() {
     let frames = client_session(50040, 548, &[&payload[..8], &payload[8..]]);
     assert_eq!(detect(&frames), Some(rdpi::Protocol::Afp));
 }
+
+#[cfg(feature = "database")]
+#[test]
+fn drda_message_split_across_segments_is_detected() {
+    let payload = [
+        0x00, 0x10, 0xD0, 0x41, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00,
+    ];
+    let frames = client_session(50041, 50000, &[&payload[..8], &payload[8..]]);
+    assert_eq!(detect(&frames), Some(rdpi::Protocol::Drda));
+}
