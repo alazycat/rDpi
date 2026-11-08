@@ -343,6 +343,20 @@ fn test_database_protocol_classification_new() {
     assert_eq!(Protocol::Cassandra.breed(), ProtocolBreed::Acceptable);
 }
 
+#[cfg(feature = "storage")]
+#[test]
+fn test_afp_classification() {
+    assert_eq!(Protocol::Afp.category(), ProtocolCategory::FileTransfer);
+    assert_eq!(Protocol::Afp.breed(), ProtocolBreed::Acceptable);
+}
+
+#[cfg(feature = "database")]
+#[test]
+fn test_drda_classification() {
+    assert_eq!(Protocol::Drda.category(), ProtocolCategory::Database);
+    assert_eq!(Protocol::Drda.breed(), ProtocolBreed::Acceptable);
+}
+
 #[cfg(feature = "messaging")]
 #[test]
 fn test_messaging_protocol_classification_new() {

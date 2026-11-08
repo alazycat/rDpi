@@ -370,6 +370,12 @@ pub enum Protocol {
     /// Apache Cassandra CQL 协议（feature: database，F50）
     #[cfg(feature = "database")]
     Cassandra,
+    /// Apple Filing Protocol（feature: storage，F51）
+    #[cfg(feature = "storage")]
+    Afp,
+    /// DRDA（IBM DB2 分布式关系数据库架构，feature: database，F51）
+    #[cfg(feature = "database")]
+    Drda,
     /// Memcached 文本缓存协议（feature: database，F46）
     #[cfg(feature = "database")]
     Memcached,
@@ -430,7 +436,7 @@ pub enum Protocol {
     Ike,
     #[cfg(feature = "infra")]
     Ptpv2,
-    #[cfg(feature = "infra")]
+    #[cfg(feature = "storage")]
     Nfs,
     // Phase 12A — 企业协议
     // R7：misc feature —— Telnet/Vnc 纳入 feature 矩阵
@@ -573,6 +579,12 @@ pub enum Metadata {
     /// Cassandra 元数据 (feature: database, F50)
     #[cfg(feature = "database")]
     Cassandra(CassandraMetadata),
+    /// AFP DSI 元数据 (feature: storage, F51)
+    #[cfg(feature = "storage")]
+    Afp(AfpMetadata),
+    /// DRDA 元数据 (feature: database, F51)
+    #[cfg(feature = "database")]
+    Drda(DrdaMetadata),
     /// Memcached 元数据 (feature: database, F46)
     #[cfg(feature = "database")]
     Memcached(MemcachedMetadata),
@@ -1241,6 +1253,8 @@ impl Protocol {
             // F50 数据库协议
             #[cfg(feature = "database")]
             Protocol::Oracle | Protocol::Cassandra => ProtocolCategory::Database,
+            #[cfg(feature = "database")]
+            Protocol::Drda => ProtocolCategory::Database,
             #[cfg(feature = "messaging")]
             Protocol::Amqp => ProtocolCategory::Messaging,
             #[cfg(feature = "messaging")]
@@ -1256,6 +1270,8 @@ impl Protocol {
             Protocol::Ftp => ProtocolCategory::FileTransfer,
             #[cfg(feature = "smb")]
             Protocol::Smb1 | Protocol::Smb23 => ProtocolCategory::FileTransfer,
+            #[cfg(feature = "storage")]
+            Protocol::Afp => ProtocolCategory::FileTransfer,
 
             // VoIP
             #[cfg(feature = "proto3")]
@@ -1313,7 +1329,7 @@ impl Protocol {
             Protocol::Ike => ProtocolCategory::Tunnel,
             #[cfg(feature = "infra")]
             Protocol::Ptpv2 => ProtocolCategory::Infrastructure,
-            #[cfg(feature = "infra")]
+            #[cfg(feature = "storage")]
             Protocol::Nfs => ProtocolCategory::FileTransfer,
             // Other
             Protocol::Other(_) => ProtocolCategory::Other,
@@ -1354,6 +1370,10 @@ impl Protocol {
             Protocol::Mssql => ProtocolBreed::Acceptable,
             #[cfg(feature = "database")]
             Protocol::Oracle | Protocol::Cassandra => ProtocolBreed::Acceptable,
+            #[cfg(feature = "storage")]
+            Protocol::Afp => ProtocolBreed::Acceptable,
+            #[cfg(feature = "database")]
+            Protocol::Drda => ProtocolBreed::Acceptable,
             #[cfg(feature = "messaging")]
             Protocol::Amqp => ProtocolBreed::Acceptable,
             #[cfg(feature = "messaging")]
@@ -1403,9 +1423,9 @@ impl Protocol {
             #[cfg(feature = "proto3")]
             Protocol::Socks => ProtocolBreed::Unsafe,
             #[cfg(feature = "infra")]
-            Protocol::Netflow | Protocol::Ike | Protocol::Ptpv2 | Protocol::Nfs => {
-                ProtocolBreed::Safe
-            }
+            Protocol::Netflow | Protocol::Ike | Protocol::Ptpv2 => ProtocolBreed::Safe,
+            #[cfg(feature = "storage")]
+            Protocol::Nfs => ProtocolBreed::Safe,
             #[cfg(feature = "smb")]
             Protocol::NetBios | Protocol::Smb23 => ProtocolBreed::Acceptable,
             #[cfg(feature = "smb")]
@@ -1949,6 +1969,32 @@ pub struct CassandraMetadata {
     pub opcode: Option<u8>,
     /// STARTUP string map 中的 CQL_VERSION 值（如 "3.0.0"）
     pub cql_version: Option<String>,
+}
+
+/// AFP DSI 元数据 (feature: storage, F51)
+#[cfg(feature = "storage")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AfpMetadata {
+    /// DSI 标志（0=请求，1=响应）
+    pub flags: u8,
+    /// DSI 命令（1..=8）
+    pub command: u8,
+    /// 请求 ID
+    pub request_id: u16,
+    /// 声明数据长度（命中时载荷至少包含 16+length 字节）
+    pub length: u32,
+}
+
+/// DRDA 元数据 (feature: database, F51)
+#[cfg(feature = "database")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DrdaMetadata {
+    /// 本载荷中的 DRDA 消息数
+    pub message_count: u16,
+    /// 首条消息的总长度
+    pub message_length: u16,
 }
 
 /// AMQP 元数据 (feature: messaging, F46)
