@@ -393,6 +393,14 @@ pub fn register_defaults(_registry: &mut Registry) {
     openvpn::register(_registry);
     #[cfg(feature = "http")]
     http::register(_registry);
+    // F51：AFP 必须先于 DNS——header-only DSI（16 字节，flags=0/1、其余字段
+    // 为 0）会被 DNS detector 误判为 Dns（qd/an/ns/ar 均为 0，payload 尾部
+    // 多余 4 字节未被校验）。AFP 门仅 0/1 且要求 16 字节 DSI 结构
+    // （command 1..=8、reserved=0、长度下界）；真实 DNS 问题区从偏移 12
+    // 开始，非零 qname 字节使 reserved != 0，不会落入 AFP。其余 detector
+    // 相对顺序不变。
+    #[cfg(feature = "storage")]
+    afp::register(_registry);
     #[cfg(feature = "dns")]
     dns::register(_registry);
     // Phase 12A — 企业协议（低特异性）
