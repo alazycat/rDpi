@@ -15,6 +15,7 @@
 //! - `snmp` - SNMP v1/v2c protocol detection with full PDU parsing
 //! - `modbus` - Modbus TCP protocol detection with function code parsing
 //! - `database` - MySQL/PostgreSQL/Redis protocol detection with metadata extraction
+//! - `live` - live packet capture via dynamically loaded Npcap/libpcap
 //!
 //! # Example
 //!
@@ -52,6 +53,8 @@ mod error;
 pub mod application;
 pub mod asn1;
 pub mod core;
+#[cfg(feature = "live")]
+pub mod live;
 #[cfg(feature = "json")]
 pub mod parity;
 pub mod parser;
