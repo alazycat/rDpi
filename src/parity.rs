@@ -194,6 +194,14 @@ impl NormalizedFlow {
     }
 }
 
+/// 按“信息量优先 + 端点字典序”排序归一化流记录。
+///
+/// `Detector::normalized_flows` 与 CLI 多线程收尾共用该函数，保证单/多线程
+/// 导出顺序同构。
+pub fn sort_normalized_flows(flows: &mut [NormalizedFlow]) {
+    flows.sort_by(|a, b| a.export_sort_key().cmp(&b.export_sort_key()));
+}
+
 fn protocol_name(protocol: Protocol) -> String {
     match protocol {
         // 仅列出与 nDPI 5.0 名称差异超出大小写的协议
@@ -453,4 +461,52 @@ struct NdpiProtocolInfo {
 struct NdpiRiskInfo {
     #[serde(default)]
     risk: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn flow(src_ip: &str, src_port: u16, dst_ip: &str, dst_port: u16) -> NormalizedFlow {
+        NormalizedFlow {
+            src_ip: src_ip.to_string(),
+            dst_ip: dst_ip.to_string(),
+            src_port,
+            dst_port,
+            transport: "tcp".to_string(),
+            master_protocol: None,
+            app_protocol: None,
+            category: None,
+            breed: None,
+            confidence: None,
+            protocol_stack: Vec::new(),
+            risk_mask: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn sort_prefers_richer_records_then_endpoints() {
+        let mut rich = flow("10.0.0.9", 1, "10.0.0.10", 2);
+        rich.master_protocol = Some("Http".to_string());
+
+        let mut flows = vec![flow("10.0.0.1", 1, "10.0.0.2", 2), rich];
+        sort_normalized_flows(&mut flows);
+
+        assert_eq!(flows[0].master_protocol.as_deref(), Some("Http"));
+    }
+
+    #[test]
+    fn sort_orders_equal_richness_by_endpoint() {
+        let mut flows = vec![
+            flow("10.0.0.3", 1, "10.0.0.4", 2),
+            flow("10.0.0.1", 9, "10.0.0.2", 2),
+            flow("10.0.0.1", 5, "10.0.0.2", 2),
+        ];
+        sort_normalized_flows(&mut flows);
+
+        assert_eq!(flows[0].src_ip, "10.0.0.1");
+        assert_eq!(flows[0].src_port, 5);
+        assert_eq!(flows[1].src_port, 9);
+        assert_eq!(flows[2].src_ip, "10.0.0.3");
+    }
 }

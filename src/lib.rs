@@ -1853,7 +1853,7 @@ impl Detector {
             .iter()
             .map(|(_, flow)| parity::NormalizedFlow::from_flow(flow))
             .collect();
-        flows.sort_by(|a, b| a.export_sort_key().cmp(&b.export_sort_key()));
+        parity::sort_normalized_flows(&mut flows);
         flows
     }
 
