@@ -1,7 +1,7 @@
 # 实时抓包 v2 设计：多线程、优雅停机与链路层扩展
 
 > 生成时间：2026-11-08
-> 状态：设计已确认，待实施
+> 状态：已实施（F48，2026-11-08）
 > 前序切片：F47（[live-capture-design.md](live-capture-design.md)、[live-capture-plan.md](live-capture-plan.md)）
 > 关联文档：[ndpi-pure-rust-plan.md](ndpi-pure-rust-plan.md)（P4）、[risks.md](risks.md)
 

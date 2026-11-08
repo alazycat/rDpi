@@ -461,9 +461,9 @@ cargo run --features "pcap live" --bin rdpi -- -i <iface> -f "tcp port 443" --du
 
 ### 后续增量（不在本切片）
 
-1. 多线程：按 flow hash 分片，每线程独立 `LiveCapture` + `Detector`，统计聚合；CLI `-n`。
-2. 信号处理：Ctrl-C 优雅停止，打印汇总并输出 flows。
-3. 链路层扩展：DLT_LINUX_SLL/SLL2、DLT_RAW；`any` 设备支持。
+1. ~~多线程~~ 已由 [live-capture-v2-design.md](live-capture-v2-design.md) 兑现（F48：`-n`，单抓包线程 + flow-hash worker）。
+2. ~~信号处理~~ 已由 v2 兑现（首次 Ctrl-C 优雅停止，第二次强退 130）。
+3. ~~链路层扩展~~ 已由 v2 兑现（SLL/SLL2/RAW，Linux `any`；`Detector::process_ip_packet` L3 入口）。
 4. 零拷贝/缓冲复用 API；抓包缓冲区、immediate mode。
 5. 设备地址列表、友好名称解析（description → name）。
 6. ndpiReader 风格参数补齐：`-a`、`-B`、`-T/-U`、`--cfg` 等。

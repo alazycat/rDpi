@@ -1334,9 +1334,9 @@ Run: `cargo test --features "pcap json" --bin rdpi`
 
 Expected: 全部通过（`json` 模式下 `packet_records` 字段与排序逻辑可编译）。
 
-Run: `cargo test --features "pcap live json"`
+Run: `cargo test --features "pcap live json" --bin rdpi`
 
-Expected: 全部通过（flows-jsonl 合并路径可编译）。
+Expected: 全部通过（flows-jsonl 合并路径可编译；完整语料回归需 `--all-features`，在 Task 7 门禁覆盖）。
 
 - [ ] **Step 7: 提交**
 
@@ -1436,8 +1436,9 @@ impl FrameSource for LiveCapture {
 mod tests {
     use super::{FrameSource, flow_shard, run_source};
     use crate::OutputSink;
+    #[cfg(feature = "json")]
     use rdpi::Detector;
-    use rdpi::live::{CapturedFrame, InterruptFlag, LinkType, LiveError};
+    use rdpi::live::{CapturedFrame, InterruptFlag, LinkType, LiveCapture, LiveError};
 
     fn ipv4_udp(
         src: [u8; 4],
@@ -1702,6 +1703,7 @@ mod tests {
 const MAX_THREADS: usize = 64;
 
 #[cfg(feature = "live")]
+#[path = "rdpi/live_runner.rs"] // bin crate root 的子模块默认在 src/bin/ 下解析
 mod live_runner;
 ```
 
@@ -2275,6 +2277,8 @@ fn validate_file_options(
 ```
 
 - [ ] **Step 6: 用 live_runner 替换旧实时循环**
+
+把 `OutputSink::total` 的 cfg 从 `#[cfg(any(test, feature = "live"))]` 改为 `#[cfg(test)]`（实时循环移入 `live_runner` 后仅测试使用）。
 
 把 `src/bin/rdpi.rs` 中 `#[cfg(feature = "live")] fn run_live(...)` 的整个函数体替换为：
 

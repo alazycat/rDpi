@@ -363,6 +363,11 @@
   - 实时路径按 EtherType（含 VLAN/QinQ）跳过 ARP/LLDP 等非 IP 帧；
   - 实时帧经 `Detector::process_packet` 复用现有输出与 flows-jsonl；
   - `unsafe` 仅限 `src/live/ffi.rs`。
+- **P4 后续切片：Live capture v2（F48，2026-11-08）**
+  - `-n/--threads` 多线程检测：单抓包线程 + flow-hash 分片 worker，有界队列背压；`-n 1` 保持 F47 顺序；
+  - Ctrl-C 优雅停机：首次输出汇总并 exit 0，第二次强退 130；
+  - `LinkType` 支持 DLT_EN10MB/SLL/SLL2/RAW，Linux `any` 设备可用；新增 `Detector::process_ip_packet` L3 入口；
+  - `-n > 1` 时逐包行按完成顺序，`json` 的 packets 收尾按抓包序号重排，`flows-jsonl` 跨 worker 全局确定性排序。
 
 ### 待办
 

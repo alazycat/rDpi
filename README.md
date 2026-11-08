@@ -94,6 +94,8 @@ rdpi = { version = "0.4.2", default-features = false, features = ["http", "tls",
 ```bash
 cargo run --features "pcap live" --bin rdpi -- --list-ifaces
 cargo run --features "pcap live" --bin rdpi -- -i <iface> -f "tcp port 443" --duration 10
+cargo run --features "pcap live" --bin rdpi -- -i <iface> -n 4 --duration 10
+cargo run --features "pcap live" --bin rdpi -- -i any --count 200 -o text   # Linux/WSL
 ```
 
 依赖与权限：
@@ -101,8 +103,10 @@ cargo run --features "pcap live" --bin rdpi -- -i <iface> -f "tcp port 443" --du
 - Windows：安装 [Npcap](https://npcap.com/) 运行时；若安装时限制管理员访问驱动，请在管理员终端运行。
 - Linux：安装 libpcap 运行时，抓包需要 root 或 `CAP_NET_RAW`。
 - macOS：使用系统自带 libpcap。
-- 仅支持以太网链路层（DLT_EN10MB）；Linux `any` 接口返回 SLL，不在支持范围，请改用具体网卡。
-- 实时链路中的 ARP/LLDP 等非 IP 帧计为未识别包并跳过，不影响后续抓包。
+- 支持以太网（DLT_EN10MB）、Linux SLL/SLL2（`-i any`）与 RAW IPv4/IPv6 链路层；非 IP 帧计为未识别包并跳过。
+- Windows Npcap 的 `Loopback` 适配器使用 DLT_NULL(0)，不在支持范围；请使用具体网卡。
+- `-n/--threads <N>` 启用 N 个检测 worker（默认 1，范围 1..=64）。`-n 1` 输出顺序与单线程一致；`-n > 1` 时逐包行按完成顺序可能乱序，汇总与 `flows-jsonl` 保持确定性。
+- 运行中第一次 Ctrl-C 优雅停止并输出汇总（退出码 0）；第二次 Ctrl-C 立即退出（退出码 130）。
 
 ## 支持的协议
 

@@ -473,3 +473,15 @@
 - **连带修复**：`parity.rs` 的 `smb_app_name`/`smb_master_name`/`ndpi_compat_risk_name` 补齐 feature gate——此前 `json` 开启而 `smb`/`risk` 关闭时无法编译/产生 dead_code；`tests/test_integration.rs` 的 Registry detector 计数同步 database +2 / messaging +1。
 - **测试**：全部门禁绿——fmt ✓、clippy `--all-features --all-targets` -D warnings 0 警告、**默认 389 / database+messaging 491 / all-features 1395（10 ignored）**。
 - **已知边界**：① Memcached 签名必须位于载荷起始，跨段命令不重组；② 不支持二进制协议/meta 命令；③ HTTP-ES 仅响应先到；④ AMQP 1.0 仅协议头；⑤ AMQP 多帧载荷只看首帧；⑥ 0-9-1 帧检测为与 nDPI 相同的启发式，不保证完整帧合法。
+
+## F48【中】Live capture v2：多线程、Ctrl-C 与链路层扩展（2026-11-08，新功能开发）—— ✅ 已完成
+
+- **背景**：兑现 F47 登记的三项后续增量（`docs/architecture/live-capture-v2-design.md`、`docs/architecture/live-capture-v2-plan.md`）。
+- **实现**：
+  - **多线程**（`src/bin/rdpi/live_runner.rs`）：单抓包线程 + N worker（`-n/--threads`，默认 1，1..=64）；方向无关 FNV-1a 规范五元组分片（`flow_shard`，IPv4/IPv6、TCP/UDP 端口、非 IP 返回 None）；`SyncSender` 有界队列 1024/worker 提供背压；非 IP 帧由抓包线程直接发 `LiveEvent::Packet{detection:None}`。
+  - **输出确定性**：`OutputSink::on_packet_numbered` 保留抓包序号；`json` 的 `packets` 收尾按 `packet_no` 排序；`flows-jsonl` 合并各 worker 的 `normalized_flows()` 后调用 `parity::sort_normalized_flows` 全局排序；汇总计数天然合并。
+  - **Ctrl-C**（`src/live/signal.rs`，`ctrlc = "3"` 仅 live feature）：首次置位并优雅停止（排空队列、输出汇总、exit 0），第二次 `process::exit(130)`；安装失败打印 warning 并降级。
+  - **链路层**（`src/live/link.rs`）：`LinkType{Ethernet,LinuxSll,LinuxSll2,RawIp}` + `l3_payload`（SLL 16B/协议 @14、SLL2 20B/协议 @0、RAW 首半字节 4/6；VLAN/QinQ 栈上限 4）；`LiveCapture::open` 接受对应 DLT，`link_type()` 暴露类型；`Detector::process_ip_packet` 为 L3 入口（与 `process_packet` 共用流表主体）；`CaptureHandle: Send`（非 Sync）。
+  - **CLI**：`-n` 参数与文件模式校验；单线程路径改用 `LinkType`，删除 `is_ip_ethernet_frame`。
+- **测试**：`src/live/link.rs` 链路层单测、`src/parity.rs` 排序单测、`src/bin/rdpi/live_runner.rs` `flow_shard`/合成帧 `-n 2` 管线单测、`tests/test_process_ip_packet.rs` 入口一致性用例；全部门禁（fmt/test/all-features/live/clippy/build）绿。
+- **已知边界**：① 单抓包线程是吞吐上限，PF_RING/DPDK/fanout 不做；② `-n > 1` 时 text/jsonl 逐包行按完成顺序可能乱序；③ 每 worker 流表默认 10000 条，总量约 10000×N；④ FNV 分片极端流量可能倾斜，无动态再平衡；⑤ `ctrlc` 只处理 SIGINT（Unix 不处理 SIGTERM）；⑥ IPv6 扩展头场景仅按地址与 Next Header 分片，方向扩展链不对称时可能跨 worker；⑦ IPv4 非首片分片无端口，与首片可能落不同 worker；⑧ RAW 仅支持值 12/228/229，OpenBSD DLT_RAW 差异不覆盖；⑨ 非 IP 帧计入 `--count` 与总包数；⑩ Windows Npcap `Loopback` 适配器为 DLT_NULL(0)，不支持（Windows 侧请用具体网卡）。
