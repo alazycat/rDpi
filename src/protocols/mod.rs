@@ -37,6 +37,8 @@ pub mod mongodb;
 #[cfg(feature = "iot")]
 pub mod mqtt;
 #[cfg(feature = "database")]
+pub mod mssql;
+#[cfg(feature = "database")]
 pub mod mysql;
 #[cfg(feature = "infra")]
 pub mod ntp;
@@ -339,6 +341,8 @@ pub fn register_defaults(_registry: &mut Registry) {
     postgresql::register(_registry);
     #[cfg(feature = "database")]
     redis::register(_registry);
+    #[cfg(feature = "database")]
+    mssql::register(_registry);
     #[cfg(feature = "database")]
     elasticsearch::register(_registry);
     #[cfg(feature = "database")]
