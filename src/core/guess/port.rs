@@ -90,13 +90,19 @@ mod tests {
     fn test_mssql_ports() {
         assert_eq!(match_port(1433).unwrap().protocol, Protocol::Mssql);
         assert_eq!(match_port(1434).unwrap().protocol, Protocol::Mssql);
-        assert_eq!(match_port(1433).unwrap().confidence, Confidence::MatchByPort);
+        assert_eq!(
+            match_port(1433).unwrap().confidence,
+            Confidence::MatchByPort
+        );
     }
 
     #[cfg(feature = "messaging")]
     #[test]
     fn test_kafka_port() {
         assert_eq!(match_port(9092).unwrap().protocol, Protocol::Kafka);
-        assert_eq!(match_port(9092).unwrap().confidence, Confidence::MatchByPort);
+        assert_eq!(
+            match_port(9092).unwrap().confidence,
+            Confidence::MatchByPort
+        );
     }
 }
