@@ -6,8 +6,10 @@
 
 mod ffi;
 mod link;
+mod signal;
 
 pub use link::LinkType;
+pub use signal::InterruptFlag;
 
 /// 列出所有可抓包设备。
 ///
@@ -232,6 +234,10 @@ pub enum LiveError {
          DLT_LINUX_SLL2=276, DLT_RAW=12, DLT_IPV4=228, DLT_IPV6=229"
     )]
     UnsupportedDatalink(i32),
+
+    /// Ctrl-C 处理器安装失败
+    #[error("failed to install Ctrl-C handler: {0}")]
+    Signal(String),
 
     /// 读取过程中的其他 pcap 错误
     #[error("capture error: {0}")]

@@ -70,6 +70,12 @@ fn open_unknown_device_reports_failure() {
 }
 
 #[test]
+fn signal_error_mentions_ctrl_c() {
+    let error = LiveError::Signal("already installed".to_string());
+    assert!(error.to_string().contains("Ctrl-C"));
+}
+
+#[test]
 fn invalid_bpf_is_reported_when_backend_available() {
     let Ok(devices) = rdpi::live::devices() else {
         return;

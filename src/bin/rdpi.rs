@@ -340,12 +340,22 @@ fn run_live(
 
     let mut capture = LiveCapture::open(config)?;
     let link_type = capture.link_type();
+    let interrupt = match rdpi::live::InterruptFlag::install() {
+        Ok(flag) => flag,
+        Err(error) => {
+            eprintln!("warning: failed to install Ctrl-C handler: {error}");
+            rdpi::live::InterruptFlag::default()
+        }
+    };
     let mut detector = Detector::new();
     let mut sink = OutputSink::new(output, verbose);
     let start = Instant::now();
     let duration = duration.map(std::time::Duration::from_secs);
 
     loop {
+        if interrupt.is_requested() {
+            break;
+        }
         if let Some(limit) = count
             && sink.total() >= limit
         {
@@ -374,6 +384,9 @@ fn run_live(
         sink.on_packet(frame.timestamp_us, detection)?;
     }
 
+    if interrupt.is_requested() {
+        eprintln!("interrupted");
+    }
     sink.finish(start.elapsed(), Some(&detector))?;
     Ok(())
 }

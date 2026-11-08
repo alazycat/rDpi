@@ -18,6 +18,7 @@ clap = { version = "4.5", features = ["derive"] }
 sha2 = "0.10"
 hex = "0.4"
 libloading = { version = "0.8", optional = true }
+ctrlc = { version = "3", optional = true }
 
 [features]
 default = ["dns", "http", "tls"]
@@ -47,7 +48,7 @@ risk = ["serde", "serde_json"]
 storage = []   # NFS
 smb = []       # SMBv1/v2/v3 + NetBIOS
 misc = []      # TFTP, Rsync, Whois, Syslog, Telnet, VNC（R7：纳入 feature 矩阵）
-live = ["dep:libloading"]  # 实时抓包适配层（动态加载 Npcap/libpcap）
+live = ["dep:libloading", "dep:ctrlc"]  # 实时抓包适配层（Npcap/libpcap + Ctrl-C）
 
 [dev-dependencies]
 pcap-file = "2.0"
