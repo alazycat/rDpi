@@ -22,6 +22,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
+/// 实时抓包 worker 线程数上限。
+const MAX_THREADS: usize = 64;
+
+#[cfg(feature = "live")]
+#[path = "rdpi/live_runner.rs"]
+mod live_runner;
+
 /// rDpi — Rust Deep Packet Inspection CLI
 #[derive(Parser)]
 #[command(
@@ -60,6 +67,10 @@ struct Cli {
     #[arg(long = "duration", value_name = "SECS")]
     duration: Option<u64>,
 
+    /// 实时抓包 worker 线程数（默认 1，范围 1..=64）
+    #[arg(short = 'n', long = "threads", value_name = "N", default_value_t = 1)]
+    threads: usize,
+
     /// 输出格式（text / json / jsonl / csv / flows-jsonl）
     #[arg(short = 'o', long = "output", default_value = "text")]
     output: String,
@@ -96,7 +107,7 @@ impl<'a> OutputSink<'a> {
         }
     }
 
-    #[cfg(any(test, feature = "live"))]
+    #[cfg(test)]
     fn total(&self) -> u64 {
         self.total_packets
     }
@@ -329,10 +340,18 @@ fn resolve_source(
     }
 }
 
+fn validate_threads(threads: usize) -> Result<(), String> {
+    if !(1..=MAX_THREADS).contains(&threads) {
+        return Err(format!("--threads must be between 1 and {MAX_THREADS}"));
+    }
+    Ok(())
+}
+
 fn validate_file_options(
     filter: Option<&str>,
     count: Option<u64>,
     duration: Option<u64>,
+    threads: usize,
 ) -> Result<(), String> {
     if filter.is_some() {
         return Err("--filter requires a live capture interface".to_string());
@@ -342,6 +361,9 @@ fn validate_file_options(
     }
     if duration.is_some() {
         return Err("--duration requires a live capture interface".to_string());
+    }
+    if threads != 1 {
+        return Err("--threads requires a live capture interface".to_string());
     }
     Ok(())
 }
@@ -354,65 +376,9 @@ fn run_live(
     duration: Option<u64>,
     output: &str,
     verbose: bool,
+    threads: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use rdpi::live::{CaptureConfig, LinkType, LiveCapture};
-
-    let mut config = CaptureConfig::new(device);
-    if let Some(filter) = filter {
-        config = config.filter(filter);
-    }
-
-    let mut capture = LiveCapture::open(config)?;
-    let link_type = capture.link_type();
-    let interrupt = match rdpi::live::InterruptFlag::install() {
-        Ok(flag) => flag,
-        Err(error) => {
-            eprintln!("warning: failed to install Ctrl-C handler: {error}");
-            rdpi::live::InterruptFlag::default()
-        }
-    };
-    let mut detector = Detector::new();
-    let mut sink = OutputSink::new(output, verbose);
-    let start = Instant::now();
-    let duration = duration.map(std::time::Duration::from_secs);
-
-    loop {
-        if interrupt.is_requested() {
-            break;
-        }
-        if let Some(limit) = count
-            && sink.total() >= limit
-        {
-            break;
-        }
-        if let Some(limit) = duration
-            && start.elapsed() >= limit
-        {
-            break;
-        }
-
-        let Some(frame) = capture.next_frame()? else {
-            continue;
-        };
-        let Some(l3) = link_type.l3_payload(&frame.data) else {
-            // ARP/LLDP 等非 IP 帧计为未识别包，继续抓取。
-            sink.on_packet(frame.timestamp_us, None)?;
-            continue;
-        };
-        let detection = match link_type {
-            LinkType::Ethernet => {
-                detector.process_packet(&frame.data, frame.timestamp_us / 1000)?
-            }
-            _ => detector.process_ip_packet(l3, frame.timestamp_us / 1000)?,
-        };
-        sink.on_packet(frame.timestamp_us, detection)?;
-    }
-
-    if interrupt.is_requested() {
-        eprintln!("interrupted");
-    }
-    sink.finish(start.elapsed(), std::slice::from_ref(&detector))?;
-    Ok(())
+    live_runner::run_live(device, filter, count, duration, output, verbose, threads)
 }
 
 #[cfg(not(feature = "live"))]
@@ -423,6 +389,7 @@ fn run_live(
     _duration: Option<u64>,
     _output: &str,
     _verbose: bool,
+    _threads: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("error: live capture requires building with --features \"pcap live\"");
     std::process::exit(2);
@@ -480,6 +447,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(2);
     }
 
+    if let Err(message) = validate_threads(cli.threads) {
+        eprintln!("error: {message}");
+        std::process::exit(2);
+    }
+
     let source = match resolve_source(cli.input.as_deref(), cli.iface.as_deref(), cli.list_ifaces) {
         Ok(source) => source,
         Err(message) => {
@@ -497,10 +469,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             cli.duration,
             &cli.output,
             cli.verbose,
+            cli.threads,
         ),
         Source::File(path) => {
             if let Err(message) =
-                validate_file_options(cli.filter.as_deref(), cli.count, cli.duration)
+                validate_file_options(cli.filter.as_deref(), cli.count, cli.duration, cli.threads)
             {
                 eprintln!("error: {message}");
                 std::process::exit(2);
@@ -802,6 +775,14 @@ mod tests {
     }
 
     #[test]
+    fn thread_bounds_are_validated() {
+        assert!(validate_threads(1).is_ok());
+        assert!(validate_threads(MAX_THREADS).is_ok());
+        assert!(validate_threads(0).is_err());
+        assert!(validate_threads(MAX_THREADS + 1).is_err());
+    }
+
+    #[test]
     fn numbered_packets_keep_capture_order_numbers() {
         use rdpi::core::types::Protocol;
 
@@ -849,10 +830,11 @@ mod tests {
 
     #[test]
     fn file_mode_rejects_live_options() {
-        assert!(validate_file_options(Some("tcp"), None, None).is_err());
-        assert!(validate_file_options(None, Some(1), None).is_err());
-        assert!(validate_file_options(None, None, Some(1)).is_err());
-        assert!(validate_file_options(None, None, None).is_ok());
+        assert!(validate_file_options(Some("tcp"), None, None, 1).is_err());
+        assert!(validate_file_options(None, Some(1), None, 1).is_err());
+        assert!(validate_file_options(None, None, Some(1), 1).is_err());
+        assert!(validate_file_options(None, None, None, 2).is_err());
+        assert!(validate_file_options(None, None, None, 1).is_ok());
     }
 
     #[cfg(feature = "json")]

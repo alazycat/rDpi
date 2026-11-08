@@ -22,7 +22,8 @@ use ffi::{CaptureHandle, PollResult};
 
 /// 实时抓包迭代器。
 ///
-/// 每个线程必须独立 `open`；该类型不是 `Send`/`Sync`。
+/// 每个线程必须独立 `open`；该类型不是 `Sync`，但可通过所有权移动到
+/// 其他线程（`Send`）。
 pub struct LiveCapture {
     handle: CaptureHandle,
 }

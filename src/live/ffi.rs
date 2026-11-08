@@ -318,6 +318,11 @@ pub(crate) struct CaptureHandle {
     backend_version: Option<String>,
 }
 
+// SAFETY: `pcap_t` 只由持有本结构体的线程访问；`open`/`poll`/`Drop` 不做跨线程
+// 并发调用。实现 `Send` 以允许 `LiveCapture` 随所有权移动到抓包线程；
+// 不实现 `Sync`，引用不得跨线程共享。
+unsafe impl Send for CaptureHandle {}
+
 impl CaptureHandle {
     pub(crate) fn open(
         device: &str,
