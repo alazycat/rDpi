@@ -78,6 +78,7 @@ DLT 解析规则：
 - 以太网与 SLL/SLL2 仅在协议字段为 `0x0800`/`0x86dd` 时返回 `Some`；ARP、LLDP、未知协议均返回 `None`。RAW 仅按首半字节判定。
 - `LiveCapture::open` 接受上述 DLT；其他 DLT 返回 `LiveError::UnsupportedDatalink`，错误文本列出支持项。
 - `LiveCapture::datalink() -> i32` 保留；新增 `LiveCapture::link_type() -> LinkType`。
+- `CaptureHandle` 增加 `unsafe impl Send`（不实现 `Sync`）：pcap 句柄只由一个线程持有，但需要随所有权移入抓包线程；`unsafe` 仍仅限 `src/live/ffi.rs`。`LiveCapture` 的 rustdoc 从“不是 Send/Sync”改为“不是 Sync，可通过所有权移动跨线程”。
 
 ### 2.2 `live::InterruptFlag`
 
