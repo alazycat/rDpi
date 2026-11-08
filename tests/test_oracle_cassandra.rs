@@ -125,7 +125,9 @@ fn cql_startup(cql_version: &str) -> Vec<u8> {
 #[test]
 fn cassandra_startup_split_across_segments_is_detected() {
     let payload = cql_startup("3.0.0");
-    let split = payload.len() / 2;
+    // 在 CQL 9 字节请求头与 body 之间切分：首段 9 字节低于 DHCPv6 的
+    // 长度下界（type 1..=11 要求 >= 10），避免前缀被低特异性 detector 抢先。
+    let split = 9;
     let frames = client_session(50031, 9042, &[&payload[..split], &payload[split..]]);
     assert_eq!(detect(&frames), Some(Protocol::Cassandra));
 }

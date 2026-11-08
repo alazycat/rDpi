@@ -598,10 +598,9 @@ fn print_detection(pkt_num: u64, det: &DetectionResult) {
             k.api_key, k.api_version, k.client_id
         )),
         #[cfg(feature = "database")]
-        rdpi::Metadata::Oracle(o) => Some(format!(
-            "length={} type={}",
-            o.packet_length, o.packet_type
-        )),
+        rdpi::Metadata::Oracle(o) => {
+            Some(format!("length={} type={}", o.packet_length, o.packet_type))
+        }
         #[cfg(feature = "database")]
         rdpi::Metadata::Cassandra(c) => Some(match c.source {
             rdpi::CassandraSource::Internode => "source=internode".to_string(),

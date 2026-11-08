@@ -8,6 +8,8 @@ use crate::core::types::*;
 pub mod amqp;
 #[cfg(feature = "infra")]
 pub mod bgp;
+#[cfg(feature = "database")]
+pub mod cassandra;
 #[cfg(feature = "infra")]
 pub mod dhcp;
 #[cfg(feature = "dns")]
@@ -41,15 +43,13 @@ pub mod mqtt;
 #[cfg(feature = "database")]
 pub mod mssql;
 #[cfg(feature = "database")]
-pub mod oracle;
-#[cfg(feature = "database")]
-pub mod cassandra;
-#[cfg(feature = "database")]
 pub mod mysql;
 #[cfg(feature = "infra")]
 pub mod ntp;
 #[cfg(feature = "vpn")]
 pub mod openvpn;
+#[cfg(feature = "database")]
+pub mod oracle;
 #[cfg(feature = "mail")]
 pub mod pop3;
 #[cfg(feature = "database")]
