@@ -14,10 +14,10 @@ pub mod bgp;
 pub mod cassandra;
 #[cfg(feature = "infra")]
 pub mod dhcp;
-#[cfg(feature = "database")]
-pub mod drda;
 #[cfg(feature = "dns")]
 pub mod dns;
+#[cfg(feature = "database")]
+pub mod drda;
 #[cfg(feature = "dtls")]
 pub mod dtls;
 #[cfg(feature = "database")]
