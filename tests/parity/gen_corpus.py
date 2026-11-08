@@ -544,6 +544,24 @@ def build_cassandra_startup():
     return tcp_session(CLIENT, SERVER, 50022, 9042, [("c", cql_startup_frame())])
 
 
+def afp_dsi(flags, command, request_id):
+    """构造 AFP DSI 报文头（16 字节，无 body）。"""
+    return struct.pack(">BBHIII", flags, command, request_id, 0, 0, 0)
+
+
+def build_afp_dsi():
+    """AFP DSI（TCP 548）：请求 flags=0，响应 flags=1。"""
+    request = afp_dsi(0, 1, 1)
+    response = afp_dsi(1, 1, 1)
+    return tcp_session(CLIENT, SERVER, 50023, 548, [("c", request), ("s", response)])
+
+
+def build_drda_message():
+    """DRDA 单消息（TCP 50000）：length=16, magic=0xD0, length2=10。"""
+    message = struct.pack(">HBBHHH", 16, 0xD0, 0x41, 0, 10, 0) + bytes(6)
+    return tcp_session(CLIENT, SERVER, 50024, 50000, [("c", message)])
+
+
 def dhcp_message(opcode, yiaddr, option, server_id=None):
     packet = bytearray(236)
     packet[0] = opcode
@@ -875,6 +893,9 @@ CORPUS = {
     "oracle_connect": build_oracle_connect,
     "cassandra_internode": build_cassandra_internode,
     "cassandra_startup": build_cassandra_startup,
+    # F51：AFP DSI 与 DRDA 单消息
+    "afp_dsi": build_afp_dsi,
+    "drda_message": build_drda_message,
     "dhcp_discover": build_dhcp,
     "ntp_request": build_ntp,
     "snmp_get": build_snmp,
