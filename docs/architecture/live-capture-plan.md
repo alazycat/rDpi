@@ -1863,7 +1863,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut detector = Detector::new();
     for frame in capture.take(count) {
         let frame = frame?;
-        if let Some(result) = detector.process_packet(&frame.data, frame.timestamp_us / 1000)? {
+        // 实时链路会混有 ARP/LLDP 等非 IP 帧；解析失败时跳过。
+        let Ok(detection) = detector.process_packet(&frame.data, frame.timestamp_us / 1000)
+        else {
+            continue;
+        };
+        if let Some(result) = detection {
             println!(
                 "{} bytes -> {:?} [{:?}]",
                 frame.original_len, result.protocol, result.confidence

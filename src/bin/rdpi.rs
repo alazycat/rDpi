@@ -257,11 +257,7 @@ impl<'a> OutputSink<'a> {
     }
 }
 
-fn run_file(
-    path: &Path,
-    output: &str,
-    verbose: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn run_file(path: &Path, output: &str, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let processor = PcapProcessor::new();
     let mut iter = processor.process_file(path)?;
@@ -471,11 +467,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(2);
     }
 
-    let source = match resolve_source(
-        cli.input.as_deref(),
-        cli.iface.as_deref(),
-        cli.list_ifaces,
-    ) {
+    let source = match resolve_source(cli.input.as_deref(), cli.iface.as_deref(), cli.list_ifaces) {
         Ok(source) => source,
         Err(message) => {
             eprintln!("error: {message}");

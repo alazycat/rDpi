@@ -75,6 +75,7 @@ fn main() -> rdpi::error::Result<()> {
 | `storage` | ❌ | NFS 协议检测 |
 | `misc` | ❌ | TFTP/RSYNC/Whois/Syslog/Telnet/VNC 协议检测 |
 | `pcap` | ❌ | pcap 文件读取 CLI |
+| `live` | ❌ | 实时抓包适配层（动态加载 Npcap/libpcap；配合 `pcap` 构建 CLI） |
 | `rule` | ❌ | 自定义规则引擎（JSON 规则加载） |
 | `json` | ❌ | CLI/库 JSON 序列化输出（`-o json` 单文档 / `-o jsonl` JSON Lines） |
 | `risk` | ❌ | 风险分析引擎（TLS/DNS/HTTP/行为/证书风险） |
@@ -85,6 +86,23 @@ fn main() -> rdpi::error::Result<()> {
 [dependencies]
 rdpi = { version = "0.4.2", default-features = false, features = ["http", "tls", "ssh"] }
 ```
+
+## 实时抓包
+
+实时抓包需要同时启用 `pcap` 与 `live`：
+
+```bash
+cargo run --features "pcap live" --bin rdpi -- --list-ifaces
+cargo run --features "pcap live" --bin rdpi -- -i <iface> -f "tcp port 443" --duration 10
+```
+
+依赖与权限：
+
+- Windows：安装 [Npcap](https://npcap.com/) 运行时；若安装时限制管理员访问驱动，请在管理员终端运行。
+- Linux：安装 libpcap 运行时，抓包需要 root 或 `CAP_NET_RAW`。
+- macOS：使用系统自带 libpcap。
+- 仅支持以太网链路层（DLT_EN10MB）；Linux `any` 接口返回 SLL，不在支持范围，请改用具体网卡。
+- 实时链路中的 ARP/LLDP 等非 IP 帧计为未识别包并跳过，不影响后续抓包。
 
 ## 支持的协议
 

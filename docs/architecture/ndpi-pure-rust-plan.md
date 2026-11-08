@@ -356,6 +356,13 @@
   - MySQL 检测支持真实 4 字节包头（3 字节长度 + 1 字节序号），并校验长度字段；修复合成语料中 MySQL 被 NTP 抢先误判；
   - `tests/test_pcap_bidirectional.rs`：双向聚合、pcap 入口有状态 DNS-over-TCP、giveup 猜测回退、SSH 跨段/行中断分片、续段非独立负载 6 个用例。
 - **验证**：`tests/test_p1_flow.rs` 20 个用例、`tests/test_p1_entry_features.rs` 7 个用例、`tests/test_parser.rs` 9 个用例、`tests/test_pcap_bidirectional.rs` 6 个用例；`cargo test` 与 `cargo test --all-features` 全绿；clippy 0 警告。
+- **P4 首个切片：Live capture（F47，2026-11-08）**
+  - `live` feature + `rdpi::live`：运行时动态加载 Npcap/libpcap（`libloading`，无编译期 C 依赖）；
+  - `devices()` / `CaptureConfig` / `LiveCapture` / `CapturedFrame` / `LiveError`；仅 DLT_EN10MB；
+  - CLI `-i` 自动区分 pcap 文件与网卡、`--iface`、`--list-ifaces`、`-f`、`--count`、`--duration`；
+  - 实时路径按 EtherType（含 VLAN/QinQ）跳过 ARP/LLDP 等非 IP 帧；
+  - 实时帧经 `Detector::process_packet` 复用现有输出与 flows-jsonl；
+  - `unsafe` 仅限 `src/live/ffi.rs`。
 
 ### 待办
 

@@ -25,7 +25,10 @@ pub(crate) struct PcapT {
 }
 
 /// Windows 的 long 为 32 位；32 位 Unix 的 time_t/suseconds_t 为 32 位
-#[cfg(any(windows, all(unix, not(target_os = "macos"), target_pointer_width = "32")))]
+#[cfg(any(
+    windows,
+    all(unix, not(target_os = "macos"), target_pointer_width = "32")
+))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Timeval {
@@ -276,9 +279,11 @@ pub(crate) unsafe fn c_ptr_to_string(ptr: *const c_char) -> Option<String> {
         return None;
     }
     // SAFETY: 调用方保证 ptr 指向以 NUL 结尾的有效 C 字符串。
-    Some(unsafe { std::ffi::CStr::from_ptr(ptr) }
-        .to_string_lossy()
-        .into_owned())
+    Some(
+        unsafe { std::ffi::CStr::from_ptr(ptr) }
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 /// 把 pcap 错误缓冲区复制为 `String`。
