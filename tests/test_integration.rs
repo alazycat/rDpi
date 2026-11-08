@@ -209,7 +209,7 @@ fn test_registry_default_detector_count() {
         }
         #[cfg(feature = "messaging")]
         {
-            count += 1; // AMQP（F46）
+            count += 2; // AMQP（F46）+ Kafka（F49）
         }
         #[cfg(feature = "proto3")]
         {

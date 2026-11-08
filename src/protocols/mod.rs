@@ -24,6 +24,8 @@ pub mod http;
 pub mod http2;
 #[cfg(feature = "mail")]
 pub mod imap;
+#[cfg(feature = "messaging")]
+pub mod kafka;
 #[cfg(feature = "auth")]
 pub mod kerberos;
 #[cfg(feature = "auth")]
@@ -349,6 +351,8 @@ pub fn register_defaults(_registry: &mut Registry) {
     memcached::register(_registry);
     #[cfg(feature = "messaging")]
     amqp::register(_registry);
+    #[cfg(feature = "messaging")]
+    kafka::register(_registry);
     #[cfg(feature = "smtp")]
     smtp::register(_registry);
     #[cfg(feature = "mail")]
