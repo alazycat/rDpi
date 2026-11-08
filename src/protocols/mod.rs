@@ -348,6 +348,8 @@ pub fn register_defaults(_registry: &mut Registry) {
     #[cfg(feature = "database")]
     mssql::register(_registry);
     #[cfg(feature = "database")]
+    oracle::register(_registry);
+    #[cfg(feature = "database")]
     elasticsearch::register(_registry);
     #[cfg(feature = "database")]
     memcached::register(_registry);
