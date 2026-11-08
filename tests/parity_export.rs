@@ -134,6 +134,28 @@ fn test_protocol_name_kafka() {
     assert_eq!(normalized.breed.as_deref(), Some("Acceptable"));
 }
 
+#[cfg(feature = "storage")]
+#[test]
+fn test_protocol_name_afp() {
+    let flow = flow_with_protocol(Protocol::Afp);
+    let normalized = NormalizedFlow::from_flow(&flow);
+    assert_eq!(normalized.master_protocol.as_deref(), Some("AFP"));
+    assert_eq!(normalized.app_protocol, None);
+    assert_eq!(normalized.category.as_deref(), Some("DataTransfer"));
+    assert_eq!(normalized.breed.as_deref(), Some("Acceptable"));
+}
+
+#[cfg(feature = "database")]
+#[test]
+fn test_protocol_name_drda() {
+    let flow = flow_with_protocol(Protocol::Drda);
+    let normalized = NormalizedFlow::from_flow(&flow);
+    assert_eq!(normalized.master_protocol.as_deref(), Some("DRDA"));
+    assert_eq!(normalized.app_protocol, None);
+    assert_eq!(normalized.category.as_deref(), Some("Database"));
+    assert_eq!(normalized.breed.as_deref(), Some("Acceptable"));
+}
+
 #[cfg(feature = "database")]
 #[test]
 fn test_protocol_name_oracle_cassandra() {

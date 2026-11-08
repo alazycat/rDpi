@@ -205,7 +205,7 @@ fn test_registry_default_detector_count() {
         }
         #[cfg(feature = "database")]
         {
-            count += 9; // MySQL + PostgreSQL + Redis + MongoDB + Memcached + Elasticsearch（F46）+ MSSQL（F49）+ Oracle/Cassandra（F50）
+            count += 10; // MySQL + PostgreSQL + Redis + MongoDB + Memcached + Elasticsearch（F46）+ MSSQL（F49）+ Oracle/Cassandra（F50）+ DRDA（F51）
         }
         #[cfg(feature = "messaging")]
         {
@@ -237,7 +237,7 @@ fn test_registry_default_detector_count() {
         }
         #[cfg(feature = "storage")]
         {
-            count += 1; // NFS
+            count += 2; // NFS + AFP（F51）
         }
         #[cfg(feature = "smb")]
         {

@@ -611,6 +611,16 @@ fn print_detection(pkt_num: u64, det: &DetectionResult) {
                 c.cql_version.as_deref().unwrap_or("")
             ),
         }),
+        #[cfg(feature = "storage")]
+        rdpi::Metadata::Afp(a) => Some(format!(
+            "flags={} command={} request={} length={}",
+            a.flags, a.command, a.request_id, a.length
+        )),
+        #[cfg(feature = "database")]
+        rdpi::Metadata::Drda(d) => Some(format!(
+            "messages={} length={}",
+            d.message_count, d.message_length
+        )),
         _ => None,
     };
 

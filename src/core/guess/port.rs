@@ -43,6 +43,8 @@ pub(crate) static PORT_MAP: &[(u16, &[Protocol])] = &[
     (1433u16, &[Protocol::Mssql]),
     #[cfg(feature = "database")]
     (1434u16, &[Protocol::Mssql]),
+    #[cfg(feature = "storage")]
+    (548u16, &[Protocol::Afp]),
     #[cfg(feature = "database")]
     (1521u16, &[Protocol::Oracle]),
     #[cfg(feature = "database")]
@@ -122,5 +124,18 @@ mod tests {
             match_port(9042).unwrap().confidence,
             Confidence::MatchByPort
         );
+    }
+
+    #[cfg(feature = "storage")]
+    #[test]
+    fn test_afp_port() {
+        assert_eq!(match_port(548).unwrap().protocol, Protocol::Afp);
+        assert_eq!(match_port(548).unwrap().confidence, Confidence::MatchByPort);
+    }
+
+    #[cfg(feature = "database")]
+    #[test]
+    fn test_drda_has_no_port_fallback() {
+        assert!(match_port(50000).is_none());
     }
 }

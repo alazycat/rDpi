@@ -57,6 +57,10 @@ impl RuleFile {
                     "oracle" => Protocol::Oracle,
                     #[cfg(feature = "database")]
                     "cassandra" => Protocol::Cassandra,
+                    #[cfg(feature = "storage")]
+                    "afp" => Protocol::Afp,
+                    #[cfg(feature = "database")]
+                    "drda" => Protocol::Drda,
                     #[cfg(feature = "database")]
                     "memcached" => Protocol::Memcached,
                     #[cfg(feature = "database")]

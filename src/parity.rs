@@ -229,6 +229,10 @@ fn protocol_name(protocol: Protocol) -> String {
         Protocol::Amqp => "AMQP".to_string(),
         #[cfg(feature = "database")]
         Protocol::Mssql => "MsSQL-TDS".to_string(),
+        #[cfg(feature = "storage")]
+        Protocol::Afp => "AFP".to_string(),
+        #[cfg(feature = "database")]
+        Protocol::Drda => "DRDA".to_string(),
         _ => format!("{protocol:?}"),
     }
 }
@@ -351,6 +355,12 @@ fn ndpi_compat_classification(
         Protocol::Oracle | Protocol::Cassandra => {
             ("Database".to_string(), "Acceptable".to_string())
         }
+        // F51（nDPI 5.0 源码核对）：AFP 归 DataTransfer/Acceptable，
+        // DRDA 归 Database/Acceptable
+        #[cfg(feature = "storage")]
+        Protocol::Afp => ("DataTransfer".to_string(), "Acceptable".to_string()),
+        #[cfg(feature = "database")]
+        Protocol::Drda => ("Database".to_string(), "Acceptable".to_string()),
         #[cfg(feature = "messaging")]
         Protocol::Kafka => ("RPC".to_string(), "Acceptable".to_string()),
         #[cfg(feature = "proto3")]

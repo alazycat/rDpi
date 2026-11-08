@@ -315,6 +315,44 @@ fn test_rule_parser_mssql_protocol_names() {
     }
 }
 
+#[cfg(feature = "storage")]
+#[test]
+fn test_rule_parser_afp_protocol_name() {
+    let json = r#"{
+        "rules": [
+            {"id": "afp", "protocol": "afp", "condition": {"dst_port": 548}}
+        ]
+    }"#;
+    let engine = RuleEngine::from_json(json).unwrap();
+    let ctx = RuleContext {
+        src_port: 12345,
+        dst_port: 548,
+        sni: None,
+        payload: Vec::new(),
+    };
+    let result = engine.match_rule(&ctx).expect("rule should match");
+    assert_eq!(result.protocol, Protocol::Afp);
+}
+
+#[cfg(feature = "database")]
+#[test]
+fn test_rule_parser_drda_protocol_name() {
+    let json = r#"{
+        "rules": [
+            {"id": "drda", "protocol": "drda", "condition": {"dst_port": 50000}}
+        ]
+    }"#;
+    let engine = RuleEngine::from_json(json).unwrap();
+    let ctx = RuleContext {
+        src_port: 12345,
+        dst_port: 50000,
+        sni: None,
+        payload: Vec::new(),
+    };
+    let result = engine.match_rule(&ctx).expect("rule should match");
+    assert_eq!(result.protocol, Protocol::Drda);
+}
+
 #[cfg(feature = "database")]
 #[test]
 fn test_rule_parser_oracle_cassandra_protocol_names() {
