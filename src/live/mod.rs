@@ -6,6 +6,13 @@
 
 mod ffi;
 
+/// 列出所有可抓包设备。
+///
+/// 后端动态库缺失时返回 [`LiveError::BackendUnavailable`]。
+pub fn devices() -> Result<Vec<Device>, LiveError> {
+    ffi::list_devices()
+}
+
 /// 抓包配置。
 #[derive(Debug, Clone)]
 pub struct CaptureConfig {

@@ -5,7 +5,7 @@
 use std::ffi::{CString, c_char, c_int, c_uchar, c_void};
 use std::sync::OnceLock;
 
-use super::LiveError;
+use super::{Device, LiveError};
 
 /// pcap 错误缓冲区大小（pcap.h: PCAP_ERRBUF_SIZE）
 pub(crate) const PCAP_ERRBUF_SIZE: usize = 256;
@@ -215,6 +215,80 @@ unsafe fn optional<T: Copy + 'static>(library: &libloading::Library, name: &str)
     unsafe { library.get::<T>(name.as_bytes_with_nul()) }
         .ok()
         .map(|symbol| *symbol)
+}
+
+/// 列出所有可抓包设备。
+pub(crate) fn list_devices() -> Result<Vec<Device>, LiveError> {
+    let api = api()?;
+    let mut head: *mut PcapIf = std::ptr::null_mut();
+    let mut errbuf = [0 as c_char; PCAP_ERRBUF_SIZE];
+
+    // SAFETY: head 由 pcap 分配，errbuf 大小符合 pcap.h 要求。
+    let rc = unsafe { (api.findalldevs)(&mut head, errbuf.as_mut_ptr()) };
+    if rc != 0 {
+        return Err(LiveError::Capture(errbuf_to_string(&errbuf)));
+    }
+
+    let guard = DeviceList { api, head };
+    let mut devices = Vec::new();
+    let mut current = head;
+
+    while !current.is_null() {
+        // SAFETY: current 来自 pcap 设备链表，链接在 guard 释放前有效。
+        let node = unsafe { &*current };
+        let name = unsafe { c_ptr_to_string(node.name) }.unwrap_or_default();
+        let description = unsafe { c_ptr_to_string(node.description) };
+        devices.push(Device {
+            name,
+            description,
+            is_loopback: node.flags & PCAP_IF_LOOPBACK != 0,
+            is_up: node.flags & PCAP_IF_UP != 0,
+        });
+        current = node.next;
+    }
+
+    drop(guard);
+    Ok(devices)
+}
+
+/// pcap 设备链表 RAII 包装。
+struct DeviceList {
+    api: &'static PcapApi,
+    head: *mut PcapIf,
+}
+
+impl Drop for DeviceList {
+    fn drop(&mut self) {
+        if !self.head.is_null() {
+            // SAFETY: head 来自 pcap_findalldevs，且只释放一次。
+            unsafe { (self.api.freealldevs)(self.head) };
+        }
+    }
+}
+
+/// 把 C 字符串复制为 Rust `String`；空指针返回 `None`。
+///
+/// # Safety
+///
+/// `ptr` 必须为空指针，或指向以 NUL 结尾的有效 C 字符串。
+pub(crate) unsafe fn c_ptr_to_string(ptr: *const c_char) -> Option<String> {
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: 调用方保证 ptr 指向以 NUL 结尾的有效 C 字符串。
+    Some(unsafe { std::ffi::CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned())
+}
+
+/// 把 pcap 错误缓冲区复制为 `String`。
+pub(crate) fn errbuf_to_string(buf: &[c_char]) -> String {
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|&&byte| byte != 0)
+        .map(|&byte| byte as u8)
+        .collect();
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 #[cfg(test)]

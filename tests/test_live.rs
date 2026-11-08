@@ -35,3 +35,16 @@ fn backend_unavailable_error_mentions_candidates() {
     assert!(text.contains("wpcap.dll"));
     assert!(text.contains("Npcap"));
 }
+
+#[test]
+fn devices_return_list_or_backend_error() {
+    match rdpi::live::devices() {
+        Ok(devices) => {
+            for device in devices {
+                assert!(!device.name.is_empty());
+            }
+        }
+        Err(LiveError::BackendUnavailable { .. }) => {}
+        Err(error) => panic!("unexpected device enumeration error: {error}"),
+    }
+}
