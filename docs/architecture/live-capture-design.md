@@ -245,6 +245,11 @@ struct Timeval { tv_sec: i64, tv_usec: i32 }
 #[repr(C)]
 struct Timeval { tv_sec: i64, tv_usec: i64 }
 
+// 非 Windows/Unix 平台：候选库为空，运行期返回 BackendUnavailable
+#[cfg(not(any(windows, unix)))]
+#[repr(C)]
+struct Timeval { tv_sec: i64, tv_usec: i64 }
+
 #[repr(C)]
 struct PcapIf {
     next: *mut PcapIf,
