@@ -4,6 +4,8 @@
 //! 默认构建不引入这些依赖；抓到的以太网帧可直接交给
 //! [`Detector::process_packet`](crate::Detector::process_packet)。
 
+mod ffi;
+
 /// 抓包配置。
 #[derive(Debug, Clone)]
 pub struct CaptureConfig {
