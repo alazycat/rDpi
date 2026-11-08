@@ -39,6 +39,12 @@ pub(crate) static PORT_MAP: &[(u16, &[Protocol])] = &[
     (5060u16, &[Protocol::Sip]),
     #[cfg(feature = "proto3")]
     (5061u16, &[Protocol::Sip]),
+    #[cfg(feature = "database")]
+    (1433u16, &[Protocol::Mssql]),
+    #[cfg(feature = "database")]
+    (1434u16, &[Protocol::Mssql]),
+    #[cfg(feature = "messaging")]
+    (9092u16, &[Protocol::Kafka]),
 ];
 
 /// 通过端口匹配协议
@@ -77,5 +83,20 @@ mod tests {
     fn test_multi_protocol_port() {
         let result = match_port(443).unwrap();
         assert_eq!(result.protocol, Protocol::Tls);
+    }
+
+    #[cfg(feature = "database")]
+    #[test]
+    fn test_mssql_ports() {
+        assert_eq!(match_port(1433).unwrap().protocol, Protocol::Mssql);
+        assert_eq!(match_port(1434).unwrap().protocol, Protocol::Mssql);
+        assert_eq!(match_port(1433).unwrap().confidence, Confidence::MatchByPort);
+    }
+
+    #[cfg(feature = "messaging")]
+    #[test]
+    fn test_kafka_port() {
+        assert_eq!(match_port(9092).unwrap().protocol, Protocol::Kafka);
+        assert_eq!(match_port(9092).unwrap().confidence, Confidence::MatchByPort);
     }
 }

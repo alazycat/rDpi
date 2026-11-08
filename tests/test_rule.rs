@@ -291,3 +291,45 @@ fn test_rule_parser_amqp_protocol_name() {
     let result = engine.match_rule(&ctx).expect("rule should match");
     assert_eq!(result.protocol, Protocol::Amqp);
 }
+
+#[cfg(feature = "database")]
+#[test]
+fn test_rule_parser_mssql_protocol_names() {
+    let json = r#"{
+        "rules": [
+            {"id": "mssql", "protocol": "mssql", "condition": {"dst_port": 1433}},
+            {"id": "mssql_tds", "protocol": "mssql_tds", "condition": {"dst_port": 1434}}
+        ]
+    }"#;
+    let engine = RuleEngine::from_json(json).unwrap();
+
+    for dst_port in [1433u16, 1434] {
+        let ctx = RuleContext {
+            src_port: 12345,
+            dst_port,
+            sni: None,
+            payload: Vec::new(),
+        };
+        let result = engine.match_rule(&ctx).expect("rule should match");
+        assert_eq!(result.protocol, Protocol::Mssql);
+    }
+}
+
+#[cfg(feature = "messaging")]
+#[test]
+fn test_rule_parser_kafka_protocol_name() {
+    let json = r#"{
+        "rules": [
+            {"id": "kafka", "protocol": "kafka", "condition": {"dst_port": 9092}}
+        ]
+    }"#;
+    let engine = RuleEngine::from_json(json).unwrap();
+    let ctx = RuleContext {
+        src_port: 12345,
+        dst_port: 9092,
+        sni: None,
+        payload: Vec::new(),
+    };
+    let result = engine.match_rule(&ctx).expect("rule should match");
+    assert_eq!(result.protocol, Protocol::Kafka);
+}

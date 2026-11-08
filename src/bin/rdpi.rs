@@ -585,7 +585,22 @@ struct JsonlLine<'a> {
 }
 
 fn print_detection(pkt_num: u64, det: &DetectionResult) {
-    let meta_str = match &det.metadata {
+    // F49：MSSQL/Kafka 需要格式化字段组合；其余协议保持零分配 &str 路径。
+    let formatted_meta: Option<String> = match &det.metadata {
+        #[cfg(feature = "database")]
+        rdpi::Metadata::Mssql(m) => Some(format!(
+            "type={} status=0x{:02X} length={} channel={} packet_id={}",
+            m.packet_type, m.status, m.length, m.channel, m.packet_id
+        )),
+        #[cfg(feature = "messaging")]
+        rdpi::Metadata::Kafka(k) => Some(format!(
+            "api_key={} version={} client_id={}",
+            k.api_key, k.api_version, k.client_id
+        )),
+        _ => None,
+    };
+
+    let borrowed_meta = match &det.metadata {
         rdpi::Metadata::Dns(dns) => dns.query_domain.as_deref().unwrap_or(""),
         rdpi::Metadata::Tls(tls) => tls.sni.as_deref().unwrap_or(""),
         // QUIC：优先 SNI，其次 ALPN（服务端方向只有 ALPN）
@@ -633,6 +648,7 @@ fn print_detection(pkt_num: u64, det: &DetectionResult) {
         rdpi::Metadata::Amqp(a) => &a.version,
         _ => "",
     };
+    let meta_str = formatted_meta.as_deref().unwrap_or(borrowed_meta);
 
     // F33：JA4T 客户端 TCP 指纹（来自流的初始 SYN 包）
     let ja4t_str = det

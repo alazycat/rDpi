@@ -52,11 +52,15 @@ impl RuleFile {
                     "postgresql" => Protocol::Postgresql,
                     "redis" => Protocol::Redis,
                     #[cfg(feature = "database")]
+                    "mssql" | "mssql_tds" => Protocol::Mssql,
+                    #[cfg(feature = "database")]
                     "memcached" => Protocol::Memcached,
                     #[cfg(feature = "database")]
                     "elasticsearch" => Protocol::Elasticsearch,
                     #[cfg(feature = "messaging")]
                     "amqp" => Protocol::Amqp,
+                    #[cfg(feature = "messaging")]
+                    "kafka" => Protocol::Kafka,
                     #[cfg(feature = "proto3")]
                     "ftp" => Protocol::Ftp,
                     #[cfg(feature = "proto3")]

@@ -227,6 +227,8 @@ fn protocol_name(protocol: Protocol) -> String {
         Protocol::Smb23 => "SMBv23".to_string(),
         #[cfg(feature = "messaging")]
         Protocol::Amqp => "AMQP".to_string(),
+        #[cfg(feature = "database")]
+        Protocol::Mssql => "MsSQL-TDS".to_string(),
         _ => format!("{protocol:?}"),
     }
 }
@@ -342,6 +344,10 @@ fn ndpi_compat_classification(
         Protocol::Elasticsearch => ("System".to_string(), "Acceptable".to_string()),
         #[cfg(feature = "messaging")]
         Protocol::Amqp => ("RPC".to_string(), "Acceptable".to_string()),
+        #[cfg(feature = "database")]
+        Protocol::Mssql => ("Database".to_string(), "Acceptable".to_string()),
+        #[cfg(feature = "messaging")]
+        Protocol::Kafka => ("RPC".to_string(), "Acceptable".to_string()),
         #[cfg(feature = "proto3")]
         Protocol::Ftp => ("Download".to_string(), "Unsafe".to_string()),
         #[cfg(feature = "proto3")]

@@ -111,3 +111,25 @@ fn test_protocol_name_amqp() {
     assert_eq!(normalized.category.as_deref(), Some("RPC"));
     assert_eq!(normalized.breed.as_deref(), Some("Acceptable"));
 }
+
+#[cfg(feature = "database")]
+#[test]
+fn test_protocol_name_mssql() {
+    let flow = flow_with_protocol(Protocol::Mssql);
+    let normalized = NormalizedFlow::from_flow(&flow);
+    assert_eq!(normalized.master_protocol.as_deref(), Some("MsSQL-TDS"));
+    assert_eq!(normalized.app_protocol, None);
+    assert_eq!(normalized.category.as_deref(), Some("Database"));
+    assert_eq!(normalized.breed.as_deref(), Some("Acceptable"));
+}
+
+#[cfg(feature = "messaging")]
+#[test]
+fn test_protocol_name_kafka() {
+    let flow = flow_with_protocol(Protocol::Kafka);
+    let normalized = NormalizedFlow::from_flow(&flow);
+    assert_eq!(normalized.master_protocol.as_deref(), Some("Kafka"));
+    assert_eq!(normalized.app_protocol, None);
+    assert_eq!(normalized.category.as_deref(), Some("RPC"));
+    assert_eq!(normalized.breed.as_deref(), Some("Acceptable"));
+}
