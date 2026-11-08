@@ -131,7 +131,7 @@
 完整候选清单见 [protocol-coverage-plan.md](protocol-coverage-plan.md)。建议：
 
 - **A. Web / Cloud 核心**：TLS、HTTP/1.x、HTTP/2、HTTP/3/QUIC、DNS、DoH/DoT/DoQ、WebSocket、HTTP CONNECT/Proxy + Top 20 应用；
-- **B. 企业协议**：SMB、NetBIOS（✅ 已于 F45 完成，2026-11-07）、LDAP、Kerberos、RDP、NFS、MSSQL（✅ F49）、Oracle、Cassandra、Memcached（✅ F46）、Elasticsearch（✅ F46）、Kafka（✅ F49）、AMQP（✅ F46）等；
+- **B. 企业协议**：SMB、NetBIOS（✅ 已于 F45 完成，2026-11-07）、LDAP、Kerberos、RDP、NFS、MSSQL（✅ F49）、Oracle（✅ F50）、Cassandra（✅ F50）、Memcached（✅ F46）、Elasticsearch（✅ F46）、Kafka（✅ F49）、AMQP（✅ F46）等；
 - **C. 流媒体/IM/游戏**：RTP/RTCP/SRTP、RTSP、HLS、MPEG-DASH、MPEG-TS、WebRTC、Steam 等；
 - **D. 工业/IoT**：S7comm、OPC-UA、BACnet、DNP3、IEC 60870、HART-IP、Profinet、EtherNet/IP 等；
 - **E. VPN/隧道**：IPsec、GRE、GTP、Teredo、SoftEther、Tailscale、Tor 等。
@@ -373,6 +373,11 @@
   - Kafka：长度前缀自洽 + api_key/version 上限 + 可打印 client_id，仅识别请求；
   - 端口回退、规则名、parity、CLI 接入；语料 +2 pcap + 真实 ndpiReader 5.0 golden 差分全绿；
   - 无新增 `DissectorState`（无状态单报文语义）。
+- **P2 Wave 1B 子批次 C：Oracle + Cassandra（F50，2026-11-08）**
+  - Oracle：TNS Connect 8 字节头严格校验（长度/校验和/类型/保留）+ 1521 端口门控；首字节门 `None`；
+  - Cassandra：19 字节 internode magic（`0xCA552DFA`，不限端口）+ 严格 CQL STARTUP 帧解析（版本/opcode/长度/string map/CQL_VERSION）；首字节门 `[(2,5),(0xCA,0xCA)]`；
+  - Cassandra 注册于 QUIC 之前，避免 internode magic 被 QUIC 长包头误判；Oracle 仍在 database 块；
+  - 端口回退、规则名、parity、CLI 接入；语料 +3 pcap + 真实 ndpiReader 5.0 golden 差分全绿。
 
 ### 待办
 

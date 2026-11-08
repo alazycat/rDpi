@@ -497,3 +497,15 @@
   - **集成**：端口回退 1433/1434→Mssql、9092→Kafka；规则名 `mssql`/`mssql_tds`/`kafka`；parity `MsSQL-TDS`→Database/Acceptable、`Kafka`→RPC/Acceptable；CLI 展示 TDS 头字段与 Kafka 请求字段。
 - **Golden 差分（真实 nDPI 5.0 验证）**：`mssql_tds_prelogin` → DPI `MsSQL-TDS`（Database/Acceptable）；`kafka_metadata_request` → DPI `Kafka`（RPC/Acceptable）；跨段拆分与非标端口变体不进入 parity 语料。
 - **已知边界**：① 单报文语义，多消息粘连不识别（与 nDPI 一致）；② 跨段拆分在 rDpi TCP 前缀补齐后可识别（超集，单测覆盖）；③ MSSQL 端口 102 双向排除（比 nDPI 的 dest-only 严格）；④ Kafka 只识别请求、null client_id（0xFFFF）不识别；⑤ api_key≥75/api_version≥16 不识别（与 nDPI 5.0 固定上限一致）；⑥ 加密变体（Kafka TLS 9093、MSSQL 加密会话）不解析。
+
+## F50【中】Oracle + Cassandra 识别（2026-11-08，新功能开发）—— ✅ 已完成
+
+- **背景**：阶段 2 第四批（`docs/architecture/phase2-oracle-cassandra-design.md`、`docs/architecture/phase2-oracle-cassandra-plan.md`）。补齐 P0 清单剩余的两个数据库协议。
+- **实现**：
+  - **枚举与元数据**（[core/types.rs](file:///d:/rust_code/rDpi/src/core/types.rs)）：`database` 新增 `Protocol::Oracle` + `OracleMetadata{packet_length,packet_type}`、`Protocol::Cassandra` + `CassandraMetadata{source,version,stream_id,opcode,cql_version}`；无新增 `DissectorState`。
+  - **Oracle 模块**（[src/protocols/oracle/](file:///d:/rust_code/rDpi/src/protocols/oracle/)）：TNS Connect 8 字节头；`packet_length==payload.len()`、包校验和/保留字段/头校验和为 0、`packet_type==1`；`detect_with_context` 要求任一端 1521 端口；首字节门 `None`。
+  - **Cassandra 模块**（[src/protocols/cassandra/](file:///d:/rust_code/rDpi/src/protocols/cassandra/)）：19 字节 internode magic `0xCA552DFA`（不限端口）；CQL STARTUP 严格解析（版本 0x02..=0x05、flags 高 3 位为 0、opcode=0x01、长度精确等于 `payload.len()-9`、string map 条目 1..=64 且恰好消费完、含 `CQL_VERSION` 且值为可打印 ASCII）；首字节门 `[(2,5),(0xCA,0xCA)]`。
+  - **注册**（[protocols/mod.rs](file:///d:/rust_code/rDpi/src/protocols/mod.rs)）：**Cassandra 注册在 QUIC 之前**——internode magic 首字节 0xCA 落在 QUIC 长包头门 0x80..=0xFF 内，未知版本 0x552DFA00 会被 `detect_other_long_header` 误判为 Quic（语料差分已复现）；Cassandra 门仅 0x02..=0x05/0xCA 且需精确 magic 或严格 STARTUP，不会抢占真实 QUIC。Oracle 在 database 块 mssql 之后、Elasticsearch 之前；其余 detector 相对顺序不变。
+  - **集成**：端口回退 1521→Oracle、7000/9042→Cassandra；规则名 `oracle`/`cassandra`；parity Oracle/Cassandra→Database/Acceptable；CLI 展示 TNS 头字段与 Cassandra 来源/版本/stream/CQL_VERSION。
+- **Golden 差分（真实 nDPI 5.0 验证）**：`oracle_connect` → DPI `Oracle`（Database/Acceptable）；`cassandra_internode` → DPI `Cassandra`（Database/Acceptable）；`cassandra_startup` @9042 → `Cassandra`/Match by port，rDpi Dpi 升级放行。
+- **已知边界**：① Oracle 仅识别 TNS Connect 且仅 1521 端口，不解析 Connect 体；② Cassandra 仅 internode magic + STARTUP 请求，OPTIONS/QUERY/响应/mid-stream 不识别；③ 单报文语义，多帧粘连不识别（与 nDPI 一致）；④ 跨段拆分在 rDpi TCP 前缀补齐后可识别（超集，单测覆盖），但首段前缀若被低特异性 detector（如 DHCPv6：0x04 + 长度 >= 10）抢先定型则无法升级——既有逐包 pipeline 通用限制；⑤ 不实现 nDPI 的 `CQL_VERSION` 尾部弱启发式（`len-20`、载荷 > 60）；⑥ 不实现 nDPI 的 `packet_counter`/方向计数放弃阈值（严格解析已消除误报）；⑦ 加密变体（TCPS、7042/9043 TLS）不解析。

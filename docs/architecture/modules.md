@@ -51,7 +51,7 @@
 | infra | ntp, dhcp, bgp, dhcpv6, vxlan, netflow, ike, ptpv2 |
 | snmp | snmp（R1 已修复 2026-11-04） |
 | modbus | modbus |
-| database | mysql, postgresql, redis, mongodb, memcached, elasticsearch（F46，2026-11-07：Memcached 26 签名 + UDP 头 + 有状态匹配计数；Elasticsearch 二进制 `ES` + HTTP `X-elastic-product`），mssql（F49，2026-11-08：TDS 8 字节头严格校验 + 102 端口 TPKT 排除） |
+| database | mysql, postgresql, redis, mongodb, memcached, elasticsearch（F46，2026-11-07：Memcached 26 签名 + UDP 头 + 有状态匹配计数；Elasticsearch 二进制 `ES` + HTTP `X-elastic-product`），mssql（F49，2026-11-08：TDS 8 字节头严格校验 + 102 端口 TPKT 排除），oracle（F50，2026-11-08：TNS Connect 8 字节头 + 1521 端口门控），cassandra（F50，2026-11-08：internode magic + 严格 CQL STARTUP；注册于 QUIC 之前） |
 | messaging | amqp（F46，2026-11-07：0-9-1 帧头 + 1.0 协议头），kafka（F49，2026-11-08：长度前缀 + api_key/version + 可打印 client_id） |
 | proto3 | ftp, sip, rtp, http2（HPACK 元数据，2026-11-05）, websocket（F43，2026-11-06：有状态升级握手重组）, rtmp, socks（ftp：F44，2026-11-07 有状态会话 + USER/RETR/STOR 提取 username/filename 元数据） |
 | iot | mqtt |
