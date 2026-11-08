@@ -361,6 +361,9 @@ pub enum Protocol {
     Postgresql,
     Redis,
     Mongodb,
+    /// MSSQL/TDS 协议（feature: database，F49）
+    #[cfg(feature = "database")]
+    Mssql,
     /// Memcached 文本缓存协议（feature: database，F46）
     #[cfg(feature = "database")]
     Memcached,
@@ -370,6 +373,9 @@ pub enum Protocol {
     /// AMQP 0-9-1/1.0 消息队列协议（feature: messaging，F46）
     #[cfg(feature = "messaging")]
     Amqp,
+    /// Apache Kafka 协议（feature: messaging，F49）
+    #[cfg(feature = "messaging")]
+    Kafka,
     #[cfg(feature = "proto3")]
     Sip,
     #[cfg(feature = "proto3")]
@@ -552,6 +558,9 @@ pub enum Metadata {
     Rtp(RtpMetadata),
     /// MongoDB 元数据 (feature: database)
     Mongodb(MongodbMetadata),
+    /// MSSQL/TDS 元数据 (feature: database, F49)
+    #[cfg(feature = "database")]
+    Mssql(MssqlMetadata),
     /// Memcached 元数据 (feature: database, F46)
     #[cfg(feature = "database")]
     Memcached(MemcachedMetadata),
@@ -561,6 +570,9 @@ pub enum Metadata {
     /// AMQP 元数据 (feature: messaging, F46)
     #[cfg(feature = "messaging")]
     Amqp(AmqpMetadata),
+    /// Kafka 元数据 (feature: messaging, F49)
+    #[cfg(feature = "messaging")]
+    Kafka(KafkaMetadata),
     /// MQTT 元数据 (feature: iot)
     #[cfg(feature = "iot")]
     Mqtt(MqttMetadata),
@@ -1212,8 +1224,12 @@ impl Protocol {
             // F46 数据库/消息协议
             #[cfg(feature = "database")]
             Protocol::Memcached | Protocol::Elasticsearch => ProtocolCategory::Database,
+            #[cfg(feature = "database")]
+            Protocol::Mssql => ProtocolCategory::Database,
             #[cfg(feature = "messaging")]
             Protocol::Amqp => ProtocolCategory::Messaging,
+            #[cfg(feature = "messaging")]
+            Protocol::Kafka => ProtocolCategory::Messaging,
 
             // RemoteAccess
             Protocol::Ssh => ProtocolCategory::RemoteAccess,
@@ -1319,8 +1335,12 @@ impl Protocol {
             | Protocol::HttpProxy => ProtocolBreed::Acceptable,
             #[cfg(feature = "database")]
             Protocol::Memcached | Protocol::Elasticsearch => ProtocolBreed::Acceptable,
+            #[cfg(feature = "database")]
+            Protocol::Mssql => ProtocolBreed::Acceptable,
             #[cfg(feature = "messaging")]
             Protocol::Amqp => ProtocolBreed::Acceptable,
+            #[cfg(feature = "messaging")]
+            Protocol::Kafka => ProtocolBreed::Acceptable,
             #[cfg(feature = "proto3")]
             Protocol::Ftp => ProtocolBreed::Fun,
             #[cfg(feature = "iot")]
@@ -1857,6 +1877,23 @@ pub struct ElasticsearchMetadata {
     pub source: ElasticsearchSource,
 }
 
+/// MSSQL/TDS 元数据 (feature: database, F49)
+#[cfg(feature = "database")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MssqlMetadata {
+    /// TDS 报文类型（1..=8 或 14..=18）
+    pub packet_type: u8,
+    /// TDS 状态位（0x00/0x01/0x02/0x04/0x08/0x09/0x10）
+    pub status: u8,
+    /// TDS 声明长度（命中时等于报文字节数）
+    pub length: u16,
+    /// SPID / channel
+    pub channel: u16,
+    /// 报文序号（类型 1..=8 时要求 > 0）
+    pub packet_id: u8,
+}
+
 /// AMQP 元数据 (feature: messaging, F46)
 #[cfg(feature = "messaging")]
 #[cfg_attr(feature = "json", derive(serde::Serialize))]
@@ -1872,6 +1909,21 @@ pub struct AmqpMetadata {
     pub class_id: Option<u16>,
     /// 0-9-1 method id
     pub method: Option<u16>,
+}
+
+/// Kafka 请求元数据 (feature: messaging, F49)
+#[cfg(feature = "messaging")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KafkaMetadata {
+    /// Kafka API key（< 75）
+    pub api_key: u16,
+    /// Kafka API version（< 16）
+    pub api_version: u16,
+    /// 请求 correlation id
+    pub correlation_id: u32,
+    /// 客户端 ID（可打印 ASCII，可为空字符串）
+    pub client_id: String,
 }
 
 /// MQTT 元数据 (feature: iot)

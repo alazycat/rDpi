@@ -333,6 +333,9 @@ fn test_database_protocol_classification_new() {
     );
     assert_eq!(Protocol::Memcached.breed(), ProtocolBreed::Acceptable);
     assert_eq!(Protocol::Elasticsearch.breed(), ProtocolBreed::Acceptable);
+    // F49
+    assert_eq!(Protocol::Mssql.category(), ProtocolCategory::Database);
+    assert_eq!(Protocol::Mssql.breed(), ProtocolBreed::Acceptable);
 }
 
 #[cfg(feature = "messaging")]
@@ -340,6 +343,9 @@ fn test_database_protocol_classification_new() {
 fn test_messaging_protocol_classification_new() {
     assert_eq!(Protocol::Amqp.category(), ProtocolCategory::Messaging);
     assert_eq!(Protocol::Amqp.breed(), ProtocolBreed::Acceptable);
+    // F49
+    assert_eq!(Protocol::Kafka.category(), ProtocolCategory::Messaging);
+    assert_eq!(Protocol::Kafka.breed(), ProtocolBreed::Acceptable);
 }
 
 #[test]
