@@ -364,6 +364,12 @@ pub enum Protocol {
     /// MSSQL/TDS 协议（feature: database，F49）
     #[cfg(feature = "database")]
     Mssql,
+    /// Oracle TNS 协议（feature: database，F50）
+    #[cfg(feature = "database")]
+    Oracle,
+    /// Apache Cassandra CQL 协议（feature: database，F50）
+    #[cfg(feature = "database")]
+    Cassandra,
     /// Memcached 文本缓存协议（feature: database，F46）
     #[cfg(feature = "database")]
     Memcached,
@@ -561,6 +567,12 @@ pub enum Metadata {
     /// MSSQL/TDS 元数据 (feature: database, F49)
     #[cfg(feature = "database")]
     Mssql(MssqlMetadata),
+    /// Oracle TNS 元数据 (feature: database, F50)
+    #[cfg(feature = "database")]
+    Oracle(OracleMetadata),
+    /// Cassandra 元数据 (feature: database, F50)
+    #[cfg(feature = "database")]
+    Cassandra(CassandraMetadata),
     /// Memcached 元数据 (feature: database, F46)
     #[cfg(feature = "database")]
     Memcached(MemcachedMetadata),
@@ -1226,6 +1238,9 @@ impl Protocol {
             Protocol::Memcached | Protocol::Elasticsearch => ProtocolCategory::Database,
             #[cfg(feature = "database")]
             Protocol::Mssql => ProtocolCategory::Database,
+            // F50 数据库协议
+            #[cfg(feature = "database")]
+            Protocol::Oracle | Protocol::Cassandra => ProtocolCategory::Database,
             #[cfg(feature = "messaging")]
             Protocol::Amqp => ProtocolCategory::Messaging,
             #[cfg(feature = "messaging")]
@@ -1337,6 +1352,8 @@ impl Protocol {
             Protocol::Memcached | Protocol::Elasticsearch => ProtocolBreed::Acceptable,
             #[cfg(feature = "database")]
             Protocol::Mssql => ProtocolBreed::Acceptable,
+            #[cfg(feature = "database")]
+            Protocol::Oracle | Protocol::Cassandra => ProtocolBreed::Acceptable,
             #[cfg(feature = "messaging")]
             Protocol::Amqp => ProtocolBreed::Acceptable,
             #[cfg(feature = "messaging")]
@@ -1892,6 +1909,46 @@ pub struct MssqlMetadata {
     pub channel: u16,
     /// 报文序号（类型 1..=8 时要求 > 0）
     pub packet_id: u8,
+}
+
+/// Oracle TNS Connect 元数据 (feature: database, F50)
+#[cfg(feature = "database")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OracleMetadata {
+    /// TNS 包长度（命中时等于载荷长度）
+    pub packet_length: u16,
+    /// TNS 包类型（当前只接受 1 = Connect）
+    pub packet_type: u8,
+}
+
+/// Cassandra 识别来源 (feature: database, F50)
+#[cfg(feature = "database")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CassandraSource {
+    /// 19 字节 internode 握手 magic
+    #[default]
+    Internode,
+    /// CQL STARTUP 帧
+    Cql,
+}
+
+/// Cassandra 元数据 (feature: database, F50)
+#[cfg(feature = "database")]
+#[cfg_attr(feature = "json", derive(serde::Serialize))]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CassandraMetadata {
+    /// 识别来源
+    pub source: CassandraSource,
+    /// CQL 协议版本（0x02..=0x05；internode 为 None）
+    pub version: Option<u8>,
+    /// CQL stream id（internode 为 None）
+    pub stream_id: Option<u16>,
+    /// CQL opcode（STARTUP = 0x01；internode 为 None）
+    pub opcode: Option<u8>,
+    /// STARTUP string map 中的 CQL_VERSION 值（如 "3.0.0"）
+    pub cql_version: Option<String>,
 }
 
 /// AMQP 元数据 (feature: messaging, F46)

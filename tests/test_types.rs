@@ -336,6 +336,11 @@ fn test_database_protocol_classification_new() {
     // F49
     assert_eq!(Protocol::Mssql.category(), ProtocolCategory::Database);
     assert_eq!(Protocol::Mssql.breed(), ProtocolBreed::Acceptable);
+    // F50
+    assert_eq!(Protocol::Oracle.category(), ProtocolCategory::Database);
+    assert_eq!(Protocol::Oracle.breed(), ProtocolBreed::Acceptable);
+    assert_eq!(Protocol::Cassandra.category(), ProtocolCategory::Database);
+    assert_eq!(Protocol::Cassandra.breed(), ProtocolBreed::Acceptable);
 }
 
 #[cfg(feature = "messaging")]
