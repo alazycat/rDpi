@@ -14,6 +14,8 @@ pub mod bgp;
 pub mod cassandra;
 #[cfg(feature = "infra")]
 pub mod dhcp;
+#[cfg(feature = "database")]
+pub mod drda;
 #[cfg(feature = "dns")]
 pub mod dns;
 #[cfg(feature = "dtls")]
