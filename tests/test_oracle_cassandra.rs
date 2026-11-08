@@ -106,3 +106,34 @@ fn oracle_connect_split_across_segments_is_detected() {
     let frames = client_session(50030, 1521, &[&payload[..4], &payload[4..]]);
     assert_eq!(detect(&frames), Some(Protocol::Oracle));
 }
+
+fn cql_startup(cql_version: &str) -> Vec<u8> {
+    let key = b"CQL_VERSION";
+    let value = cql_version.as_bytes();
+    let mut body = Vec::new();
+    body.extend_from_slice(&1u16.to_be_bytes());
+    body.extend_from_slice(&(key.len() as u16).to_be_bytes());
+    body.extend_from_slice(key);
+    body.extend_from_slice(&(value.len() as u16).to_be_bytes());
+    body.extend_from_slice(value);
+    let mut frame = vec![0x04, 0x00, 0x00, 0x01, 0x01];
+    frame.extend_from_slice(&(body.len() as u32).to_be_bytes());
+    frame.extend_from_slice(&body);
+    frame
+}
+
+#[test]
+fn cassandra_startup_split_across_segments_is_detected() {
+    let payload = cql_startup("3.0.0");
+    let split = payload.len() / 2;
+    let frames = client_session(50031, 9042, &[&payload[..split], &payload[split..]]);
+    assert_eq!(detect(&frames), Some(Protocol::Cassandra));
+}
+
+#[test]
+fn cassandra_internode_is_port_independent() {
+    let mut payload = vec![0xCA, 0x55, 0x2D, 0xFA];
+    payload.extend_from_slice(&[0u8; 15]);
+    let frames = client_session(50032, 9999, &[&payload]);
+    assert_eq!(detect(&frames), Some(Protocol::Cassandra));
+}
