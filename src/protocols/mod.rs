@@ -43,6 +43,8 @@ pub mod mssql;
 #[cfg(feature = "database")]
 pub mod oracle;
 #[cfg(feature = "database")]
+pub mod cassandra;
+#[cfg(feature = "database")]
 pub mod mysql;
 #[cfg(feature = "infra")]
 pub mod ntp;
