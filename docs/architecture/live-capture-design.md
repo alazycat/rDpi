@@ -230,12 +230,18 @@ struct PcapPkthdr {
     len: u32,
 }
 
-// Windows 的 long 为 32 位；64 位 Unix 的 time_t/suseconds_t 为 64 位
-#[cfg(any(windows, target_pointer_width = "32"))]
+// Windows 的 long 为 32 位；32 位 Unix 的 time_t/suseconds_t 为 32 位
+#[cfg(any(windows, all(unix, not(target_os = "macos"), target_pointer_width = "32")))]
 #[repr(C)]
 struct Timeval { tv_sec: i32, tv_usec: i32 }
 
-#[cfg(all(not(windows), target_pointer_width = "64"))]
+// macOS 的 time_t 为 64 位、suseconds_t 为 32 位（结构体因对齐为 16 字节）
+#[cfg(target_os = "macos")]
+#[repr(C)]
+struct Timeval { tv_sec: i64, tv_usec: i32 }
+
+// 其余 64 位 Unix：time_t/suseconds_t 均为 64 位
+#[cfg(all(unix, not(target_os = "macos"), target_pointer_width = "64"))]
 #[repr(C)]
 struct Timeval { tv_sec: i64, tv_usec: i64 }
 
@@ -367,7 +373,7 @@ CI 不保证安装 libpcap/Npcap，测试必须能在“后端不可用”环境
 | `devices()` 容错 | `Ok(list)` 或 `Err(BackendUnavailable)`，不 panic |
 | 来源解析 | 在 `src/bin/rdpi.rs` 内用 `#[cfg(test)]` 单测覆盖：文件路径 → 文件；不存在路径 → 实时；`--iface` 优先 |
 | 错误 Display | 各变体包含设备名/表达式/链路层数字 |
-| `Timeval` 布局 | `size_of::<Timeval>()` 在 64 位为 16，32 位/Windows 为 8 |
+| `Timeval` 布局 | `size_of::<Timeval>()`：Windows/32 位 Unix 为 8，macOS 与 64 位 Unix 为 16 |
 | Iterator 结束语义 | v1 不引入可注入的假后端；`-2 → None` 只在手工验证中覆盖，不写依赖真实抓包的单测 |
 
 ### 6.2 依赖后端的测试（本机手工）
