@@ -43,6 +43,216 @@ struct Cli {
     verbose: bool,
 }
 
+use rdpi::Detector;
+use std::path::Path;
+
+/// 文件/实时两条路径共用的统计与输出。
+struct OutputSink<'a> {
+    output: &'a str,
+    verbose: bool,
+    total_packets: u64,
+    detected_packets: u64,
+    protocol_counts: HashMap<String, u64>,
+    #[cfg(feature = "json")]
+    packet_records: Vec<PacketRecord>,
+}
+
+impl<'a> OutputSink<'a> {
+    fn new(output: &'a str, verbose: bool) -> Self {
+        Self {
+            output,
+            verbose,
+            total_packets: 0,
+            detected_packets: 0,
+            protocol_counts: HashMap::new(),
+            #[cfg(feature = "json")]
+            packet_records: Vec::new(),
+        }
+    }
+
+    fn total(&self) -> u64 {
+        self.total_packets
+    }
+
+    #[cfg(test)]
+    fn detected(&self) -> u64 {
+        self.detected_packets
+    }
+
+    #[cfg(test)]
+    fn protocol_counts(&self) -> &HashMap<String, u64> {
+        &self.protocol_counts
+    }
+
+    fn on_packet(
+        &mut self,
+        timestamp_us: u64,
+        detection: Option<DetectionResult>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        #[cfg(not(feature = "json"))]
+        let _ = timestamp_us;
+
+        self.total_packets += 1;
+        let packet_no = self.total_packets;
+
+        match detection {
+            Some(detection) => {
+                self.detected_packets += 1;
+                *self
+                    .protocol_counts
+                    .entry(format!("{:?}", detection.protocol))
+                    .or_insert(0) += 1;
+
+                if !self.verbose || self.output == "flows-jsonl" {
+                    return Ok(());
+                }
+
+                #[cfg(feature = "json")]
+                match self.output {
+                    "jsonl" => {
+                        println!(
+                            "{}",
+                            serde_json::to_string(&PacketRecord::new(
+                                packet_no,
+                                timestamp_us,
+                                detection
+                            ))?
+                        );
+                        return Ok(());
+                    }
+                    "json" => {
+                        self.packet_records.push(PacketRecord::new(
+                            packet_no,
+                            timestamp_us,
+                            detection,
+                        ));
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+
+                print_detection(packet_no, &detection);
+            }
+            None => {
+                if !self.verbose || self.output == "flows-jsonl" {
+                    return Ok(());
+                }
+
+                #[cfg(feature = "json")]
+                if self.output == "jsonl" {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&UnknownRecord {
+                            r#type: "unknown",
+                            packet_no,
+                        })?
+                    );
+                    return Ok(());
+                }
+
+                println!("[{:6}] UNKNOWN", packet_no);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn finish(
+        &self,
+        elapsed: std::time::Duration,
+        detector: Option<&Detector>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        #[cfg(not(feature = "json"))]
+        let _ = detector;
+
+        if self.output == "flows-jsonl" {
+            #[cfg(feature = "json")]
+            if let Some(detector) = detector {
+                for flow in detector.normalized_flows() {
+                    println!("{}", serde_json::to_string(&flow)?);
+                }
+            }
+            return Ok(());
+        }
+
+        match self.output {
+            "json" => {
+                #[cfg(feature = "json")]
+                {
+                    let summary = Summary::build(
+                        self.total_packets,
+                        self.detected_packets,
+                        &self.protocol_counts,
+                        elapsed,
+                    );
+                    let doc = serde_json::json!({
+                        "summary": summary,
+                        "packets": &self.packet_records
+                    });
+                    println!("{}", serde_json::to_string_pretty(&doc)?);
+                }
+                #[cfg(not(feature = "json"))]
+                print_json_summary(
+                    self.total_packets,
+                    self.detected_packets,
+                    &self.protocol_counts,
+                    elapsed,
+                );
+            }
+            "jsonl" => {
+                #[cfg(feature = "json")]
+                {
+                    let summary = Summary::build(
+                        self.total_packets,
+                        self.detected_packets,
+                        &self.protocol_counts,
+                        elapsed,
+                    );
+                    println!(
+                        "{}",
+                        serde_json::to_string(&JsonlLine {
+                            r#type: "summary",
+                            summary: &summary,
+                        })?
+                    );
+                }
+            }
+            "csv" => print_csv_summary(&self.protocol_counts),
+            _ => print_text_summary(
+                self.total_packets,
+                self.detected_packets,
+                &self.protocol_counts,
+                elapsed,
+            ),
+        }
+
+        Ok(())
+    }
+}
+
+fn run_file(
+    path: &Path,
+    output: &str,
+    verbose: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let start = Instant::now();
+    let processor = PcapProcessor::new();
+    let mut iter = processor.process_file(path)?;
+    let mut sink = OutputSink::new(output, verbose);
+
+    for item in iter.by_ref() {
+        match item? {
+            Some((timestamp_us, detection)) => {
+                sink.on_packet(timestamp_us, Some(detection))?;
+            }
+            None => sink.on_packet(0, None)?,
+        }
+    }
+
+    sink.finish(start.elapsed(), Some(iter.detector()))?;
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
@@ -56,109 +266,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(2);
     }
 
-    let start = Instant::now();
-    let processor = PcapProcessor::new();
-    let mut iter = processor.process_file(&cli.input)?;
-
-    let mut protocol_counts: HashMap<String, u64> = HashMap::new();
-    let mut total_packets = 0u64;
-    let mut detected_packets = 0u64;
-    // json 单文档模式的逐包收集（仅 verbose）
-    #[cfg(feature = "json")]
-    let mut packet_records: Vec<PacketRecord> = Vec::new();
-
-    for item in iter.by_ref() {
-        let maybe_result = item?; // Result<Option<(u64, DetectionResult)>>
-        total_packets += 1;
-
-        if let Some((ts, det)) = maybe_result {
-            detected_packets += 1;
-            let proto_name = format!("{:?}", det.protocol);
-            *protocol_counts.entry(proto_name).or_insert(0) += 1;
-            let _ = ts; // 非 verbose / 非 json 路径不消费时间戳
-
-            if cli.verbose && cli.output != "flows-jsonl" {
-                #[cfg(feature = "json")]
-                {
-                    match cli.output.as_str() {
-                        "jsonl" => {
-                            let rec = PacketRecord::new(total_packets, ts, det);
-                            println!("{}", serde_json::to_string(&rec)?);
-                            continue;
-                        }
-                        "json" => {
-                            packet_records.push(PacketRecord::new(total_packets, ts, det));
-                            continue;
-                        }
-                        _ => {}
-                    }
-                }
-                #[cfg(not(feature = "json"))]
-                {
-                    let _ = ts;
-                }
-                print_detection(total_packets, &det);
-            }
-        } else if cli.verbose && cli.output != "flows-jsonl" {
-            #[cfg(feature = "json")]
-            if cli.output == "jsonl" {
-                println!(
-                    "{}",
-                    serde_json::to_string(&UnknownRecord {
-                        r#type: "unknown",
-                        packet_no: total_packets,
-                    })?
-                );
-                continue;
-            }
-            println!("[{:6}] UNKNOWN", total_packets);
-        }
-    }
-
-    // per-flow 归一化输出（P0 差分链路）：只输出流记录，不带逐包/汇总行
-    if cli.output == "flows-jsonl" {
-        #[cfg(feature = "json")]
-        {
-            for flow in iter.detector().normalized_flows() {
-                println!("{}", serde_json::to_string(&flow)?);
-            }
-        }
-        return Ok(());
-    }
-
-    let elapsed = start.elapsed();
-
-    match cli.output.as_str() {
-        "json" => {
-            #[cfg(feature = "json")]
-            {
-                let summary =
-                    Summary::build(total_packets, detected_packets, &protocol_counts, elapsed);
-                let doc = serde_json::json!({ "summary": summary, "packets": packet_records });
-                println!("{}", serde_json::to_string_pretty(&doc)?);
-            }
-            #[cfg(not(feature = "json"))]
-            print_json_summary(total_packets, detected_packets, &protocol_counts, elapsed);
-        }
-        "jsonl" => {
-            #[cfg(feature = "json")]
-            {
-                let summary =
-                    Summary::build(total_packets, detected_packets, &protocol_counts, elapsed);
-                println!(
-                    "{}",
-                    serde_json::to_string(&JsonlLine {
-                        r#type: "summary",
-                        summary: &summary,
-                    })?
-                );
-            }
-        }
-        "csv" => print_csv_summary(&protocol_counts),
-        _ => print_text_summary(total_packets, detected_packets, &protocol_counts, elapsed),
-    }
-
-    Ok(())
+    run_file(&cli.input, &cli.output, cli.verbose)
 }
 
 /// 逐包检测记录（JSON 输出用）
@@ -437,6 +545,20 @@ fn print_csv_summary(counts: &HashMap<String, u64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn output_sink_counts_packets() {
+        use rdpi::core::types::Protocol;
+
+        let mut sink = OutputSink::new("csv", false);
+        sink.on_packet(0, Some(DetectionResult::new(Protocol::Tcp)))
+            .unwrap();
+        sink.on_packet(0, None).unwrap();
+
+        assert_eq!(sink.total(), 2);
+        assert_eq!(sink.detected(), 1);
+        assert_eq!(sink.protocol_counts().get("Tcp"), Some(&1));
+    }
 
     #[cfg(feature = "json")]
     mod json_tests {
