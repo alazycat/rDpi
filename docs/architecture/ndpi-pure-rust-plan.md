@@ -131,7 +131,7 @@
 完整候选清单见 [protocol-coverage-plan.md](protocol-coverage-plan.md)。建议：
 
 - **A. Web / Cloud 核心**：TLS、HTTP/1.x、HTTP/2、HTTP/3/QUIC、DNS、DoH/DoT/DoQ、WebSocket、HTTP CONNECT/Proxy + Top 20 应用；
-- **B. 企业协议**：SMB、NetBIOS（✅ 已于 F45 完成，2026-11-07）、LDAP、Kerberos、RDP、NFS、MSSQL、Oracle、Cassandra、Memcached（✅ F46）、Elasticsearch（✅ F46）、Kafka、AMQP（✅ F46）等；
+- **B. 企业协议**：SMB、NetBIOS（✅ 已于 F45 完成，2026-11-07）、LDAP、Kerberos、RDP、NFS、MSSQL（✅ F49）、Oracle、Cassandra、Memcached（✅ F46）、Elasticsearch（✅ F46）、Kafka（✅ F49）、AMQP（✅ F46）等；
 - **C. 流媒体/IM/游戏**：RTP/RTCP/SRTP、RTSP、HLS、MPEG-DASH、MPEG-TS、WebRTC、Steam 等；
 - **D. 工业/IoT**：S7comm、OPC-UA、BACnet、DNP3、IEC 60870、HART-IP、Profinet、EtherNet/IP 等；
 - **E. VPN/隧道**：IPsec、GRE、GTP、Teredo、SoftEther、Tailscale、Tor 等。
@@ -368,6 +368,11 @@
   - Ctrl-C 优雅停机：首次输出汇总并 exit 0，第二次强退 130；
   - `LinkType` 支持 DLT_EN10MB/SLL/SLL2/RAW，Linux `any` 设备可用；新增 `Detector::process_ip_packet` L3 入口；
   - `-n > 1` 时逐包行按完成顺序，`json` 的 packets 收尾按抓包序号重排，`flows-jsonl` 跨 worker 全局确定性排序。
+- **P2 Wave 1B 子批次 B：MSSQL/TDS + Kafka（F49，2026-11-08）**
+  - MSSQL/TDS：TDS 8 字节头严格校验（类型/状态/长度/窗口），102 端口 TPKT 双向排除，首字节门 `[(1,8),(14,18)]`；
+  - Kafka：长度前缀自洽 + api_key/version 上限 + 可打印 client_id，仅识别请求；
+  - 端口回退、规则名、parity、CLI 接入；语料 +2 pcap + 真实 ndpiReader 5.0 golden 差分全绿；
+  - 无新增 `DissectorState`（无状态单报文语义）。
 
 ### 待办
 

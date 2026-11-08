@@ -81,12 +81,12 @@
 | HTTP CONNECT / HTTP Proxy | Web | 代理/隧道识别 | 低 |（✅ F44 完成）
 | SMBv1 / SMBv2 / SMBv3 | 文件 | 企业内网最大流量之一 | 中 |（✅ F45 完成，2026-11-07）
 | NetBIOS | 基础设施 | Windows 内网发现 | 低 |（✅ F45 完成，2026-11-07）
-| MSSQL / TDS | 数据库 | 企业数据库 | 中 |
+| MSSQL / TDS | 数据库 | 企业数据库 | 中 |（✅ F49 完成，2026-11-08）
 | Oracle | 数据库 | 企业数据库 | 中 |
 | Cassandra | 数据库 | 分布式数据库 | 中 |
 | Memcached | 数据库/缓存 | 缓存服务 | 低 |
 | Elasticsearch | 数据库/搜索 | 企业搜索 | 低 |
-| Kafka | 消息 | 数据管道 | 中 |
+| Kafka | 消息 | 数据管道 | 中 |（✅ F49 完成，2026-11-08）
 | AMQP | 消息 | 企业消息队列 | 低 |
 | HLS / MPEG-DASH / MPEG-TS | 流媒体 | 视频流识别 | 中 |
 | RTSP | 流媒体 | 摄像头/流媒体 | 低 |
@@ -280,7 +280,7 @@
 
 ### 10.2 阶段 2：企业协议补齐（P2 Wave 1B）
 
-- SMBv1/v2/v3、NetBIOS（✅ F45 完成）、Memcached（✅ F46 完成）、Elasticsearch（✅ F46 完成）、AMQP（✅ F46 完成）、AFP、MSSQL/TDS、Oracle、Cassandra、Kafka、NATS、STOMP、OpenWire。
+- SMBv1/v2/v3、NetBIOS（✅ F45 完成）、Memcached（✅ F46 完成）、Elasticsearch（✅ F46 完成）、AMQP（✅ F46 完成）、MSSQL/TDS（✅ F49 完成）、Kafka（✅ F49 完成）、AFP、Oracle、Cassandra、NATS、STOMP、OpenWire。
 - 验收：每个协议有正/负样本；Top-20 协议 precision/recall ≥ 0.95。
 
 ### 10.3 阶段 3：应用数据管线（P2 Wave 1C）

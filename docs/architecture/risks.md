@@ -485,3 +485,15 @@
   - **CLI**：`-n` 参数与文件模式校验；单线程路径改用 `LinkType`，删除 `is_ip_ethernet_frame`。
 - **测试**：`src/live/link.rs` 链路层单测、`src/parity.rs` 排序单测、`src/bin/rdpi/live_runner.rs` `flow_shard`/合成帧 `-n 2` 管线单测、`tests/test_process_ip_packet.rs` 入口一致性用例；全部门禁（fmt/test/all-features/live/clippy/build）绿。
 - **已知边界**：① 单抓包线程是吞吐上限，PF_RING/DPDK/fanout 不做；② `-n > 1` 时 text/jsonl 逐包行按完成顺序可能乱序；③ 每 worker 流表默认 10000 条，总量约 10000×N；④ FNV 分片极端流量可能倾斜，无动态再平衡；⑤ `ctrlc` 只处理 SIGINT（Unix 不处理 SIGTERM）；⑥ IPv6 扩展头场景仅按地址与 Next Header 分片，方向扩展链不对称时可能跨 worker；⑦ IPv4 非首片分片无端口，与首片可能落不同 worker；⑧ RAW 仅支持值 12/228/229，OpenBSD DLT_RAW 差异不覆盖；⑨ 非 IP 帧计入 `--count` 与总包数；⑩ Windows Npcap `Loopback` 适配器为 DLT_NULL(0)，不支持（Windows 侧请用具体网卡）。
+
+## F49【中】MSSQL/TDS + Kafka 识别（2026-11-08，新功能开发）—— ✅ 已完成
+
+- **背景**：阶段 2 第三批（`docs/architecture/phase2-mssql-kafka-design.md`、`docs/architecture/phase2-mssql-kafka-plan.md`）。子批次 B：企业数据库与消息管道缺口。
+- **实现**：
+  - **枚举与元数据**（[core/types.rs](file:///d:/rust_code/rDpi/src/core/types.rs)）：`database` 新增 `Protocol::Mssql` + `MssqlMetadata{packet_type,status,length,channel,packet_id}`；`messaging` 新增 `Protocol::Kafka` + `KafkaMetadata{api_key,api_version,correlation_id,client_id}`；无新增 `DissectorState`。
+  - **MSSQL 模块**（[src/protocols/mssql/](file:///d:/rust_code/rDpi/src/protocols/mssql/)）：TDS 8 字节头；`length==payload.len()`、`window==0`、`packet_id>0 && type∈1..=8` 或 `type∈14..=18`、`status∈{0,1,2,4,8,9,10}`；`detect_with_context` 任一端端口 102 排除 TPKT；首字节门 `[(1,8),(14,18)]`。
+  - **Kafka 模块**（[src/protocols/kafka/](file:///d:/rust_code/rDpi/src/protocols/kafka/)）：BE u32 长度前缀 `== payload.len()-4`、`api_key<75`、`api_version<16`、载荷 ≥14、`client_id_len+14<=payload.len()`、client_id 全为 `0x20..=0x7e`；只识别请求；首字节门 `None`。
+  - **注册**（[protocols/mod.rs](file:///d:/rust_code/rDpi/src/protocols/mod.rs)）：MSSQL 在 database 块 redis 之后、Elasticsearch 之前；Kafka 在 messaging 块 amqp 之后；未改变既有 detector 相对顺序。
+  - **集成**：端口回退 1433/1434→Mssql、9092→Kafka；规则名 `mssql`/`mssql_tds`/`kafka`；parity `MsSQL-TDS`→Database/Acceptable、`Kafka`→RPC/Acceptable；CLI 展示 TDS 头字段与 Kafka 请求字段。
+- **Golden 差分（真实 nDPI 5.0 验证）**：`mssql_tds_prelogin` → DPI `MsSQL-TDS`（Database/Acceptable）；`kafka_metadata_request` → DPI `Kafka`（RPC/Acceptable）；跨段拆分与非标端口变体不进入 parity 语料。
+- **已知边界**：① 单报文语义，多消息粘连不识别（与 nDPI 一致）；② 跨段拆分在 rDpi TCP 前缀补齐后可识别（超集，单测覆盖）；③ MSSQL 端口 102 双向排除（比 nDPI 的 dest-only 严格）；④ Kafka 只识别请求、null client_id（0xFFFF）不识别；⑤ api_key≥75/api_version≥16 不识别（与 nDPI 5.0 固定上限一致）；⑥ 加密变体（Kafka TLS 9093、MSSQL 加密会话）不解析。
