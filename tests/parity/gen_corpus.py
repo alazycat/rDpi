@@ -500,6 +500,50 @@ def build_kafka_metadata_request():
     )
 
 
+def tns_packet(packet_type, body=b""):
+    """构造 TNS 报文（8 字节头：长度/包校验和/类型/保留/头校验和）。"""
+    total = 8 + len(body)
+    return struct.pack(">HHBBH", total, 0, packet_type, 0, 0) + body
+
+
+def build_oracle_connect():
+    """Oracle TNS Connect（TCP 1521）：type=1，长度精确等于载荷长度。"""
+    request = tns_packet(1)
+    response = tns_packet(2, b"\x00\x00\x00\x00")
+    return tcp_session(CLIENT, SERVER, 50020, 1521, [("c", request), ("s", response)])
+
+
+def build_cassandra_internode():
+    """Cassandra internode magic（TCP 7000）：19 字节 0xCA552DFA + 15 字节。"""
+    payload = struct.pack(">I", 0xCA552DFA) + bytes(15)
+    return tcp_session(CLIENT, SERVER, 50021, 7000, [("c", payload)])
+
+
+def cql_startup_frame(cql_version="3.0.0"):
+    """构造 CQL v4 STARTUP 帧（9 字节头 + CQL_VERSION string map）。"""
+    key = b"CQL_VERSION"
+    value = cql_version.encode()
+    body = (
+        struct.pack(">H", 1)
+        + struct.pack(">H", len(key))
+        + key
+        + struct.pack(">H", len(value))
+        + value
+    )
+    return (
+        bytes([0x04, 0x00])
+        + struct.pack(">H", 1)
+        + bytes([0x01])
+        + struct.pack(">I", len(body))
+        + body
+    )
+
+
+def build_cassandra_startup():
+    """Cassandra CQL STARTUP（TCP 9042）：nDPI 走 Match by port，rDpi 为 Dpi。"""
+    return tcp_session(CLIENT, SERVER, 50022, 9042, [("c", cql_startup_frame())])
+
+
 def dhcp_message(opcode, yiaddr, option, server_id=None):
     packet = bytearray(236)
     packet[0] = opcode
@@ -827,6 +871,10 @@ CORPUS = {
     # F49：MSSQL/TDS 与 Kafka
     "mssql_tds_prelogin": build_mssql_tds_prelogin,
     "kafka_metadata_request": build_kafka_metadata_request,
+    # F50：Oracle TNS Connect 与 Cassandra internode/STARTUP
+    "oracle_connect": build_oracle_connect,
+    "cassandra_internode": build_cassandra_internode,
+    "cassandra_startup": build_cassandra_startup,
     "dhcp_discover": build_dhcp,
     "ntp_request": build_ntp,
     "snmp_get": build_snmp,
