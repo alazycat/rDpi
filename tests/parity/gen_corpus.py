@@ -458,6 +458,48 @@ def build_amqp_frame():
     )
 
 
+def tds_packet(packet_type, status, body, channel=0, packet_id=1, window=0):
+    """构造 TDS 报文（8 字节头 + body；length 恒等于总长度）。"""
+    total = 8 + len(body)
+    return (
+        struct.pack(">BBHHBB", packet_type, status, total, channel, packet_id, window)
+        + body
+    )
+
+
+def build_mssql_tds_prelogin():
+    """MSSQL/TDS PreLogin（TCP 1433）：type=0x12, status=0x01, packet_id=1, window=0。"""
+    prelogin_body = bytes.fromhex(
+        "00001a00060100200001020021000103002200040400260001ff"
+    )
+    request = tds_packet(0x12, 0x01, prelogin_body)
+    response = tds_packet(0x04, 0x01, b"\x04\x00\x00\x00\x00\x00")
+    return tcp_session(
+        CLIENT, SERVER, 50018, 1433, [("c", request), ("s", response)]
+    )
+
+
+def kafka_request(api_key, api_version, correlation_id, client_id):
+    """构造 Kafka 请求：BE u32 长度前缀 + API key/version + correlation + client_id。"""
+    client = client_id.encode()
+    body = (
+        struct.pack(">HHIH", api_key, api_version, correlation_id, len(client))
+        + client
+    )
+    return struct.pack(">I", len(body)) + body
+
+
+def build_kafka_metadata_request():
+    """Kafka Metadata 请求（TCP 9092）：api_key=3, version=1, client_id=rdpi-test。"""
+    return tcp_session(
+        CLIENT,
+        SERVER,
+        50019,
+        9092,
+        [("c", kafka_request(3, 1, 1, "rdpi-test"))],
+    )
+
+
 def dhcp_message(opcode, yiaddr, option, server_id=None):
     packet = bytearray(236)
     packet[0] = opcode
@@ -782,6 +824,9 @@ CORPUS = {
     "memcached_session": build_memcached_session,
     "elasticsearch_binary": build_elasticsearch_binary,
     "amqp_frame": build_amqp_frame,
+    # F49：MSSQL/TDS 与 Kafka
+    "mssql_tds_prelogin": build_mssql_tds_prelogin,
+    "kafka_metadata_request": build_kafka_metadata_request,
     "dhcp_discover": build_dhcp,
     "ntp_request": build_ntp,
     "snmp_get": build_snmp,
