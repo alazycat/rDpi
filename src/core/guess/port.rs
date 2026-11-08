@@ -43,6 +43,12 @@ pub(crate) static PORT_MAP: &[(u16, &[Protocol])] = &[
     (1433u16, &[Protocol::Mssql]),
     #[cfg(feature = "database")]
     (1434u16, &[Protocol::Mssql]),
+    #[cfg(feature = "database")]
+    (1521u16, &[Protocol::Oracle]),
+    #[cfg(feature = "database")]
+    (7000u16, &[Protocol::Cassandra]),
+    #[cfg(feature = "database")]
+    (9042u16, &[Protocol::Cassandra]),
     #[cfg(feature = "messaging")]
     (9092u16, &[Protocol::Kafka]),
 ];
@@ -102,6 +108,18 @@ mod tests {
         assert_eq!(match_port(9092).unwrap().protocol, Protocol::Kafka);
         assert_eq!(
             match_port(9092).unwrap().confidence,
+            Confidence::MatchByPort
+        );
+    }
+
+    #[cfg(feature = "database")]
+    #[test]
+    fn test_oracle_cassandra_ports() {
+        assert_eq!(match_port(1521).unwrap().protocol, Protocol::Oracle);
+        assert_eq!(match_port(7000).unwrap().protocol, Protocol::Cassandra);
+        assert_eq!(match_port(9042).unwrap().protocol, Protocol::Cassandra);
+        assert_eq!(
+            match_port(9042).unwrap().confidence,
             Confidence::MatchByPort
         );
     }

@@ -315,6 +315,29 @@ fn test_rule_parser_mssql_protocol_names() {
     }
 }
 
+#[cfg(feature = "database")]
+#[test]
+fn test_rule_parser_oracle_cassandra_protocol_names() {
+    let json = r#"{
+        "rules": [
+            {"id": "oracle", "protocol": "oracle", "condition": {"dst_port": 1521}},
+            {"id": "cassandra", "protocol": "cassandra", "condition": {"dst_port": 9042}}
+        ]
+    }"#;
+    let engine = RuleEngine::from_json(json).unwrap();
+
+    for (dst_port, expected) in [(1521u16, Protocol::Oracle), (9042, Protocol::Cassandra)] {
+        let ctx = RuleContext {
+            src_port: 12345,
+            dst_port,
+            sni: None,
+            payload: Vec::new(),
+        };
+        let result = engine.match_rule(&ctx).expect("rule should match");
+        assert_eq!(result.protocol, expected);
+    }
+}
+
 #[cfg(feature = "messaging")]
 #[test]
 fn test_rule_parser_kafka_protocol_name() {

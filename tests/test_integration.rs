@@ -205,7 +205,7 @@ fn test_registry_default_detector_count() {
         }
         #[cfg(feature = "database")]
         {
-            count += 7; // MySQL + PostgreSQL + Redis + MongoDB + Memcached + Elasticsearch（F46）+ MSSQL（F49）
+            count += 9; // MySQL + PostgreSQL + Redis + MongoDB + Memcached + Elasticsearch（F46）+ MSSQL（F49）+ Oracle/Cassandra（F50）
         }
         #[cfg(feature = "messaging")]
         {

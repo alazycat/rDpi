@@ -597,6 +597,21 @@ fn print_detection(pkt_num: u64, det: &DetectionResult) {
             "api_key={} version={} client_id={}",
             k.api_key, k.api_version, k.client_id
         )),
+        #[cfg(feature = "database")]
+        rdpi::Metadata::Oracle(o) => Some(format!(
+            "length={} type={}",
+            o.packet_length, o.packet_type
+        )),
+        #[cfg(feature = "database")]
+        rdpi::Metadata::Cassandra(c) => Some(match c.source {
+            rdpi::CassandraSource::Internode => "source=internode".to_string(),
+            rdpi::CassandraSource::Cql => format!(
+                "source=cql version=0x{:02X} stream={} cql_version={}",
+                c.version.unwrap_or(0),
+                c.stream_id.unwrap_or(0),
+                c.cql_version.as_deref().unwrap_or("")
+            ),
+        }),
         _ => None,
     };
 

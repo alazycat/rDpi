@@ -346,6 +346,11 @@ fn ndpi_compat_classification(
         Protocol::Amqp => ("RPC".to_string(), "Acceptable".to_string()),
         #[cfg(feature = "database")]
         Protocol::Mssql => ("Database".to_string(), "Acceptable".to_string()),
+        // F50（nDPI 5.0 源码核对）：Oracle/Cassandra 均归 Database/Acceptable
+        #[cfg(feature = "database")]
+        Protocol::Oracle | Protocol::Cassandra => {
+            ("Database".to_string(), "Acceptable".to_string())
+        }
         #[cfg(feature = "messaging")]
         Protocol::Kafka => ("RPC".to_string(), "Acceptable".to_string()),
         #[cfg(feature = "proto3")]

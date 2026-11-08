@@ -54,6 +54,10 @@ impl RuleFile {
                     #[cfg(feature = "database")]
                     "mssql" | "mssql_tds" => Protocol::Mssql,
                     #[cfg(feature = "database")]
+                    "oracle" => Protocol::Oracle,
+                    #[cfg(feature = "database")]
+                    "cassandra" => Protocol::Cassandra,
+                    #[cfg(feature = "database")]
                     "memcached" => Protocol::Memcached,
                     #[cfg(feature = "database")]
                     "elasticsearch" => Protocol::Elasticsearch,

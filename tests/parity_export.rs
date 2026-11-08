@@ -133,3 +133,19 @@ fn test_protocol_name_kafka() {
     assert_eq!(normalized.category.as_deref(), Some("RPC"));
     assert_eq!(normalized.breed.as_deref(), Some("Acceptable"));
 }
+
+#[cfg(feature = "database")]
+#[test]
+fn test_protocol_name_oracle_cassandra() {
+    for (protocol, name) in [
+        (Protocol::Oracle, "Oracle"),
+        (Protocol::Cassandra, "Cassandra"),
+    ] {
+        let flow = flow_with_protocol(protocol);
+        let normalized = NormalizedFlow::from_flow(&flow);
+        assert_eq!(normalized.master_protocol.as_deref(), Some(name));
+        assert_eq!(normalized.app_protocol, None);
+        assert_eq!(normalized.category.as_deref(), Some("Database"));
+        assert_eq!(normalized.breed.as_deref(), Some("Acceptable"));
+    }
+}
