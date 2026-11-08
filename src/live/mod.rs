@@ -5,6 +5,9 @@
 //! [`Detector::process_packet`](crate::Detector::process_packet)。
 
 mod ffi;
+mod link;
+
+pub use link::LinkType;
 
 /// 列出所有可抓包设备。
 ///
@@ -66,9 +69,14 @@ impl LiveCapture {
         }
     }
 
-    /// pcap 链路层类型（正常为 1 = DLT_EN10MB）。
+    /// pcap 链路层类型（1 = DLT_EN10MB，113 = SLL，276 = SLL2，12 = RAW）。
     pub fn datalink(&self) -> i32 {
         self.handle.datalink()
+    }
+
+    /// 链路层类型（Ethernet / LinuxSll / LinuxSll2 / RawIp）。
+    pub fn link_type(&self) -> LinkType {
+        self.handle.link_type()
     }
 
     /// 底层 pcap 版本字符串。
@@ -218,8 +226,11 @@ pub enum LiveError {
         message: String,
     },
 
-    /// 非以太网链路层
-    #[error("unsupported data link type {0}; only Ethernet (DLT_EN10MB=1) is supported")]
+    /// 非支持的链路层
+    #[error(
+        "unsupported data link type {0}; supported: DLT_EN10MB=1, DLT_LINUX_SLL=113, \
+         DLT_LINUX_SLL2=276, DLT_RAW=12, DLT_IPV4=228, DLT_IPV6=229"
+    )]
     UnsupportedDatalink(i32),
 
     /// 读取过程中的其他 pcap 错误

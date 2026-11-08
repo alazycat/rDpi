@@ -23,6 +23,14 @@ pub struct ParsedPacket {
     pub ttl: u8,
 }
 
+/// 剥离以太网头（含 VLAN/QinQ 标签栈），返回 L3 载荷与最终 EtherType。
+///
+/// 供实时抓包链路层适配复用，避免复制 VLAN 扫描逻辑。
+pub(crate) fn ethernet_l3_payload(data: &[u8]) -> Result<(&[u8], u16)> {
+    let (payload, header) = ethernet::parse(data)?;
+    Ok((payload, header.ether_type))
+}
+
 /// 解析原始包（以太网帧）
 pub fn parse_packet(data: &[u8]) -> Result<ParsedPacket> {
     // 先解析以太网头，再交给 L3 入口

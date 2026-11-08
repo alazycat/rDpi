@@ -5,14 +5,12 @@
 use std::ffi::{CString, c_char, c_int, c_uchar, c_void};
 use std::sync::OnceLock;
 
-use super::{Device, LiveError};
+use super::{Device, LinkType, LiveError};
 
 /// pcap 错误缓冲区大小（pcap.h: PCAP_ERRBUF_SIZE）
 pub(crate) const PCAP_ERRBUF_SIZE: usize = 256;
 /// `pcap_compile` 的未知 netmask
 pub(crate) const PCAP_NETMASK_UNKNOWN: u32 = 0xffff_ffff;
-/// Ethernet 链路层类型
-pub(crate) const DLT_EN10MB: c_int = 1;
 /// `pcap_if_t.flags`：回环
 pub(crate) const PCAP_IF_LOOPBACK: u32 = 0x1;
 /// `pcap_if_t.flags`：up
@@ -315,6 +313,7 @@ pub(crate) struct CaptureHandle {
     api: &'static PcapApi,
     handle: *mut PcapT,
     datalink: i32,
+    link_type: LinkType,
     snaplen: i32,
     backend_version: Option<String>,
 }
@@ -353,15 +352,18 @@ impl CaptureHandle {
             api,
             handle,
             datalink: 0,
+            link_type: LinkType::Ethernet,
             snaplen,
             backend_version: None,
         };
 
         // SAFETY: handle 由 pcap_open_live 返回且非空。
-        capture.datalink = unsafe { (capture.api.datalink)(capture.handle) };
-        if capture.datalink != DLT_EN10MB {
-            return Err(LiveError::UnsupportedDatalink(capture.datalink));
-        }
+        let datalink = unsafe { (capture.api.datalink)(capture.handle) };
+        let Some(link_type) = LinkType::from_datalink(datalink) else {
+            return Err(LiveError::UnsupportedDatalink(datalink));
+        };
+        capture.datalink = datalink;
+        capture.link_type = link_type;
 
         capture.backend_version = capture
             .api
@@ -377,6 +379,10 @@ impl CaptureHandle {
 
     pub(crate) fn datalink(&self) -> i32 {
         self.datalink
+    }
+
+    pub(crate) fn link_type(&self) -> LinkType {
+        self.link_type
     }
 
     pub(crate) fn backend_version(&self) -> Option<String> {

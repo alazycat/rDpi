@@ -322,36 +322,6 @@ fn validate_file_options(
     Ok(())
 }
 
-/// 以太网帧是否携带 IPv4/IPv6（含 VLAN/QinQ 标签）。
-///
-/// 实时链路会混有 ARP、LLDP 等非 IP 帧；它们不能交给
-/// `Detector::process_packet`，否则会被当作 IP 头解析失败。
-#[cfg(any(feature = "live", test))]
-fn is_ip_ethernet_frame(frame: &[u8]) -> bool {
-    const VLAN_TPIDS: [u16; 3] = [0x8100, 0x88a8, 0x9100];
-    const MAX_VLAN_TAGS: usize = 4;
-
-    let mut offset = 12usize;
-    let mut tags = 0usize;
-
-    while frame.len() >= offset + 2 {
-        let ether_type = u16::from_be_bytes([frame[offset], frame[offset + 1]]);
-        match ether_type {
-            0x0800 | 0x86dd => return true,
-            tpid if VLAN_TPIDS.contains(&tpid) => {
-                if tags == MAX_VLAN_TAGS {
-                    return false;
-                }
-                tags += 1;
-                offset += 4;
-            }
-            _ => return false,
-        }
-    }
-
-    false
-}
-
 #[cfg(feature = "live")]
 fn run_live(
     device: String,
@@ -361,7 +331,7 @@ fn run_live(
     output: &str,
     verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use rdpi::live::{CaptureConfig, LiveCapture};
+    use rdpi::live::{CaptureConfig, LinkType, LiveCapture};
 
     let mut config = CaptureConfig::new(device);
     if let Some(filter) = filter {
@@ -369,6 +339,7 @@ fn run_live(
     }
 
     let mut capture = LiveCapture::open(config)?;
+    let link_type = capture.link_type();
     let mut detector = Detector::new();
     let mut sink = OutputSink::new(output, verbose);
     let start = Instant::now();
@@ -389,12 +360,17 @@ fn run_live(
         let Some(frame) = capture.next_frame()? else {
             continue;
         };
-        if !is_ip_ethernet_frame(&frame.data) {
+        let Some(l3) = link_type.l3_payload(&frame.data) else {
             // ARP/LLDP 等非 IP 帧计为未识别包，继续抓取。
             sink.on_packet(frame.timestamp_us, None)?;
             continue;
-        }
-        let detection = detector.process_packet(&frame.data, frame.timestamp_us / 1000)?;
+        };
+        let detection = match link_type {
+            LinkType::Ethernet => {
+                detector.process_packet(&frame.data, frame.timestamp_us / 1000)?
+            }
+            _ => detector.process_ip_packet(l3, frame.timestamp_us / 1000)?,
+        };
         sink.on_packet(frame.timestamp_us, detection)?;
     }
 
@@ -826,34 +802,6 @@ mod tests {
         assert!(validate_file_options(None, Some(1), None).is_err());
         assert!(validate_file_options(None, None, Some(1)).is_err());
         assert!(validate_file_options(None, None, None).is_ok());
-    }
-
-    #[test]
-    fn ip_frame_detection_handles_ethernet_and_vlan() {
-        let mut ipv4 = vec![0u8; 14];
-        ipv4[12..14].copy_from_slice(&0x0800u16.to_be_bytes());
-        assert!(is_ip_ethernet_frame(&ipv4));
-
-        let mut ipv6 = vec![0u8; 14];
-        ipv6[12..14].copy_from_slice(&0x86ddu16.to_be_bytes());
-        assert!(is_ip_ethernet_frame(&ipv6));
-
-        let mut arp = vec![0u8; 42];
-        arp[12..14].copy_from_slice(&0x0806u16.to_be_bytes());
-        assert!(!is_ip_ethernet_frame(&arp));
-
-        let mut vlan = vec![0u8; 18];
-        vlan[12..14].copy_from_slice(&0x8100u16.to_be_bytes());
-        vlan[16..18].copy_from_slice(&0x86ddu16.to_be_bytes());
-        assert!(is_ip_ethernet_frame(&vlan));
-
-        let mut qinq = vec![0u8; 22];
-        qinq[12..14].copy_from_slice(&0x88a8u16.to_be_bytes());
-        qinq[16..18].copy_from_slice(&0x8100u16.to_be_bytes());
-        qinq[20..22].copy_from_slice(&0x0800u16.to_be_bytes());
-        assert!(is_ip_ethernet_frame(&qinq));
-
-        assert!(!is_ip_ethernet_frame(&[0u8; 10]));
     }
 
     #[cfg(feature = "json")]
