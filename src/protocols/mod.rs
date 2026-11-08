@@ -4,6 +4,8 @@
 
 use crate::core::types::*;
 
+#[cfg(feature = "storage")]
+pub mod afp;
 #[cfg(feature = "messaging")]
 pub mod amqp;
 #[cfg(feature = "infra")]
