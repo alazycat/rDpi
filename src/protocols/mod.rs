@@ -300,6 +300,15 @@ impl Default for Registry {
 /// 注册所有启用的内置协议
 /// 注册顺序：QUIC → DTLS → TLS → SSH → (NetBIOS → SMB) → FTP → SNMP → Modbus → SMTP → POP3 → IMAP → NTP → DHCP → HTTP → DNS（按特异性递减）
 pub fn register_defaults(_registry: &mut Registry) {
+    // F50：Cassandra 必须先于 QUIC——internode magic 首字节 0xCA 落在 QUIC
+    // 长包头门 0x80..=0xFF 内，未知版本 0x552DFA00 会被 QUIC 的
+    // detect_other_long_header 误判为 Quic。Cassandra 门仅 0x02..=0x05 与
+    // 0xCA，且要求 19 字节精确 magic 或严格 CQL STARTUP；真实 QUIC 短包头
+    // 固定位要求首字节 0x40..=0x7F，长包头 0xC0..=0xFF 中只有 0xCA 落入
+    // Cassandra 门，而 19 字节 internode 结构在 QUIC 中不可能出现。其余
+    // detector 相对顺序不变。
+    #[cfg(feature = "database")]
+    cassandra::register(_registry);
     #[cfg(feature = "quic")]
     quic::register(_registry);
     // F38：DTLS 紧随 QUIC、先于 TLS——影响面复述（顺序 = 优先级语义）：
@@ -351,8 +360,6 @@ pub fn register_defaults(_registry: &mut Registry) {
     mssql::register(_registry);
     #[cfg(feature = "database")]
     oracle::register(_registry);
-    #[cfg(feature = "database")]
-    cassandra::register(_registry);
     #[cfg(feature = "database")]
     elasticsearch::register(_registry);
     #[cfg(feature = "database")]
