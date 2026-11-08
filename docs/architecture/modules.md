@@ -51,7 +51,7 @@
 | infra | ntp, dhcp, bgp, dhcpv6, vxlan, netflow, ike, ptpv2 |
 | snmp | snmp（R1 已修复 2026-11-04） |
 | modbus | modbus |
-| database | mysql, postgresql, redis, mongodb, memcached, elasticsearch（F46，2026-11-07：Memcached 26 签名 + UDP 头 + 有状态匹配计数；Elasticsearch 二进制 `ES` + HTTP `X-elastic-product`），mssql（F49，2026-11-08：TDS 8 字节头严格校验 + 102 端口 TPKT 排除），oracle（F50，2026-11-08：TNS Connect 8 字节头 + 1521 端口门控），cassandra（F50，2026-11-08：internode magic + 严格 CQL STARTUP；注册于 QUIC 之前） |
+| database | mysql, postgresql, redis, mongodb, memcached, elasticsearch（F46，2026-11-07：Memcached 26 签名 + UDP 头 + 有状态匹配计数；Elasticsearch 二进制 `ES` + HTTP `X-elastic-product`），mssql（F49，2026-11-08：TDS 8 字节头严格校验 + 102 端口 TPKT 排除），oracle（F50，2026-11-08：TNS Connect 8 字节头 + 1521 端口门控），cassandra（F50，2026-11-08：internode magic + 严格 CQL STARTUP；注册于 QUIC 之前），drda（F51，2026-11-08：DSS/DDM 10 字节头 + 多消息精确消费） |
 | messaging | amqp（F46，2026-11-07：0-9-1 帧头 + 1.0 协议头），kafka（F49，2026-11-08：长度前缀 + api_key/version + 可打印 client_id） |
 | proto3 | ftp, sip, rtp, http2（HPACK 元数据，2026-11-05）, websocket（F43，2026-11-06：有状态升级握手重组）, rtmp, socks（ftp：F44，2026-11-07 有状态会话 + USER/RETR/STOR 提取 username/filename 元数据） |
 | iot | mqtt |
@@ -59,7 +59,7 @@
 | voip | stun, turn, mgcp, h323 |
 | auth | kerberos, ldap, radius |
 | remote | rdp |
-| storage | nfs |
+| storage | nfs, afp（F51，2026-11-08：DSI 16 字节头 + flags/command/reserved 校验；注册于 DNS 之前） |
 | misc | tftp, rsync, whois, syslog, telnet, vnc（R7 已修复 2026-11-04，mod.rs `#[cfg(feature = "misc")]`） |
 
 注：quic/snmp/modbus/ntp/dhcp 目录无 detector.rs，通过 `register()` 暴露的 detector 完成检测，与 http/tls 的三分文件模式不同（**[根据代码推断]**：各 mod.rs 内含 detector 实现，未逐一核对行号）。

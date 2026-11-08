@@ -509,3 +509,16 @@
   - **集成**：端口回退 1521→Oracle、7000/9042→Cassandra；规则名 `oracle`/`cassandra`；parity Oracle/Cassandra→Database/Acceptable；CLI 展示 TNS 头字段与 Cassandra 来源/版本/stream/CQL_VERSION。
 - **Golden 差分（真实 nDPI 5.0 验证）**：`oracle_connect` → DPI `Oracle`（Database/Acceptable）；`cassandra_internode` → DPI `Cassandra`（Database/Acceptable）；`cassandra_startup` @9042 → `Cassandra`/Match by port，rDpi Dpi 升级放行。
 - **已知边界**：① Oracle 仅识别 TNS Connect 且仅 1521 端口，不解析 Connect 体；② Cassandra 仅 internode magic + STARTUP 请求，OPTIONS/QUERY/响应/mid-stream 不识别；③ 单报文语义，多帧粘连不识别（与 nDPI 一致）；④ 跨段拆分在 rDpi TCP 前缀补齐后可识别（超集，单测覆盖），但首段前缀若被低特异性 detector（如 DHCPv6：0x04 + 长度 >= 10）抢先定型则无法升级——既有逐包 pipeline 通用限制；⑤ 不实现 nDPI 的 `CQL_VERSION` 尾部弱启发式（`len-20`、载荷 > 60）；⑥ 不实现 nDPI 的 `packet_counter`/方向计数放弃阈值（严格解析已消除误报）；⑦ 加密变体（TCPS、7042/9043 TLS）不解析。
+
+## F51【中】AFP + DRDA 识别（2026-11-08，新功能开发）—— ✅ 已完成
+
+- **背景**：阶段 2 第五批（`docs/architecture/phase2-afp-drda-design.md`、`docs/architecture/phase2-afp-drda-plan.md`）。收尾 Wave 1B 的 AFP，并补齐数据库缺口 DRDA。
+- **实现**：
+  - **枚举与元数据**（[core/types.rs](file:///d:/rust_code/rDpi/src/core/types.rs)）：`storage` 新增 `Protocol::Afp` + `AfpMetadata{flags,command,request_id,length}`；`database` 新增 `Protocol::Drda` + `DrdaMetadata{message_count,message_length}`；无新增 `DissectorState`。
+  - **AFP 模块**（[src/protocols/afp/](file:///d:/rust_code/rDpi/src/protocols/afp/)）：16 字节 DSI 头；`flags<=1`、`command∈1..=8`、`reserved==0`、`payload.len()>=16+length`；`payload.len()>128` 不判定；首字节门 `[(0,1)]`；detect 不检查端口。
+  - **DRDA 模块**（[src/protocols/drda/](file:///d:/rust_code/rDpi/src/protocols/drda/)）：10 字节 DSS/DDM 头；`length==length2+6`、`length>=10`、`magic==0xD0`；多消息精确消费完载荷；首字节门 None；无端口回退。
+  - **注册**（[protocols/mod.rs](file:///d:/rust_code/rDpi/src/protocols/mod.rs)）：**AFP 注册在 DNS 之前**——header-only DSI（16 字节、flags=0/1、其余为 0）会被 DNS detector 误判为 Dns（qd/an/ns/ar 均为 0，尾部多余字节未校验；语料差分已复现）；AFP 门仅 0/1 且要求完整 DSI 结构，真实 DNS qname 字节使 reserved != 0。DRDA 在 database 块 oracle 之后；其余 detector 相对顺序不变。
+  - **连带修复**：`Protocol::Nfs` 的 cfg 从 `infra` 改为 `storage`（category/breed 同步），使 `storage` feature 可单独编译（此前 `--features storage` 编译失败）。
+  - **集成**：端口回退 548→Afp；规则名 `afp`/`drda`；parity AFP→DataTransfer/Acceptable（内部 FileTransfer，显式映射）、DRDA→Database/Acceptable；CLI 展示 DSI 头字段与 DRDA 消息数/长度。
+- **Golden 差分（真实 nDPI 5.0 验证）**：`afp_dsi` → DPI `AFP`（DataTransfer/Acceptable）；`drda_message` → DPI `DRDA`（Database/Acceptable）。
+- **已知边界**：① AFP 仅识别 DSI 头，不解析命令体/卷名/文件路径；② AFP >128 字节大数据块不判定（与 nDPI 一致），首包即大数据块时后续不会重新识别；③ mDNS AFP 广告不识别；④ DRDA 不解析 DDM 命令码/SQL/参数；⑤ DRDA 多消息采用严格精确消费，nDPI 循环上界在部分长度组合下不消费最后一条消息，两者可能不一致（parity 只用单消息）；⑥ DRDA 无端口回退、不区分请求/响应方向；⑦ 检测不感知传输层（既有 detector 通病），UDP 上相同结构会命中。

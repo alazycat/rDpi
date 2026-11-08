@@ -46,18 +46,20 @@ lib.rs (Detector 编排) → parser (以太网/IP/TCP/UDP) → core (FlowTable/g
 - **Live capture v2：多线程、Ctrl-C、链路层扩展（F48，2026-11-08）**：兑现 F47 登记的三项后续增量——`-n/--threads`（默认 1，1..=64）单抓包线程 + flow-hash 分片 worker（FNV-1a 规范五元组，双向同 shard；有界队列 1024/worker 背压；`-n 1` 保持 F47 顺序）；主线程收集端合并汇总，`json` 的 packets 按抓包序号重排、`flows-jsonl` 跨 worker 全局排序；`ctrlc`（仅 live feature）首次 Ctrl-C 优雅停止（exit 0）、第二次立即退出（130）；`LinkType` 支持 DLT_EN10MB/SLL/SLL2/RAW（`-i any`），`Detector::process_ip_packet` 为 L3 入口（字节统计按 IP 长度，以太网路径按整帧）；`unsafe` 仍仅限 `src/live/ffi.rs`（新增 `unsafe impl Send for CaptureHandle`）。
 - **MSSQL/TDS + Kafka 识别（F49，2026-11-08）**：阶段 2 第三批（`docs/architecture/phase2-mssql-kafka-design.md`）——`database` feature 新增 `Protocol::Mssql` + `MssqlMetadata{packet_type,status,length,channel,packet_id}`，`messaging` feature 新增 `Protocol::Kafka` + `KafkaMetadata{api_key,api_version,correlation_id,client_id}`；MSSQL detector 严格校验 TDS 8 字节头（type 1..=8 要求 packet_id>0 或 type 14..=18、status 白名单、length==载荷长度、window==0），`detect_with_context` 任一端 102 端口排除 TPKT，首字节门 `[(1,8),(14,18)]`；Kafka detector 校验 BE u32 长度前缀自洽、api_key<75、api_version<16、client_id 长度自洽且全可打印 ASCII，首字节门 `None`；两者均为无状态 detector，不新增 `DissectorState`；注册位置：MSSQL 在 database 块 redis 之后、Kafka 在 messaging 块 amqp 之后；端口回退 1433/1434/9092；parity `MsSQL-TDS`→Database/Acceptable、`Kafka`→RPC/Acceptable。
 - **Oracle + Cassandra 识别（F50，2026-11-08）**：阶段 2 第四批（`docs/architecture/phase2-oracle-cassandra-design.md`）——`database` feature 新增 `Protocol::Oracle` + `OracleMetadata{packet_length,packet_type}` 与 `Protocol::Cassandra` + `CassandraMetadata{source,version,stream_id,opcode,cql_version}`，无新增 `DissectorState`。Oracle detector 严格校验 TNS Connect 8 字节头（长度精确相等、包/头校验和为 0、type=1、reserved=0），`detect_with_context` 要求任一端 1521 端口，首字节门 None；Cassandra detector 识别 19 字节 internode magic（`0xCA552DFA`，不限端口）与严格 CQL STARTUP 帧（版本 0x02..=0x05、opcode=0x01、长度精确相等、string map 含 CQL_VERSION），首字节门 `[(2,5),(0xCA,0xCA)]`。**Cassandra 注册在 QUIC 之前**（internode magic 首字节 0xCA 与 QUIC 长包头冲突）；Oracle 注册在 database 块 mssql 之后、elasticsearch 之前。端口回退 1521/7000/9042；规则名 `oracle`/`cassandra`；parity Oracle/Cassandra→Database/Acceptable；语料 +3 pcap + 真实 golden 差分全绿。
+- **AFP + DRDA 识别（F51，2026-11-08）**：阶段 2 第五批（`docs/architecture/phase2-afp-drda-design.md`）——`storage` feature 新增 `Protocol::Afp` + `AfpMetadata{flags,command,request_id,length}`，`database` feature 新增 `Protocol::Drda` + `DrdaMetadata{message_count,message_length}`，无新增 `DissectorState`。AFP detector 严格校验 16 字节 DSI 头（flags<=1、command 1..=8、reserved=0、payload>=16+length），>128 字节载荷不判定；首字节门 `[(0,1)]`；detect 不检查端口，548 仅端口回退。DRDA detector 严格校验 10 字节 DSS/DDM 头（length==length2+6、magic==0xD0、length>=10）并精确消费多消息；首字节门 None；无端口回退。**AFP 注册在 DNS 之前**（header-only DSI 会被 DNS detector 误判为 Dns）；DRDA 注册在 database 块 oracle 之后。连带修复 `Protocol::Nfs` 的 cfg 从 `infra` 改为 `storage`，使 `storage` feature 可单独编译。规则名 `afp`/`drda`；parity AFP→DataTransfer/Acceptable、DRDA→Database/Acceptable；语料 +2 pcap + 真实 golden 差分全绿。
 - **首字节门预筛（F29，2026-11-05）**：detector 可声明 `first_byte_gate()`（payload[0] 允许区间），Registry 注册期预计算 skip 位图、detect 循环内位测试跳过（miss 路径 36/49 已声明门，同机 A/B -12.3%）；14 个首字节任意的 detector 保持 `None`（dns/mongodb/postgresql/stun/modbus/l2tp/pptp/ike/nfs/whois/websocket/pop3/imap/memcached，证据见 risks.md F29/F46）。
 - **feature gate**：全部协议有 gate（R7 已修复 2026-11-04：tftp/rsync/whois/syslog/telnet/vnc 挂在 `misc` feature，risks.md R7）。
 
 ## 3. 常用命令
 
 ```bash
-cargo test                    # 默认 features (dns+http+tls)，393 测试全绿（2026-11-08 F50 实测）
-cargo test --all-features     # 1507 测试全绿（10 ignored = test_regression 存量）；F50 golden 差分闭环后实测
+cargo test                    # 默认 features (dns+http+tls)，393 测试全绿（2026-11-08 F51 实测）
+cargo test --all-features     # 1542 测试全绿（10 ignored = test_regression 存量）；F51 golden 差分闭环后实测
 cargo test --features risk    # 439 测试全绿（含风险处理器相关探针 a1_risk/a6/r5）
 cargo test --features smb     # 415 测试全绿（F45 NetBIOS/SMB 模块 + 语料差分）
 cargo test --features "database messaging"  # 491 测试全绿（F46 Memcached/Elasticsearch/AMQP 模块 + 语料差分）
 cargo test --features database       # 532 测试全绿（F50 Oracle/Cassandra 模块 + 语料差分；4 ignored）
+cargo test --features "storage database"  # 568 测试全绿（F51 AFP/DRDA 模块 + 语料差分；4 ignored）
 cargo test --features "risk smb"  # 471 测试全绿（SMBv1 风险处理器 + parity 风险差分）
 cargo build --features pcap   # 构建 CLI
 cargo test --features live          # 实时抓包类型/加载器测试（无后端时走 BackendUnavailable）
@@ -129,6 +131,7 @@ cargo fmt ; cargo clippy      # 提交前（lib+bins 门槛 0 警告；验证须
 | F46 | Memcached + Elasticsearch + AMQP 识别：database 复用 + 新 messaging feature；Memcached 有状态匹配计数、Elasticsearch 二进制/HTTP 双路径、AMQP 0-9-1/1.0；parity 三协议分类映射；语料 +3 pcap 差分全绿 | 中 | ✅ 已完成 2026-11-07（HTTP-ES 仅响应先到、AMQP 1.0 仅协议头等边界见 risks.md F46） |
 | F49 | MSSQL/TDS + Kafka 识别：database 复用 + messaging 复用；TDS 8 字节头严格校验（长度/窗口/类型/状态，102 端口排除 TPKT）；Kafka 请求长度前缀 + client_id 校验；端口回退/规则名/parity/CLI 接入；语料 +2 pcap + 真实 golden 差分 | 中 | ✅ 已完成 2026-11-08（跨段/粘连单报文语义等边界见 risks.md F49） |
 | F50 | Oracle + Cassandra 识别：Oracle TNS Connect 8 字节头 + 1521 端口门控；Cassandra internode magic + 严格 CQL STARTUP 解析；Cassandra 前置 QUIC 避免长包头冲突；端口回退/规则名/parity/CLI 接入；语料 +3 pcap + 真实 golden 差分 | 中 | ✅ 已完成 2026-11-08（弱启发式不兼容等边界见 risks.md F50） |
+| F51 | AFP + DRDA 识别：AFP 16 字节 DSI 头 + >128 字节拒绝；DRDA 10 字节 DSS/DDM 头 + 多消息精确消费；AFP 前置 DNS 避免误判；连带修复 Nfs cfg；端口回退/规则名/parity/CLI 接入；语料 +2 pcap + 真实 golden 差分 | 中 | ✅ 已完成 2026-11-08（DRDA 多消息与 nDPI 循环差异等边界见 risks.md F51） |
 
 ## 7. 文档索引
 

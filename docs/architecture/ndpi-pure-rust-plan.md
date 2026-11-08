@@ -131,7 +131,7 @@
 完整候选清单见 [protocol-coverage-plan.md](protocol-coverage-plan.md)。建议：
 
 - **A. Web / Cloud 核心**：TLS、HTTP/1.x、HTTP/2、HTTP/3/QUIC、DNS、DoH/DoT/DoQ、WebSocket、HTTP CONNECT/Proxy + Top 20 应用；
-- **B. 企业协议**：SMB、NetBIOS（✅ 已于 F45 完成，2026-11-07）、LDAP、Kerberos、RDP、NFS、MSSQL（✅ F49）、Oracle（✅ F50）、Cassandra（✅ F50）、Memcached（✅ F46）、Elasticsearch（✅ F46）、Kafka（✅ F49）、AMQP（✅ F46）等；
+- **B. 企业协议**：SMB、NetBIOS（✅ 已于 F45 完成，2026-11-07）、LDAP、Kerberos、RDP、NFS、AFP（✅ F51）、MSSQL（✅ F49）、Oracle（✅ F50）、Cassandra（✅ F50）、DRDA（✅ F51）、Memcached（✅ F46）、Elasticsearch（✅ F46）、Kafka（✅ F49）、AMQP（✅ F46）等；
 - **C. 流媒体/IM/游戏**：RTP/RTCP/SRTP、RTSP、HLS、MPEG-DASH、MPEG-TS、WebRTC、Steam 等；
 - **D. 工业/IoT**：S7comm、OPC-UA、BACnet、DNP3、IEC 60870、HART-IP、Profinet、EtherNet/IP 等；
 - **E. VPN/隧道**：IPsec、GRE、GTP、Teredo、SoftEther、Tailscale、Tor 等。
@@ -378,6 +378,11 @@
   - Cassandra：19 字节 internode magic（`0xCA552DFA`，不限端口）+ 严格 CQL STARTUP 帧解析（版本/opcode/长度/string map/CQL_VERSION）；首字节门 `[(2,5),(0xCA,0xCA)]`；
   - Cassandra 注册于 QUIC 之前，避免 internode magic 被 QUIC 长包头误判；Oracle 仍在 database 块；
   - 端口回退、规则名、parity、CLI 接入；语料 +3 pcap + 真实 ndpiReader 5.0 golden 差分全绿。
+- **P2 Wave 1B 子批次 D：AFP + DRDA（F51，2026-11-08）**
+  - AFP：16 字节 DSI 头严格校验（flags/command/reserved/长度下界）+ >128 字节载荷拒绝；首字节门 `[(0,1)]`；548 端口回退；注册于 DNS 之前（header-only DSI 会被 DNS 误判）；
+  - DRDA：10 字节 DSS/DDM 头（length==length2+6、magic=0xD0）+ 多消息精确消费；首字节门 None；无端口回退；
+  - 连带修复 `Protocol::Nfs` 的 cfg 从 infra 改为 storage，使 storage feature 可单独编译；
+  - 规则名、parity、CLI 接入；语料 +2 pcap + 真实 ndpiReader 5.0 golden 差分全绿。
 
 ### 待办
 

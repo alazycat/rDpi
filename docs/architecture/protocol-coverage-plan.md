@@ -59,8 +59,8 @@
 | 邮件 | SMTP/SMTPS、POP/POPS、IMAP/IMAPS、Outlook、Gmail、Yandex Mail | 基本覆盖，缺应用级细分 |
 | DNS / 基础设施 | DNS、mDNS、DoH/DoT、DNSCrypt、NTP、DHCP、DHCPv6、SNMP、Syslog、NetFlow、sFlow、BGP、OSPF、LDP、BFD、VRRP、HSRP、GLBP、PTPv2、LLMNR、SSDP、WSD、NetBIOS、NAT-PMP | DNSCrypt、OSPF/LDP/BFD/VRRP/HSRP/GLBP、LLMNR/SSDP/WSD 缺失（DoH/DoT 已于 F44 补齐、NetBIOS 已于 F45 补齐） |
 | 远程访问 | SSH、RDP、VNC、Telnet、TeamViewer、AnyDesk、Citrix、GoTo、NoMachine、Radmin、RSH、XDMCP | TeamViewer/AnyDesk/Citrix/GoTo/NoMachine 等缺失 |
-| 文件 / 存储 | FTP Control/Data、FTPS、TFTP、SMBv1/v2/v3、NFS、AFP、Rsync、Dropbox、Google Drive、OneDrive、iCloud、Ceph、Lustre、Syncthing | AFP、Google Drive/OneDrive/iCloud、Ceph/Lustre/Syncthing 缺失（SMB 已于 F45 补齐） |
-| 数据库 / 数据 | MySQL、PostgreSQL、MSSQL_TDS、Oracle、RESP（Redis）、MongoDB、Cassandra、Memcached、Elasticsearch、ClickHouse、DRDA | ClickHouse、DRDA 缺失（MSSQL/Cassandra 已于 F49/F50 补齐） |
+| 文件 / 存储 | FTP Control/Data、FTPS、TFTP、SMBv1/v2/v3、NFS、AFP、Rsync、Dropbox、Google Drive、OneDrive、iCloud、Ceph、Lustre、Syncthing | Google Drive/OneDrive/iCloud、Ceph/Lustre/Syncthing 缺失（SMB 已于 F45 补齐、AFP 已于 F51 补齐） |
+| 数据库 / 数据 | MySQL、PostgreSQL、MSSQL_TDS、Oracle、RESP（Redis）、MongoDB、Cassandra、Memcached、Elasticsearch、ClickHouse、DRDA | ClickHouse 缺失（MSSQL/Cassandra/DRDA 已于 F49/F50/F51 补齐） |
 | 消息 / 数据管道 | Kafka、AMQP、MQTT、NATS、STOMP、OpenWire、ZeroMQ、Gearman、Thrift、Protobuf、JSON-RPC、SOAP | 除 MQTT 外基本缺失 |
 | VoIP / 流媒体 | SIP、RTP、RTCP、SRTP、RTSP、H.323、MGCP、Megaco、Skinny、IAX、STUN、Icecast、MPEGTS、MPEGDASH、HLS、RTMP、RTPS、BFCP | RTSP、SRTP、MPEGTS/MPEGDASH/HLS、RTPS、BFCP、Megaco/Skinny/IAX 缺失 |
 | IM / 社交 | Facebook、Messenger、Instagram、WhatsApp（含 Call/Files）、Telegram（含 VOIP）、Signal（含 VOIP）、Discord、Slack、Teams（含 Call）、WeChat、QQ、OICQ、TikTok、Snapchat（含 Call）、Twitter、Threads、Mastodon、Bluesky、LinkedIn、Reddit、Pinterest、Tumblr、Viber、Line、KakaoTalk、DingTalk、Threema、IMO、Sina Weibo、VK、Yandex | rDpi 有部分 SNI 映射，但缺协议级识别与大量应用 |
@@ -120,7 +120,7 @@
 | HL7 | 医疗 | 医疗信息 | 低 |
 | Matter | IoT | 智能家居 | 中 |
 | CoAP | IoT | 低功耗 IoT | 低 |
-| AFP | 文件 | macOS 文件共享 | 低 |
+| AFP | 文件 | macOS 文件共享 | 低 |（✅ F51 完成，2026-11-08）
 | Ceph / Lustre | 存储 | 分布式存储 | 中 |
 | Syncthing | 文件 | P2P 同步 | 低 |
 | ClickHouse | 数据库 | OLAP | 低 |
@@ -280,7 +280,7 @@
 
 ### 10.2 阶段 2：企业协议补齐（P2 Wave 1B）
 
-- SMBv1/v2/v3、NetBIOS（✅ F45 完成）、Memcached（✅ F46 完成）、Elasticsearch（✅ F46 完成）、AMQP（✅ F46 完成）、MSSQL/TDS（✅ F49 完成）、Kafka（✅ F49 完成）、Oracle（✅ F50 完成）、Cassandra（✅ F50 完成）、AFP、NATS、STOMP、OpenWire。
+- SMBv1/v2/v3、NetBIOS（✅ F45 完成）、Memcached（✅ F46 完成）、Elasticsearch（✅ F46 完成）、AMQP（✅ F46 完成）、MSSQL/TDS（✅ F49 完成）、Kafka（✅ F49 完成）、Oracle（✅ F50 完成）、Cassandra（✅ F50 完成）、AFP（✅ F51 完成）、DRDA（✅ F51 完成）、NATS、STOMP、OpenWire。
 - 验收：每个协议有正/负样本；Top-20 协议 precision/recall ≥ 0.95。
 
 ### 10.3 阶段 3：应用数据管线（P2 Wave 1C）
