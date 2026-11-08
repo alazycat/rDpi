@@ -736,7 +736,8 @@ impl Detector {
     /// IP-in-IP）、按双向规范五元组聚合流，再交给 [`Self::process_l3_packet`]
     /// 的分类主体。与 [`Self::detect_at`] 的单向流模型相比，一条连接只产生
     /// 一条 `Flow`，且启用 HTTP / DNS-over-TCP / TLS / HTTP2 等有状态
-    /// dissector 与 TCP 序列号重组。
+    /// dissector 与 TCP 序列号重组。非以太网链路（SLL/SLL2/RAW）请使用
+    /// [`Self::process_ip_packet`]。
     ///
     /// # Arguments
     ///
@@ -748,6 +749,31 @@ impl Detector {
         timestamp_ms: u64,
     ) -> crate::error::Result<Option<DetectionResult>> {
         let parsed = parser::parse_packet(packet)?;
+        self.process_parsed_with_table(&parsed, packet.len(), timestamp_ms)
+    }
+
+    /// 处理 L3 包（IPv4/IPv6 头起始，不含链路层头；内置流表）
+    ///
+    /// 与 [`Self::process_packet`] 共用双向流表与分类主体，区别仅在于跳过
+    /// 链路层解析，用于 SLL/SLL2/RAW 等非以太网链路。
+    ///
+    /// 字节统计按 IP 包长度计（`process_packet` 按整帧长度计）。
+    pub fn process_ip_packet(
+        &mut self,
+        packet: &[u8],
+        timestamp_ms: u64,
+    ) -> crate::error::Result<Option<DetectionResult>> {
+        let parsed = parser::parse_l3_packet(packet)?;
+        self.process_parsed_with_table(&parsed, packet.len(), timestamp_ms)
+    }
+
+    /// 已解析包的流表取用/放回主体（双向规范五元组）
+    fn process_parsed_with_table(
+        &mut self,
+        parsed: &crate::parser::ParsedPacket,
+        byte_len: usize,
+        timestamp_ms: u64,
+    ) -> crate::error::Result<Option<DetectionResult>> {
         let packet_key = FlowKey {
             src_ip: parsed.src_ip,
             dst_ip: parsed.dst_ip,
@@ -763,7 +789,7 @@ impl Detector {
                 flow
             }
         };
-        let result = self.process_parsed_l3_packet(&mut flow, &parsed, packet.len(), timestamp_ms);
+        let result = self.process_parsed_l3_packet(&mut flow, parsed, byte_len, timestamp_ms);
         self.flow_table.put(flow);
         result
     }
